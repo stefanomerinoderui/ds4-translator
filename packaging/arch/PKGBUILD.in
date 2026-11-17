@@ -1,0 +1,53 @@
+# Template for `make arch-pkg` -- @PKGVER@ and the source tarball are filled
+# in by the Makefile from the current working tree, so this is not meant to be
+# run directly from packaging/arch/.
+pkgbase=ds4-translator
+pkgname=(ds4-translator ds4-translator-ui)
+pkgver=@PKGVER@
+pkgrel=1
+pkgdesc="Maps a physical DualShock 4 to a virtual DualShock 4, DualSense or Xbox controller"
+# The HID-BPF object is built with -D__TARGET_ARCH_x86 (see Makefile).
+arch=(x86_64)
+url="https://github.com/Billones142/ds4-translator"
+# The repository does not ship a license file yet.
+license=(LicenseRef-unknown)
+makedepends=(clang bpf cmake qt6-base qt6-declarative qt6-svg lib32-glibc lib32-gcc-libs)
+# The debug split package would strip BTF out of the HID-BPF object, which
+# libbpf needs at load time for its CO-RE relocations.
+options=(!debug)
+source=("$pkgbase-$pkgver.tar.gz")
+sha256sums=(SKIP)
+
+# Every make call gets the same paths: PREFIX is compiled into the daemon (the
+# HID-BPF object's location), so build() and package() must agree on it.
+_make() {
+    make VERSION="$(cat VERSION)" PREFIX=/usr \
+        SYSTEMDDIR=/usr/lib/systemd/system \
+        UDEVRULESDIR=/usr/lib/udev/rules.d \
+        MODPROBEDIR=/usr/lib/modprobe.d \
+        UI_CMAKE_FLAGS=-DCMAKE_SKIP_RPATH=ON \
+        "$@"
+}
+
+build() {
+    cd "$pkgbase-$pkgver"
+    _make all ui
+}
+
+package_ds4-translator() {
+    pkgdesc="Maps a physical DualShock 4 to a virtual DualShock 4, DualSense or Xbox controller (daemon and ds4-ctl)"
+    depends=(glibc gcc-libs libusb libbpf systemd kmod)
+    optdepends=('lib32-glibc: udev spoof shim for 32-bit games')
+    install=ds4-translator.install
+
+    cd "$pkgbase-$pkgver"
+    _make DESTDIR="$pkgdir" stage-cli
+}
+
+package_ds4-translator-ui() {
+    pkgdesc="Qt settings window and tray applet for ds4-translator"
+    depends=(ds4-translator qt6-base qt6-declarative qt6-svg)
+
+    cd "$pkgbase-$pkgver"
+    _make DESTDIR="$pkgdir" stage-ui
+}
