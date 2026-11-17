@@ -9,9 +9,19 @@ VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || cat VERSI
 CXX = g++
 CC  = gcc
 
+# Whatever compiler/linker flags the caller's environment set (e.g. makepkg's
+# hardening flags), captured before this file overrides them below. make
+# exports an overridden environment variable to every child process, so the
+# UI's CMake build would otherwise inherit the daemon's -Werror set and fail
+# on Qt's generated code, which that set is deliberately kept away from.
+ENV_CXXFLAGS := $(CXXFLAGS)
+ENV_LDFLAGS  := $(LDFLAGS)
+
 PREFIX    = /usr/local
 BINDIR    = $(PREFIX)/bin
 SYSTEMDDIR = /etc/systemd/system
+UDEVRULESDIR = /etc/udev/rules.d
+MODPROBEDIR  = /etc/modprobe.d
 
 # This project talks to the kernel through raw ioctls, configfs, and manual
 # struct-packed HID reports -- exactly the code where an unnoticed implicit
@@ -31,6 +41,9 @@ STRICT_WARNINGS = -Wall -Wextra -Werror -Wshadow -Wformat=2 -Wformat-security \
 BUILD_DIR = build
 UI_BUILD_DIR = ui/build
 UI_BINARY    = $(UI_BUILD_DIR)/ds4-translator-ui
+# Extra CMake configure flags for the UI (the Arch package passes
+# -DCMAKE_SKIP_RPATH=ON, since it ships the build-tree binary as is).
+UI_CMAKE_FLAGS =
 
 # Full HID-driver unbind + libusb raw-interrupt transport (see
 # src/usb-hid-transport.* and src/hid-unbind-detect.*), the hide method
@@ -71,7 +84,7 @@ HIDBPF_INSTALL_PATH := $(PREFIX)/lib/ds4-translator/hid-bpf-transport.bpf.o
 CXXFLAGS = -O3 $(STRICT_WARNINGS) -std=c++17 -DDS4_VERSION=\"$(VERSION)\" \
            -DHID_BPF_OBJ_PATH=\"$(HIDBPF_INSTALL_PATH)\" $(UNBIND_CXXFLAGS) $(HIDBPF_CXXFLAGS)
 CFLAGS   = -O3 $(STRICT_WARNINGS) -DDS4_VERSION=\"$(VERSION)\" $(UNBIND_CXXFLAGS)
-LDFLAGS  = -lpthread $(UNBIND_LDFLAGS) $(HIDBPF_LDFLAGS)
+LDFLAGS  = -lpthread $(UNBIND_LDFLAGS) $(HIDBPF_LDFLAGS) $(ENV_LDFLAGS)
 
 TARGET_DAEMON = $(BUILD_DIR)/ds4-translator
 TARGET_CTL    = $(BUILD_DIR)/ds4-ctl
@@ -109,10 +122,10 @@ $(TARGET_CTL): $(CTL_OBJ)
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
 
 $(TARGET_SPOOF): $(SPOOF_SRC) | $(BUILD_DIR)
-	$(CC) -O3 -fPIC -shared -o $@ $< -ldl
+	$(CC) -O3 -fPIC -shared $(ENV_LDFLAGS) -o $@ $< -ldl
 
 $(TARGET_SPOOF32): $(SPOOF_SRC) | $(BUILD_DIR)
-	$(CC) -m32 -O3 -fPIC -shared -o $@ $< -ldl
+	$(CC) -m32 -O3 -fPIC -shared $(ENV_LDFLAGS) -o $@ $< -ldl
 
 
 $(BUILD_DIR)/%.o: src/%.cpp | $(BUILD_DIR)
@@ -150,21 +163,27 @@ clean:
 # Always delegated: CMake already does its own up-to-date checking, so
 # there is nothing for make to track here.
 ui:
-	cmake -S ui -B $(UI_BUILD_DIR) -DCMAKE_BUILD_TYPE=Release
-	cmake --build $(UI_BUILD_DIR) -j$(shell nproc)
+	CXXFLAGS='$(ENV_CXXFLAGS)' LDFLAGS='$(ENV_LDFLAGS)' \
+	    cmake -S ui -B $(UI_BUILD_DIR) -DCMAKE_BUILD_TYPE=Release $(UI_CMAKE_FLAGS)
+	CXXFLAGS='$(ENV_CXXFLAGS)' LDFLAGS='$(ENV_LDFLAGS)' \
+	    cmake --build $(UI_BUILD_DIR) -j$(shell nproc)
 
 # The .desktop file is not cosmetic: the desktop portal looks the app up by
 # it, and without it every launch logs "App info not found for
 # 'ds4-translator-ui'". No autostart entry is installed: the tray applet is
 # off by default and the settings window writes ~/.config/autostart itself
 # when the user turns "Start the applet on login" on.
-install-ui: ui
-	install -D -m 755 $(UI_BINARY) $(DESTDIR)$(BINDIR)/ds4-translator-ui
-	install -D -m 644 ds4-translator-ui.desktop \
-	    $(DESTDIR)/usr/share/applications/ds4-translator-ui.desktop
+install-ui: stage-ui
 ifdef SUDO_USER
 	chown -R $(SUDO_USER):$(SUDO_USER) $(UI_BUILD_DIR)
 endif
+
+# File copies only, into $(DESTDIR) -- shared by install-ui and the Arch
+# package's package() step, which must not touch the running system.
+stage-ui: ui
+	install -D -m 755 $(UI_BINARY) $(DESTDIR)$(BINDIR)/ds4-translator-ui
+	install -D -m 644 ds4-translator-ui.desktop \
+	    $(DESTDIR)/usr/share/applications/ds4-translator-ui.desktop
 
 uninstall-ui:
 	rm -f $(DESTDIR)$(BINDIR)/ds4-translator-ui
@@ -195,18 +214,7 @@ uninstall-ui-user:
 # only part that needs them) or where a GUI has no place at all.
 install: install-cli install-ui
 
-install-cli: all
-	install -D -m 755 $(TARGET_DAEMON) $(DESTDIR)$(BINDIR)/$(notdir $(TARGET_DAEMON))
-	install -D -m 755 $(TARGET_CTL) $(DESTDIR)$(BINDIR)/$(notdir $(TARGET_CTL))
-	install -D -m 755 $(TARGET_SPOOF) $(DESTDIR)/usr/lib/$(notdir $(TARGET_SPOOF))
-	install -D -m 755 $(TARGET_SPOOF32) $(DESTDIR)/usr/lib32/$(notdir $(TARGET_SPOOF32))
-	install -D -m 755 rebind-unbound-controllers.sh $(DESTDIR)$(BINDIR)/rebind-unbound-controllers.sh
-	install -D -m 644 ds4-translator.service $(DESTDIR)$(SYSTEMDDIR)/ds4-translator.service
-	install -D -m 644 72-ds4-translator-hide.rules $(DESTDIR)/etc/udev/rules.d/72-ds4-translator-hide.rules
-	install -D -m 644 ds4-ctl.1 $(DESTDIR)/usr/share/man/man1/ds4-ctl.1
-	install -D -m 644 ds4-ctl-completion.bash $(DESTDIR)/usr/share/bash-completion/completions/ds4-ctl
-	install -D -m 644 dummy_hcd.conf $(DESTDIR)/etc/modprobe.d/dummy_hcd.conf
-	install -D -m 644 $(HIDBPF_BPF_OBJ) $(DESTDIR)$(HIDBPF_INSTALL_PATH)
+install-cli: stage-cli
 	udevadm control --reload-rules
 	udevadm trigger
 	systemctl daemon-reload
@@ -215,6 +223,76 @@ install-cli: all
 ifdef SUDO_USER
 	chown -R $(SUDO_USER):$(SUDO_USER) $(BUILD_DIR)
 endif
+
+# File copies only, into $(DESTDIR) -- see stage-ui. The unit file hardcodes
+# /usr/local/bin, so it is rewritten for whatever $(BINDIR) is in effect.
+stage-cli: all
+	install -D -m 755 $(TARGET_DAEMON) $(DESTDIR)$(BINDIR)/$(notdir $(TARGET_DAEMON))
+	install -D -m 755 $(TARGET_CTL) $(DESTDIR)$(BINDIR)/$(notdir $(TARGET_CTL))
+	install -D -m 755 $(TARGET_SPOOF) $(DESTDIR)/usr/lib/$(notdir $(TARGET_SPOOF))
+	install -D -m 755 $(TARGET_SPOOF32) $(DESTDIR)/usr/lib32/$(notdir $(TARGET_SPOOF32))
+	install -D -m 755 rebind-unbound-controllers.sh $(DESTDIR)$(BINDIR)/rebind-unbound-controllers.sh
+	install -d $(DESTDIR)$(SYSTEMDDIR)
+	sed 's|/usr/local/bin|$(BINDIR)|g' ds4-translator.service > $(DESTDIR)$(SYSTEMDDIR)/ds4-translator.service
+	chmod 644 $(DESTDIR)$(SYSTEMDDIR)/ds4-translator.service
+	install -D -m 644 72-ds4-translator-hide.rules $(DESTDIR)$(UDEVRULESDIR)/72-ds4-translator-hide.rules
+	install -D -m 644 ds4-ctl.1 $(DESTDIR)/usr/share/man/man1/ds4-ctl.1
+	install -D -m 644 ds4-ctl-completion.bash $(DESTDIR)/usr/share/bash-completion/completions/ds4-ctl
+	install -D -m 644 dummy_hcd.conf $(DESTDIR)$(MODPROBEDIR)/dummy_hcd.conf
+	install -D -m 644 $(HIDBPF_BPF_OBJ) $(DESTDIR)$(HIDBPF_INSTALL_PATH)
+
+# Installable Arch Linux package(s), built by makepkg from a snapshot of the
+# working tree (uncommitted changes included, so what you test is what you
+# package). Produces two split packages in $(ARCH_PKG_DIR): ds4-translator
+# (daemon + CLI) and ds4-translator-ui. Install with
+#   sudo pacman -U build/arch/ds4-translator-*.pkg.tar.zst
+# Must run as a regular user -- makepkg refuses to run as root.
+ARCH_PKG_DIR = $(BUILD_DIR)/arch
+# pacman versions can't contain '-': v0.6.0-7-g32cad17-dirty -> 0.6.0.r7.g32cad17.dirty
+ARCH_PKGVER := $(shell echo '$(VERSION)' | sed -e 's/^v//' -e 's/-\([0-9]*\)-g/.r\1.g/' -e 's/-/./g')
+
+# Optional GPG key (fingerprint or ID) to sign the packages and the repository
+# database with; unsigned when empty. Needs the key in the caller's keyring.
+ARCH_SIGN_KEY ?=
+ARCH_SIGN_FLAGS = $(if $(ARCH_SIGN_KEY),--sign --key $(ARCH_SIGN_KEY))
+
+arch-pkg:
+	@if [ "$$(id -u)" -eq 0 ]; then echo "arch-pkg: run as a regular user, not root (makepkg refuses root)." >&2; exit 1; fi
+	@command -v makepkg >/dev/null || { echo "arch-pkg: makepkg not found -- this target needs an Arch-based system." >&2; exit 1; }
+	rm -rf $(ARCH_PKG_DIR)
+	mkdir -p $(ARCH_PKG_DIR)/ds4-translator-$(ARCH_PKGVER)
+	git ls-files -co --exclude-standard -z | grep -zv '^\.claude/' | \
+	    xargs -0 cp --parents -t $(ARCH_PKG_DIR)/ds4-translator-$(ARCH_PKGVER)
+	echo '$(VERSION)' > $(ARCH_PKG_DIR)/ds4-translator-$(ARCH_PKGVER)/VERSION
+	tar -czf $(ARCH_PKG_DIR)/ds4-translator-$(ARCH_PKGVER).tar.gz \
+	    -C $(ARCH_PKG_DIR) ds4-translator-$(ARCH_PKGVER)
+	rm -rf $(ARCH_PKG_DIR)/ds4-translator-$(ARCH_PKGVER)
+	sed 's|@PKGVER@|$(ARCH_PKGVER)|' packaging/arch/PKGBUILD.in > $(ARCH_PKG_DIR)/PKGBUILD
+	cp packaging/arch/ds4-translator.install $(ARCH_PKG_DIR)/
+	cd $(ARCH_PKG_DIR) && makepkg -f --cleanbuild $(ARCH_SIGN_FLAGS)
+	@echo
+	@echo "Packages built in $(ARCH_PKG_DIR):"
+	@ls -1 $(ARCH_PKG_DIR)/*.pkg.tar.*
+	@echo "Install with: sudo pacman -U $(ARCH_PKG_DIR)/ds4-translator-*.pkg.tar.zst"
+
+# Turns the packages `arch-pkg` built into a pacman repository named
+# "ds4-translator" in the same directory (see packaging/arch/README.md).
+# repo-add leaves ds4-translator.db/.files as symlinks to the .tar.zst
+# files; static hosts such as GitHub release assets can't serve symlinks, so
+# they are replaced with real copies.
+arch-repo:
+	@command -v repo-add >/dev/null || { echo "arch-repo: repo-add not found -- this target needs pacman's tools." >&2; exit 1; }
+	@ls $(ARCH_PKG_DIR)/*.pkg.tar.zst >/dev/null 2>&1 || { echo "arch-repo: no packages in $(ARCH_PKG_DIR) -- run 'make arch-pkg' first." >&2; exit 1; }
+	cd $(ARCH_PKG_DIR) && rm -f ds4-translator.db* ds4-translator.files* && \
+	    repo-add $(ARCH_SIGN_FLAGS) ds4-translator.db.tar.zst *.pkg.tar.zst && \
+	    rm ds4-translator.db ds4-translator.files && \
+	    cp ds4-translator.db.tar.zst ds4-translator.db && \
+	    cp ds4-translator.files.tar.zst ds4-translator.files
+	if [ -n "$(ARCH_SIGN_KEY)" ]; then \
+	    cd $(ARCH_PKG_DIR) && rm -f ds4-translator.db.sig ds4-translator.files.sig && \
+	    cp ds4-translator.db.tar.zst.sig ds4-translator.db.sig && \
+	    cp ds4-translator.files.tar.zst.sig ds4-translator.files.sig; \
+	fi
 
 # Mirrors install: removes the UI too. uninstall-cli leaves it in place.
 uninstall: uninstall-ui uninstall-cli
@@ -227,14 +305,14 @@ uninstall-cli:
 	rm -f $(DESTDIR)/usr/lib32/$(notdir $(TARGET_SPOOF32))
 	rm -f $(DESTDIR)$(BINDIR)/rebind-unbound-controllers.sh
 	rm -f $(DESTDIR)$(SYSTEMDDIR)/ds4-translator.service
-	rm -f $(DESTDIR)/etc/udev/rules.d/72-ds4-translator-hide.rules
+	rm -f $(DESTDIR)$(UDEVRULESDIR)/72-ds4-translator-hide.rules
 	rm -f $(DESTDIR)/usr/share/man/man1/ds4-ctl.1
 	rm -f $(DESTDIR)/usr/share/bash-completion/completions/ds4-ctl
-	rm -f $(DESTDIR)/etc/modprobe.d/dummy_hcd.conf
+	rm -f $(DESTDIR)$(MODPROBEDIR)/dummy_hcd.conf
 	rm -f $(DESTDIR)$(HIDBPF_INSTALL_PATH)
 	udevadm control --reload-rules
 	udevadm trigger
 	systemctl daemon-reload
 
-.PHONY: all debug clean install install-cli uninstall uninstall-cli \
-        ui install-ui uninstall-ui install-ui-user uninstall-ui-user
+.PHONY: all debug clean install install-cli stage-cli uninstall uninstall-cli \
+        ui install-ui stage-ui uninstall-ui install-ui-user uninstall-ui-user arch-pkg arch-repo

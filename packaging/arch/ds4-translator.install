@@ -1,0 +1,17 @@
+# pacman's own hooks already reload udev rules and the systemd manager when
+# the files under /usr/lib change; what's left is the service's lifecycle,
+# which Arch packages leave to the user rather than enabling on install.
+
+post_install() {
+    udevadm trigger --subsystem-match=hidraw --subsystem-match=input
+    echo ">>> Enable and start the daemon with:"
+    echo ">>>   sudo systemctl enable --now ds4-translator.service"
+}
+
+post_upgrade() {
+    systemctl try-restart ds4-translator.service
+}
+
+pre_remove() {
+    systemctl disable --now ds4-translator.service >/dev/null 2>&1 || true
+}

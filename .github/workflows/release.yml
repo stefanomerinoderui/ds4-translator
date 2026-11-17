@@ -2,7 +2,8 @@ name: Release
 
 # Builds ds4-translator/ds4-ctl and publishes a downloadable tarball whenever
 # a version tag (v*) is pushed to main, so users can install without needing
-# a compiler (see README's "Download a release" instructions).
+# a compiler (see README's "Download a release" instructions), and updates the
+# Arch Linux pacman repository with the same version.
 on:
   push:
     tags:
@@ -79,3 +80,78 @@ jobs:
         with:
           files: ${{ env.ASSET_PATH }}
           generate_release_notes: true
+
+  # Publishes the same tag as a pacman repository (see
+  # packaging/arch/README.md). Runs only after the tarball release succeeded,
+  # so a tag that fails to build publishes nothing. The repository lives in
+  # the assets of one rolling release tagged `arch-repo`, so its URL never
+  # changes; each run replaces the packages and database there.
+  arch-repo:
+    needs: build-and-release
+    runs-on: ubuntu-latest
+    env:
+      REPO_TAG: arch-repo
+    container: archlinux:base-devel
+    steps:
+      - name: Install build dependencies
+        run: |
+          # multilib provides lib32-glibc/lib32-gcc-libs, needed for the
+          # 32-bit libudev-sony-spoof32.so. Keep this list in sync with
+          # makedepends/depends in packaging/arch/PKGBUILD.in. git comes
+          # before checkout so the full history and tags are fetched with
+          # git rather than a source archive.
+          printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> /etc/pacman.conf
+          pacman -Syu --noconfirm --needed git github-cli \
+            clang bpf cmake qt6-base qt6-declarative qt6-svg \
+            lib32-glibc lib32-gcc-libs libusb libbpf systemd kmod
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # `git describe --tags` derives the package version.
+          fetch-depth: 0
+
+      - name: Build packages and repository database
+        env:
+          # Signing-subkey export (see packaging/arch/README.md). When the
+          # secret is not set, e.g. on a fork, everything is built unsigned.
+          ARCH_GPG_PRIVATE_KEY: ${{ secrets.ARCH_GPG_PRIVATE_KEY }}
+        run: |
+          # makepkg refuses to run as root.
+          useradd -m builder
+          chown -R builder .
+          git config --global --add safe.directory "$PWD"
+          runuser -u builder -- git config --global --add safe.directory "$PWD"
+          sign=""
+          if [ -n "$ARCH_GPG_PRIVATE_KEY" ]; then
+            printf '%s\n' "$ARCH_GPG_PRIVATE_KEY" | runuser -u builder -- gpg --batch --import
+            fpr=$(runuser -u builder -- gpg --list-secret-keys --with-colons | awk -F: '/^fpr/ {print $10; exit}')
+            [ -n "$fpr" ] || { echo "ARCH_GPG_PRIVATE_KEY did not import a key" >&2; exit 1; }
+            sign="ARCH_SIGN_KEY=$fpr"
+          else
+            echo "::warning::ARCH_GPG_PRIVATE_KEY is not set; publishing unsigned packages."
+          fi
+          runuser -u builder -- make arch-pkg arch-repo $sign
+
+      - name: Publish to the rolling release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # make_latest=false: the README's installer reads releases/latest,
+          # which must keep pointing at the real versioned releases.
+          gh release view "$REPO_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create "$REPO_TAG" --repo "$GITHUB_REPOSITORY" \
+              --title "Arch package repository" --latest=false \
+              --notes "Rolling pacman repository, rebuilt on every release. Not a versioned release: see packaging/arch/README.md for how to use it."
+
+          cd build/arch
+          cp "$GITHUB_WORKSPACE/packaging/arch/ds4-translator.pub.asc" .
+          new=$(ls *.pkg.tar.zst *.pkg.tar.zst.sig ds4-translator.db ds4-translator.db.sig \
+                   ds4-translator.files ds4-translator.files.sig ds4-translator.pub.asc 2>/dev/null)
+          gh release upload "$REPO_TAG" $new --repo "$GITHUB_REPOSITORY" --clobber
+
+          # Drop assets from earlier builds that are no longer in the database.
+          for old in $(gh release view "$REPO_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name'); do
+            echo "$new" | grep -qx "$old" || \
+              gh release delete-asset "$REPO_TAG" "$old" --repo "$GITHUB_REPOSITORY" --yes
+          done

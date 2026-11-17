@@ -24,6 +24,7 @@ It includes an IPC runtime control program (`ds4-ctl`) that allows users to chan
 ## Prerequisites
 
 Ensure that the User-space HID (`uhid`) kernel module is loaded:
+
 ```bash
 sudo modprobe uhid
 ```
@@ -41,6 +42,7 @@ ends up active.
 ### Option 1: Download a release
 
 Grabs the latest prebuilt release tarball (no compiler needed) and installs it:
+
 ```bash
 curl -s https://api.github.com/repos/Billones142/ds4-translator/releases/latest \
   | grep browser_download_url | cut -d '"' -f4 | xargs curl -LO
@@ -50,12 +52,25 @@ sudo make install
 ```
 
 ### Option 2: Clone and build from source
+
 ```bash
 git clone https://github.com/Billones142/ds4-translator.git
 cd ds4-translator
 make
 sudo make install
 ```
+
+### Option 3: Arch Linux package
+
+Arch users can install from a pacman repository that is updated with every release, see [packaging/arch/README.md](packaging/arch/README.md). To build the packages yourself instead, this builds them from the current checkout (run as a regular user — `makepkg` refuses root; missing build dependencies are reported, not installed):
+
+```bash
+make arch-pkg
+sudo pacman -U build/arch/ds4-translator-*.pkg.tar.zst
+sudo systemctl enable --now ds4-translator.service
+```
+
+This produces two packages: `ds4-translator` (daemon and `ds4-ctl`) and `ds4-translator-ui` (the Qt settings window). Install only the first if you don't want the UI. Unlike `make install`, the package installs under `/usr` (unit, udev rule and modprobe config in `/usr/lib`) and leaves enabling the service to you.
 
 By default, the service starts emulating a virtual **DualShock 4** controller.
 
@@ -64,10 +79,13 @@ By default, the service starts emulating a virtual **DualShock 4** controller.
 Users can query the status and change the emulated virtual controller type dynamically at runtime using the `ds4-ctl` tool (which does not require root privileges).
 
 ### Query Daemon Status
+
 ```bash
 ds4-ctl status
 ```
+
 Example Output:
+
 ```text
 Physical Controller: /dev/hidraw1
 Connection Type: Bluetooth
@@ -79,6 +97,7 @@ Device Open by Host: Yes
 ```
 
 ### Change Virtual Controller Type dynamically
+
 - Switch to emulating a **DualSense** controller:
   ```bash
   ds4-ctl set-type dualsense
@@ -143,6 +162,7 @@ Two caveats:
 ## Uninstalling
 
 To disable the service and remove all installed files:
+
 ```bash
 sudo make uninstall
 ```
@@ -163,4 +183,6 @@ sudo make uninstall
 - **IPC Architecture**: Single-threaded non-blocking poll loop manages physical input reports, uhid events, and UDS IPC configuration clients concurrently. This keeps the daemon responsive to configuration commands even when no physical controller is connected.
 - **Grabbing & Hiding**: By grabbing the event nodes and modifying the permissions of the `hidraw` node, the physical controller is completely hidden from user-space programs (preventing double inputs) while allowing the daemon (running as root) to continue reading raw inputs and writing output reports.
 - **CRC32 Algorithm**: Implementation of the custom IEEE 802.3 CRC32 algorithm used to authenticate PlayStation Bluetooth output reports.
-- **`functionfs`'s emulated device stays visible on purpose**: `72-ds4-translator-hide.rules` hides the *physical* controller by matching its real idVendor/idProduct, but `functionfs`'s emulated device deliberately shares those same IDs (impersonating real hardware) and would otherwise get caught by the same rule. A `DEVPATH!="/devices/platform/dummy_hcd.0/*"` guard on those stanzas excludes it, since real hardware never appears under that path.
+- **`functionfs`'s emulated device stays visible on purpose**: `72-ds4-translator-hide.rules` hides the _physical_ controller by matching its real idVendor/idProduct, but `functionfs`'s emulated device deliberately shares those same IDs (impersonating real hardware) and would otherwise get caught by the same rule. A `DEVPATH!="/devices/platform/dummy_hcd.0/*"` guard on those stanzas excludes it, since real hardware never appears under that path.
+
+https://dualshock-tools.github.io/

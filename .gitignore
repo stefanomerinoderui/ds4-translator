@@ -13,3 +13,6 @@ VERSION
 # Local context / operational files
 .sober/
 .agents/
+
+# Release signing key material (private key!). Never commit; move it to safe storage.
+.signing/
