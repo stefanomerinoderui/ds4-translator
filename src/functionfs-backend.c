@@ -62,7 +62,7 @@ static char virtual_mac_str[32] = "74:e7:d6:3a:47:e8";
 void functionfs_set_mac(const uint8_t mac_le[6], const char *mac_str) {
     if (!mac_le || !mac_str) return;
     memcpy(virtual_mac_le, mac_le, sizeof(virtual_mac_le));
-    snprintf(virtual_mac_str, sizeof(virtual_mac_str), "%s", mac_str);
+    (void)snprintf(virtual_mac_str, sizeof(virtual_mac_str), "%s", mac_str);
 }
 
 // Same data tables raw-gadget-backend.c's/hidg-backend.c's/main.cpp's
@@ -745,7 +745,7 @@ bool functionfs_init(struct FunctionFSDevice *dev, int target_type, const char *
         ok = ok && write_file_str(GADGET_DIR "/strings/0x409/product", product_line);
     }
     char serial_line[40];
-    snprintf(serial_line, sizeof(serial_line), "%s\n", virtual_mac_str);
+    (void)snprintf(serial_line, sizeof(serial_line), "%s\n", virtual_mac_str);
     ok = ok && write_file_str(GADGET_DIR "/strings/0x409/serialnumber", serial_line);
 
     ok = ok && make_dir(GADGET_DIR "/configs/c.1");
