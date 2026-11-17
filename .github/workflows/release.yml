@@ -3,7 +3,7 @@ name: Release
 # Builds ds4-translator/ds4-ctl and publishes a downloadable tarball whenever
 # a version tag (v*) is pushed to main, so users can install without needing
 # a compiler (see README's "Download a release" instructions), and updates the
-# Arch Linux pacman repository with the same version.
+# Arch Linux pacman repository (on GitHub Pages) with the same version.
 on:
   push:
     tags:
@@ -81,16 +81,15 @@ jobs:
           files: ${{ env.ASSET_PATH }}
           generate_release_notes: true
 
-  # Publishes the same tag as a pacman repository (see
+  # Builds the same tag as pacman packages and a repository database (see
   # packaging/arch/README.md). Runs only after the tarball release succeeded,
-  # so a tag that fails to build publishes nothing. The repository lives in
-  # the assets of one rolling release tagged `arch-repo`, so its URL never
-  # changes; each run replaces the packages and database there.
+  # so a tag that fails to build publishes nothing. The result is handed to the
+  # `deploy-arch-repo` job below as a workflow artifact.
   arch-repo:
     needs: build-and-release
     runs-on: ubuntu-latest
-    env:
-      REPO_TAG: arch-repo
+    permissions:
+      contents: read
     container: archlinux:base-devel
     steps:
       - name: Install build dependencies
@@ -101,7 +100,7 @@ jobs:
           # before checkout so the full history and tags are fetched with
           # git rather than a source archive.
           printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> /etc/pacman.conf
-          pacman -Syu --noconfirm --needed git github-cli \
+          pacman -Syu --noconfirm --needed git \
             clang bpf cmake qt6-base qt6-declarative qt6-svg \
             lib32-glibc lib32-gcc-libs libusb libbpf systemd kmod
 
@@ -133,25 +132,56 @@ jobs:
           fi
           runuser -u builder -- make arch-pkg arch-repo $sign
 
-      - name: Publish to the rolling release
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Assemble the site
         run: |
-          # make_latest=false: the README's installer reads releases/latest,
-          # which must keep pointing at the real versioned releases.
-          gh release view "$REPO_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
-            gh release create "$REPO_TAG" --repo "$GITHUB_REPOSITORY" \
-              --title "Arch package repository" --latest=false \
-              --notes "Rolling pacman repository, rebuilt on every release. Not a versioned release: see packaging/arch/README.md for how to use it."
-
+          # Only what pacman and users fetch: the packages, the database, their
+          # signatures and the public key. The .sig files are absent when the
+          # build was unsigned.
+          mkdir site
           cd build/arch
-          cp "$GITHUB_WORKSPACE/packaging/arch/ds4-translator.pub.asc" .
-          new=$(ls *.pkg.tar.zst *.pkg.tar.zst.sig ds4-translator.db ds4-translator.db.sig \
-                   ds4-translator.files ds4-translator.files.sig ds4-translator.pub.asc 2>/dev/null)
-          gh release upload "$REPO_TAG" $new --repo "$GITHUB_REPOSITORY" --clobber
+          cp *.pkg.tar.zst ds4-translator.db ds4-translator.files ../../site/
+          cp *.pkg.tar.zst.sig ds4-translator.db.sig ds4-translator.files.sig ../../site/ 2>/dev/null || true
+          cp "$GITHUB_WORKSPACE/packaging/arch/ds4-translator.pub.asc" \
+             "$GITHUB_WORKSPACE/packaging/arch/index.html" ../../site/
 
-          # Drop assets from earlier builds that are no longer in the database.
-          for old in $(gh release view "$REPO_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name'); do
-            echo "$new" | grep -qx "$old" || \
-              gh release delete-asset "$REPO_TAG" "$old" --repo "$GITHUB_REPOSITORY" --yes
-          done
+      - name: Upload the site
+        uses: actions/upload-artifact@v4
+        with:
+          name: arch-repo-site
+          path: site/
+          if-no-files-found: error
+
+  # Publishes the pacman repository on GitHub Pages. A release's assets can't
+  # be the home of a rolling repository: with release immutability enabled
+  # they are locked once published, while Pages replaces the whole site on each
+  # deploy and keeps one stable URL. Needs Pages set to the "GitHub Actions"
+  # source and a `v*` tag rule on the github-pages environment (see
+  # packaging/arch/README.md).
+  deploy-arch-repo:
+    needs: arch-repo
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    # One deploy at a time; never cancel one that is already publishing.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - name: Download the site
+        uses: actions/download-artifact@v4
+        with:
+          name: arch-repo-site
+          path: site
+
+      - name: Package the site for Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
