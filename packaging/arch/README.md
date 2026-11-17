@@ -13,7 +13,7 @@ The packages are `x86_64` only. The packages and the repository database are sig
    fingerprint pacman prints matches the one above before signing it:
 
    ```bash
-   curl -fsSL https://github.com/Billones142/ds4-translator/releases/download/arch-repo/ds4-translator.pub.asc \
+   curl -fsSL https://stefanomerinoderui.github.io/ds4-translator/ds4-translator.pub.asc \
      | sudo pacman-key --add -
    sudo pacman-key --finger 14B18F8091C2FC4AA6D95D3D38DD1B46397B1836
    sudo pacman-key --lsign-key 14B18F8091C2FC4AA6D95D3D38DD1B46397B1836
@@ -25,7 +25,7 @@ The packages are `x86_64` only. The packages and the repository database are sig
    ```ini
    [ds4-translator]
    SigLevel = Required
-   Server = https://github.com/Billones142/ds4-translator/releases/download/arch-repo
+   Server = https://stefanomerinoderui.github.io/ds4-translator
    ```
 
 3. Sync:
@@ -74,9 +74,9 @@ service.
   a time and is replaced by each release, so you cannot downgrade from it. To
   pin an older version, use the copy pacman keeps in `/var/cache/pacman/pkg/`
   (`sudo pacman -U <file>`) or build that tag yourself (`make arch-pkg`).
-- **The repository can briefly look inconsistent while a release is being
-  published** (a few seconds): pacman may report a 404 for a package file or a
-  signature/size mismatch. Run `sudo pacman -Sy` again.
+- **New releases can take a few minutes to show up.** GitHub Pages caches
+  files for a short while after a deploy, so `pacman -Sy` right after a release
+  may still see the old database.
 - **The 32-bit spoof shim** is optional. Install `lib32-glibc` if you play
   32-bit games that need it.
 
@@ -91,17 +91,32 @@ succeeded:
 2. It runs `make arch-pkg arch-repo` as an unprivileged user:
    - `arch-pkg` builds both packages with `makepkg` from `packaging/arch/PKGBUILD.in`;
    - `arch-repo` runs `repo-add` to create the `ds4-translator` database.
-3. It uploads the packages and the database to a release tagged `arch-repo`,
-   created on the first run, and removes assets left over from earlier builds.
-   That release is never marked as "latest", so the one-line installer, which
-   reads `releases/latest`, keeps using the versioned releases.
+3. It hands the packages, the database, their signatures and the public key
+   to a second job, `deploy-arch-repo`, which publishes them on GitHub Pages.
+   Pages replaces the whole site on every deploy, so the repository always
+   holds exactly one build.
+
+Pages, not a release, because a rolling release can't work with GitHub's
+release immutability: assets are locked once a release is published.
 
 pacman asks for `ds4-translator.db` and `ds4-translator.files`, so those are
-uploaded as plain copies: release assets cannot be symlinks, which is what
+published as plain copies: static hosting cannot serve the symlinks that
 `repo-add` normally leaves behind.
 
 The dependency list in the workflow mirrors `makedepends` and `depends` in
 `packaging/arch/PKGBUILD.in`. Update both together.
+
+### One-time GitHub Pages setup
+
+1. **Settings → Pages → Build and deployment → Source: GitHub Actions.**
+2. **Settings → Environments → `github-pages`** (created by step 1, or on the
+   first deploy). Under *Deployment branches and tags*, the default only
+   allows the default branch, but releases deploy from tags: add a rule of
+   type **Tag** with pattern `v*`.
+
+The site is then at `https://<owner>.github.io/<repo>/`. If the repository is
+renamed or moved to another owner, update the URLs in this file: Pages
+addresses do not redirect.
 
 Build the same repository locally (as a regular user, on an Arch-based
 system):
@@ -126,7 +141,7 @@ and publishes unsigned (with a warning in the log) when it is not, so forks
 still work. It imports the key into the build user's keyring, passes its
 fingerprint as `ARCH_SIGN_KEY`, and `make` then runs `makepkg --sign` and
 `repo-add --sign`. The `.sig` files and the public key
-(`packaging/arch/ds4-translator.pub.asc`) are uploaded with the packages.
+(`packaging/arch/ds4-translator.pub.asc`) are published with the packages.
 
 The secret should hold only the **signing subkey** of the release key, never
 the primary key:
