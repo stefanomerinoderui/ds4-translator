@@ -251,6 +251,11 @@ ARCH_PKG_DIR = $(BUILD_DIR)/arch
 # pacman versions can't contain '-': v0.6.0-7-g32cad17-dirty -> 0.6.0.r7.g32cad17.dirty
 ARCH_PKGVER := $(shell echo '$(VERSION)' | sed -e 's/^v//' -e 's/-\([0-9]*\)-g/.r\1.g/' -e 's/-/./g')
 
+# Optional GPG key (fingerprint or ID) to sign the packages and the repository
+# database with; unsigned when empty. Needs the key in the caller's keyring.
+ARCH_SIGN_KEY ?=
+ARCH_SIGN_FLAGS = $(if $(ARCH_SIGN_KEY),--sign --key $(ARCH_SIGN_KEY))
+
 arch-pkg:
 	@if [ "$$(id -u)" -eq 0 ]; then echo "arch-pkg: run as a regular user, not root (makepkg refuses root)." >&2; exit 1; fi
 	@command -v makepkg >/dev/null || { echo "arch-pkg: makepkg not found -- this target needs an Arch-based system." >&2; exit 1; }
@@ -264,11 +269,30 @@ arch-pkg:
 	rm -rf $(ARCH_PKG_DIR)/ds4-translator-$(ARCH_PKGVER)
 	sed 's|@PKGVER@|$(ARCH_PKGVER)|' packaging/arch/PKGBUILD.in > $(ARCH_PKG_DIR)/PKGBUILD
 	cp packaging/arch/ds4-translator.install $(ARCH_PKG_DIR)/
-	cd $(ARCH_PKG_DIR) && makepkg -f --cleanbuild
+	cd $(ARCH_PKG_DIR) && makepkg -f --cleanbuild $(ARCH_SIGN_FLAGS)
 	@echo
 	@echo "Packages built in $(ARCH_PKG_DIR):"
 	@ls -1 $(ARCH_PKG_DIR)/*.pkg.tar.*
 	@echo "Install with: sudo pacman -U $(ARCH_PKG_DIR)/ds4-translator-*.pkg.tar.zst"
+
+# Turns the packages `arch-pkg` built into a pacman repository named
+# "ds4-translator" in the same directory (see packaging/arch/README.md).
+# repo-add leaves ds4-translator.db/.files as symlinks to the .tar.zst
+# files; static hosts such as GitHub release assets can't serve symlinks, so
+# they are replaced with real copies.
+arch-repo:
+	@command -v repo-add >/dev/null || { echo "arch-repo: repo-add not found -- this target needs pacman's tools." >&2; exit 1; }
+	@ls $(ARCH_PKG_DIR)/*.pkg.tar.zst >/dev/null 2>&1 || { echo "arch-repo: no packages in $(ARCH_PKG_DIR) -- run 'make arch-pkg' first." >&2; exit 1; }
+	cd $(ARCH_PKG_DIR) && rm -f ds4-translator.db* ds4-translator.files* && \
+	    repo-add $(ARCH_SIGN_FLAGS) ds4-translator.db.tar.zst *.pkg.tar.zst && \
+	    rm ds4-translator.db ds4-translator.files && \
+	    cp ds4-translator.db.tar.zst ds4-translator.db && \
+	    cp ds4-translator.files.tar.zst ds4-translator.files
+	if [ -n "$(ARCH_SIGN_KEY)" ]; then \
+	    cd $(ARCH_PKG_DIR) && rm -f ds4-translator.db.sig ds4-translator.files.sig && \
+	    cp ds4-translator.db.tar.zst.sig ds4-translator.db.sig && \
+	    cp ds4-translator.files.tar.zst.sig ds4-translator.files.sig; \
+	fi
 
 # Mirrors install: removes the UI too. uninstall-cli leaves it in place.
 uninstall: uninstall-ui uninstall-cli
@@ -291,4 +315,4 @@ uninstall-cli:
 	systemctl daemon-reload
 
 .PHONY: all debug clean install install-cli stage-cli uninstall uninstall-cli \
-        ui install-ui stage-ui uninstall-ui install-ui-user uninstall-ui-user arch-pkg
+        ui install-ui stage-ui uninstall-ui install-ui-user uninstall-ui-user arch-pkg arch-repo

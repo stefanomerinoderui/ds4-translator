@@ -62,7 +62,7 @@ sudo make install
 
 ### Option 3: Arch Linux package
 
-Builds pacman packages from the current checkout (run as a regular user — `makepkg` refuses root; missing build dependencies are reported, not installed):
+Arch users can install from a pacman repository that is updated with every release, see [packaging/arch/README.md](packaging/arch/README.md). To build the packages yourself instead, this builds them from the current checkout (run as a regular user — `makepkg` refuses root; missing build dependencies are reported, not installed):
 
 ```bash
 make arch-pkg
