@@ -100,7 +100,11 @@ static const char *virtual_mac_serial(void) {
     FILE *f = fopen("/run/ds4-translator/virtual-mac", "r");
     if (f) {
         if (fgets(cached, sizeof(cached), f)) {
-            cached[strcspn(cached, "\r\n")] = '\0';
+            // Clamp explicitly: the analyzer treats strcspn()'s result as a
+            // tainted index (file input) and can't see it is < sizeof(cached).
+            size_t len = strcspn(cached, "\r\n");
+            if (len >= sizeof(cached)) len = sizeof(cached) - 1;
+            cached[len] = '\0';
         }
         (void)fclose(f);
     }
