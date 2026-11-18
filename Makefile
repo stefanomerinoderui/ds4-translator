@@ -294,6 +294,48 @@ arch-repo:
 	    cp ds4-translator.files.tar.zst.sig ds4-translator.files.sig; \
 	fi
 
+
+# ------------------------------------------------------------------- tests
+# GoogleTest suites under tests/. Everything here runs unprivileged on a
+# machine with no controller attached (CI runners included): the suites cover
+# the pure logic and the IPC/CLI surface, never real hardware. They are built
+# with the same STRICT_WARNINGS as the product so test code is linted too.
+TEST_BUILD_DIR = $(BUILD_DIR)/tests
+GTEST_CXXFLAGS := $(shell pkg-config --cflags gtest 2>/dev/null)
+GTEST_LDFLAGS  := $(shell pkg-config --libs gtest_main 2>/dev/null || echo -lgtest -lgtest_main)
+TEST_CXXFLAGS  = -O1 -g $(STRICT_WARNINGS) -std=c++17 -DDS4_VERSION=\"test\" -Isrc $(GTEST_CXXFLAGS)
+# Narrow the run to matching test names, e.g. GTEST_FILTER='*Sanity*'.
+GTEST_FILTER ?= *
+GTEST_ARGS    = --gtest_filter='$(GTEST_FILTER)' --gtest_output=xml:$(TEST_BUILD_DIR)/$(notdir $@).xml
+
+UNIT_TEST_BIN = $(TEST_BUILD_DIR)/unit-tests
+UNIT_TEST_SRC = $(wildcard tests/unit/*.cpp)
+# hid-unbind-detect.cpp needs write_hid_driver_sysfs from main.cpp; the stub
+# stands in so it links without the daemon.
+UNIT_LIB_SRC  = src/ipc-client.cpp src/hid-unbind-detect.cpp tests/stubs/hid_driver_sysfs_stub.cpp
+
+$(UNIT_TEST_BIN): $(UNIT_TEST_SRC) $(UNIT_LIB_SRC) $(wildcard src/*.h)
+	@mkdir -p $(TEST_BUILD_DIR)
+	$(CXX) $(TEST_CXXFLAGS) -o $@ $(UNIT_TEST_SRC) $(UNIT_LIB_SRC) $(GTEST_LDFLAGS) -lpthread
+
+test-unit: $(UNIT_TEST_BIN)
+	$(UNIT_TEST_BIN) $(GTEST_ARGS)
+
+# Same unit suites under ASan+UBSan: memory/UB bugs in the parsers fail the run.
+SAN_TEST_BIN = $(TEST_BUILD_DIR)/unit-tests-san
+$(SAN_TEST_BIN): $(UNIT_TEST_SRC) $(UNIT_LIB_SRC) $(wildcard src/*.h)
+	@mkdir -p $(TEST_BUILD_DIR)
+	$(CXX) $(TEST_CXXFLAGS) -fsanitize=address,undefined -fno-sanitize-recover=undefined \
+	    -fno-omit-frame-pointer -o $@ $(UNIT_TEST_SRC) $(UNIT_LIB_SRC) $(GTEST_LDFLAGS) -lpthread
+
+test-sanitize: $(SAN_TEST_BIN)
+	$(SAN_TEST_BIN) $(GTEST_ARGS)
+
+test-smoke: all
+	tests/smoke/smoke.sh $(BUILD_DIR)
+
+test: test-unit test-smoke
+
 # Mirrors install: removes the UI too. uninstall-cli leaves it in place.
 uninstall: uninstall-ui uninstall-cli
 
@@ -315,4 +357,5 @@ uninstall-cli:
 	systemctl daemon-reload
 
 .PHONY: all debug clean install install-cli stage-cli uninstall uninstall-cli \
-        ui install-ui stage-ui uninstall-ui install-ui-user uninstall-ui-user arch-pkg arch-repo
+        ui install-ui stage-ui uninstall-ui install-ui-user uninstall-ui-user arch-pkg arch-repo \
+        test test-unit test-smoke test-sanitize

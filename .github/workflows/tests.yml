@@ -1,0 +1,88 @@
+name: Tests
+
+# Runs on every PR and push to main, and is reused by release.yml so a tag
+# cannot publish a build that fails them. Everything here runs unprivileged
+# on a runner with no controller: see the "tests" section of the Makefile.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+  workflow_dispatch:
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # Fast gate: is the build usable, and do the narrow sanity checks pass?
+  smoke-sanity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-deps
+      - name: Build
+        run: make all
+      - name: Smoke tests
+        run: make test-smoke
+      - name: Sanity tests
+        run: make test-unit GTEST_FILTER='*Sanity*:*Golden*'
+
+  # Unit, component and regression suites (all gtest binaries under tests/).
+  unit:
+    needs: smoke-sanity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-deps
+      - name: Run unit tests
+        run: make test-unit
+      - name: Upload JUnit XML
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results
+          path: build/tests/*.xml
+
+  # Memory-safety / undefined-behaviour check of the same suites.
+  security:
+    needs: smoke-sanity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-deps
+      - name: Unit tests under ASan + UBSan
+        run: make test-sanitize
+
+  # Toolchain / distro compatibility.
+  compatibility:
+    needs: smoke-sanity
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+        compiler: [g++, clang++]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-deps
+      - name: Build and test with ${{ matrix.compiler }}
+        run: make all test CXX=${{ matrix.compiler }}
+
+  # Newer toolchain than Ubuntu: matches the Arch packaging target.
+  compatibility-arch:
+    needs: smoke-sanity
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      - name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm --needed git clang libusb libbpf bpf gtest pkgconf
+      - uses: actions/checkout@v4
+      - name: Build and test
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          make all test

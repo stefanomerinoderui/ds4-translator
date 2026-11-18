@@ -13,7 +13,12 @@ permissions:
   contents: write
 
 jobs:
+  # A tag must not publish a build that fails the test suite.
+  tests:
+    uses: ./.github/workflows/tests.yml
+
   build-and-release:
+    needs: tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
