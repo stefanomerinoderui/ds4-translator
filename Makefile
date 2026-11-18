@@ -340,6 +340,28 @@ $(COMPONENT_TEST_BIN): $(COMPONENT_TEST_SRC) src/ipc-client.cpp $(wildcard src/*
 test-component: $(COMPONENT_TEST_BIN)
 	$(COMPONENT_TEST_BIN) $(GTEST_ARGS)
 
+# Performance budgets on the per-report hot paths; prints measured ns/op.
+PERF_TEST_BIN = $(TEST_BUILD_DIR)/perf-tests
+$(PERF_TEST_BIN): tests/perf/bench_protocol.cpp src/ipc-client.cpp src/translate.cpp $(wildcard src/*.h)
+	@mkdir -p $(TEST_BUILD_DIR)
+	$(CXX) $(TEST_CXXFLAGS) -O2 -o $@ tests/perf/bench_protocol.cpp src/ipc-client.cpp src/translate.cpp $(GTEST_LDFLAGS) -lpthread
+
+test-perf: $(PERF_TEST_BIN)
+	$(PERF_TEST_BIN) $(GTEST_ARGS)
+
+# libFuzzer over the text parsers (needs clang). FUZZ_SECONDS bounds the run;
+# crashing inputs are left in $(TEST_BUILD_DIR)/fuzz-crashes.
+FUZZ_SECONDS ?= 30
+FUZZ_BIN = $(TEST_BUILD_DIR)/fuzz-parsers
+$(FUZZ_BIN): tests/fuzz/fuzz_parsers.cpp src/ipc-client.cpp src/hid-unbind-detect.cpp tests/stubs/hid_driver_sysfs_stub.cpp $(wildcard src/*.h)
+	@mkdir -p $(TEST_BUILD_DIR)
+	clang++ -g -O1 -std=c++17 -Isrc -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=undefined \
+	    -o $@ tests/fuzz/fuzz_parsers.cpp src/ipc-client.cpp src/hid-unbind-detect.cpp tests/stubs/hid_driver_sysfs_stub.cpp
+
+test-fuzz: $(FUZZ_BIN)
+	@mkdir -p $(TEST_BUILD_DIR)/fuzz-crashes $(TEST_BUILD_DIR)/fuzz-corpus
+	$(FUZZ_BIN) -max_total_time=$(FUZZ_SECONDS) -artifact_prefix=$(TEST_BUILD_DIR)/fuzz-crashes/ $(TEST_BUILD_DIR)/fuzz-corpus
+
 test-smoke: all
 	tests/smoke/smoke.sh $(BUILD_DIR)
 
@@ -372,4 +394,4 @@ uninstall-cli:
 
 .PHONY: all debug clean install install-cli stage-cli uninstall uninstall-cli \
         ui install-ui stage-ui uninstall-ui install-ui-user uninstall-ui-user arch-pkg arch-repo \
-        test test-unit test-component test-smoke test-integration test-sanitize
+        test test-unit test-perf test-fuzz test-component test-smoke test-integration test-sanitize

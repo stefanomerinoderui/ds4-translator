@@ -66,6 +66,14 @@ jobs:
       - uses: ./.github/actions/setup-deps
       - name: Unit tests under ASan + UBSan
         run: make test-sanitize
+      - name: Fuzz the text parsers
+        run: make test-fuzz FUZZ_SECONDS=60
+      - name: Upload fuzzer crashes
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes
+          path: build/tests/fuzz-crashes/
 
   # Toolchain / distro compatibility.
   compatibility:
@@ -96,3 +104,16 @@ jobs:
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           make all test
+
+  # Per-report hot-path budgets. Generous so runner noise does not flake, but
+  # an algorithmic regression trips them.
+  performance:
+    needs: unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-deps
+      - name: Performance budgets
+        run: |
+          make test-perf | tee perf.txt
+          { echo '### Performance'; echo '```'; grep '^PERF' perf.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"

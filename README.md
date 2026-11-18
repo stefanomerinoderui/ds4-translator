@@ -179,6 +179,8 @@ make test-component    # IPC transport against a fake daemon   (tests/component)
 make test-smoke        # built binaries start and reject bad input (tests/smoke)
 make test-integration  # real daemon + ds4-ctl on a scratch dir (tests/integration)
 make test-sanitize     # unit suite under ASan + UBSan
+make test-perf         # per-report hot-path time budgets (tests/perf)
+make test-fuzz         # libFuzzer over the text parsers, needs clang (FUZZ_SECONDS=30)
 make test-unit GTEST_FILTER='*Golden*'   # narrow to matching tests
 ```
 
