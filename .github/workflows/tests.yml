@@ -54,7 +54,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-deps
-      - name: Daemon + ds4-ctl integration tests
+      # Includes the daemon security suite, which uses passwordless sudo
+      # (available on GitHub runners) to talk to the socket as another uid.
+      - name: Daemon + ds4-ctl integration and security tests
         run: make test-integration
 
   # Memory-safety / undefined-behaviour check of the same suites.
@@ -66,6 +68,8 @@ jobs:
       - uses: ./.github/actions/setup-deps
       - name: Unit tests under ASan + UBSan
         run: make test-sanitize
+      - name: Unit + transport tests under ThreadSanitizer
+        run: make test-tsan
       - name: Fuzz the text parsers
         run: make test-fuzz FUZZ_SECONDS=60
       - name: Upload fuzzer crashes
@@ -89,6 +93,49 @@ jobs:
       - uses: ./.github/actions/setup-deps
       - name: Build and test with ${{ matrix.compiler }}
         run: make all test CXX=${{ matrix.compiler }}
+
+  # Hardening flags, systemd unit, udev rules, workflows, shell scripts and
+  # secrets (tests/security/static_checks.sh). Known weaknesses are pinned, see
+  # docs/security-findings.md.
+  security-static:
+    needs: smoke-sanity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # gitleaks scans history
+      - uses: ./.github/actions/setup-deps
+      - name: Install analysis tools
+        run: |
+          sudo apt-get install -y shellcheck clang-tools
+          # go install verifies modules against the Go checksum database, so
+          # these need no separately downloaded (unchecked) binaries.
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          go install github.com/zricethezav/gitleaks/v8@v8.24.2
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Static security checks
+        run: make test-security-static | tee security-static.txt
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo '### Static security checks'
+            echo '```'
+            grep -E '^(KNOWN|FIXED\?|FAIL|HARDENING|SYSTEMD)' security-static.txt || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Clang static analyzer (report only)
+        continue-on-error: true
+        run: |
+          make clean
+          scan-build -o scan-report --status-bugs make all
+      - name: Upload analyzer report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scan-build-report
+          path: scan-report/
+          if-no-files-found: ignore
 
   # Newer toolchain than Ubuntu: matches the Arch packaging target.
   compatibility-arch:

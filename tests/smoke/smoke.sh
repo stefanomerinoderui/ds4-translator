@@ -3,24 +3,9 @@
 # (make all), needs no root, no daemon and no controller.
 set -u
 BUILD_DIR="${1:-build}"
-fails=0
-
-pass() { printf 'ok   %s\n' "$1"; }
-fail() { printf 'FAIL %s\n' "$1"; fails=$((fails + 1)); }
-
-# expect_rc <expected> <description> <cmd...>; optional EXPECT_OUT grep pattern.
-expect_rc() {
-    local want="$1" desc="$2"; shift 2
-    local out rc
-    out="$("$@" 2>&1)"; rc=$?
-    if [ "$rc" -ne "$want" ]; then
-        fail "$desc (exit $rc, wanted $want)"
-    elif [ -n "${EXPECT_OUT:-}" ] && ! grep -Eq "$EXPECT_OUT" <<<"$out"; then
-        fail "$desc (output missing /$EXPECT_OUT/)"
-    else
-        pass "$desc"
-    fi
-}
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../lib/assert.sh
+. "$HERE/../lib/assert.sh"
 
 for bin in ds4-translator ds4-ctl libudev-sony-spoof.so hid-bpf-transport.bpf.o; do
     [ -e "$BUILD_DIR/$bin" ] && pass "built: $bin" || fail "missing build artifact: $bin"
@@ -49,5 +34,4 @@ else
     fail "BPF object has BPF machine type"
 fi
 
-[ "$fails" -eq 0 ] && echo "smoke: all checks passed" || echo "smoke: $fails check(s) failed"
-exit "$((fails > 0))"
+finish smoke

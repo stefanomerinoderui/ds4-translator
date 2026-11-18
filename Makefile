@@ -332,13 +332,27 @@ test-sanitize: $(SAN_TEST_BIN)
 	$(SAN_TEST_BIN) $(GTEST_ARGS)
 
 COMPONENT_TEST_BIN = $(TEST_BUILD_DIR)/component-tests
-COMPONENT_TEST_SRC = $(wildcard tests/component/*.cpp)
+COMPONENT_TEST_SRC = tests/component/test_ipc_transport.cpp
 $(COMPONENT_TEST_BIN): $(COMPONENT_TEST_SRC) src/ipc-client.cpp $(wildcard src/*.h)
 	@mkdir -p $(TEST_BUILD_DIR)
 	$(CXX) $(TEST_CXXFLAGS) -o $@ $(COMPONENT_TEST_SRC) src/ipc-client.cpp $(GTEST_LDFLAGS) -lpthread
 
-test-component: $(COMPONENT_TEST_BIN)
+# udev-spoof.so against a stub libudev (see tests/stubs/libudev_stub.c): the
+# shim dlopen()s libudev.so.1, so the stub is put first on LD_LIBRARY_PATH.
+SPOOF_STUB_DIR  = $(TEST_BUILD_DIR)/udev-stub
+SPOOF_TEST_BIN  = $(TEST_BUILD_DIR)/spoof-tests
+$(SPOOF_STUB_DIR)/libudev.so.1: tests/stubs/libudev_stub.c
+	@mkdir -p $(SPOOF_STUB_DIR)
+	$(CC) -fPIC -shared -Wl,-soname,libudev.so.1 -o $@ $<
+
+$(SPOOF_TEST_BIN): tests/component/test_udev_spoof.cpp $(TARGET_SPOOF)
+	@mkdir -p $(TEST_BUILD_DIR)
+	$(CXX) $(TEST_CXXFLAGS) -o $@ tests/component/test_udev_spoof.cpp \
+	    -L$(BUILD_DIR) -l:libudev-sony-spoof.so -Wl,-rpath,$(abspath $(BUILD_DIR)) $(GTEST_LDFLAGS) -lpthread
+
+test-component: $(COMPONENT_TEST_BIN) $(SPOOF_TEST_BIN) $(SPOOF_STUB_DIR)/libudev.so.1
 	$(COMPONENT_TEST_BIN) $(GTEST_ARGS)
+	LD_LIBRARY_PATH=$(SPOOF_STUB_DIR) $(SPOOF_TEST_BIN) $(GTEST_ARGS)
 
 # Performance budgets on the per-report hot paths; prints measured ns/op.
 PERF_TEST_BIN = $(TEST_BUILD_DIR)/perf-tests
@@ -349,18 +363,41 @@ $(PERF_TEST_BIN): tests/perf/bench_protocol.cpp src/ipc-client.cpp src/translate
 test-perf: $(PERF_TEST_BIN)
 	$(PERF_TEST_BIN) $(GTEST_ARGS)
 
-# libFuzzer over the text parsers (needs clang). FUZZ_SECONDS bounds the run;
-# crashing inputs are left in $(TEST_BUILD_DIR)/fuzz-crashes.
+# libFuzzer over the text parsers and the uevent reader (needs clang).
+# FUZZ_SECONDS bounds each target; crashing inputs are left in
+# $(TEST_BUILD_DIR)/fuzz-crashes.
 FUZZ_SECONDS ?= 30
-FUZZ_BIN = $(TEST_BUILD_DIR)/fuzz-parsers
-$(FUZZ_BIN): tests/fuzz/fuzz_parsers.cpp src/ipc-client.cpp src/hid-unbind-detect.cpp tests/stubs/hid_driver_sysfs_stub.cpp $(wildcard src/*.h)
+FUZZ_TARGETS = parsers uevent
+FUZZ_LIB_SRC = src/ipc-client.cpp src/hid-unbind-detect.cpp tests/stubs/hid_driver_sysfs_stub.cpp
+$(TEST_BUILD_DIR)/fuzz-%: tests/fuzz/fuzz_%.cpp $(FUZZ_LIB_SRC) $(wildcard src/*.h)
 	@mkdir -p $(TEST_BUILD_DIR)
 	clang++ -g -O1 -std=c++17 -Isrc -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=undefined \
-	    -o $@ tests/fuzz/fuzz_parsers.cpp src/ipc-client.cpp src/hid-unbind-detect.cpp tests/stubs/hid_driver_sysfs_stub.cpp
+	    -o $@ $< $(FUZZ_LIB_SRC)
 
-test-fuzz: $(FUZZ_BIN)
-	@mkdir -p $(TEST_BUILD_DIR)/fuzz-crashes $(TEST_BUILD_DIR)/fuzz-corpus
-	$(FUZZ_BIN) -max_total_time=$(FUZZ_SECONDS) -artifact_prefix=$(TEST_BUILD_DIR)/fuzz-crashes/ $(TEST_BUILD_DIR)/fuzz-corpus
+test-fuzz: $(addprefix $(TEST_BUILD_DIR)/fuzz-,$(FUZZ_TARGETS))
+	@mkdir -p $(TEST_BUILD_DIR)/fuzz-crashes
+	@set -e; for t in $(FUZZ_TARGETS); do \
+	    mkdir -p $(TEST_BUILD_DIR)/fuzz-corpus-$$t; \
+	    echo "== fuzzing $$t for $(FUZZ_SECONDS)s"; \
+	    $(TEST_BUILD_DIR)/fuzz-$$t -max_total_time=$(FUZZ_SECONDS) \
+	        -artifact_prefix=$(TEST_BUILD_DIR)/fuzz-crashes/ $(TEST_BUILD_DIR)/fuzz-corpus-$$t; \
+	done
+
+# Unit + component transport suites under ThreadSanitizer: guards the shared
+# client code against data races (the udev shim and daemon are covered by
+# docs/security-findings.md instead).
+TSAN_UNIT_BIN = $(TEST_BUILD_DIR)/unit-tests-tsan
+$(TSAN_UNIT_BIN): $(UNIT_TEST_SRC) tests/component/test_ipc_transport.cpp $(UNIT_LIB_SRC) $(wildcard src/*.h)
+	@mkdir -p $(TEST_BUILD_DIR)
+	$(CXX) $(TEST_CXXFLAGS) -fsanitize=thread -o $@ $(UNIT_TEST_SRC) tests/component/test_ipc_transport.cpp \
+	    $(UNIT_LIB_SRC) $(GTEST_LDFLAGS) -lpthread
+
+test-tsan: $(TSAN_UNIT_BIN)
+	$(TSAN_UNIT_BIN) $(GTEST_ARGS)
+
+# Hardening flags, systemd unit, udev rules, workflows, shell scripts, secrets.
+test-security-static: all
+	tests/security/static_checks.sh $(BUILD_DIR)
 
 test-smoke: all
 	tests/smoke/smoke.sh $(BUILD_DIR)
@@ -369,8 +406,9 @@ test-smoke: all
 # production daemon is running on this machine.
 test-integration: all
 	tests/integration/test_daemon_ctl.sh $(BUILD_DIR)
+	tests/integration/test_daemon_security.sh $(BUILD_DIR)
 
-test: test-unit test-component test-smoke test-integration
+test: test-unit test-component test-smoke test-integration test-security-static
 
 # Mirrors install: removes the UI too. uninstall-cli leaves it in place.
 uninstall: uninstall-ui uninstall-cli
@@ -394,4 +432,4 @@ uninstall-cli:
 
 .PHONY: all debug clean install install-cli stage-cli uninstall uninstall-cli \
         ui install-ui stage-ui uninstall-ui install-ui-user uninstall-ui-user arch-pkg arch-repo \
-        test test-unit test-perf test-fuzz test-component test-smoke test-integration test-sanitize
+        test test-unit test-perf test-fuzz test-component test-smoke test-integration test-sanitize test-tsan test-security-static
