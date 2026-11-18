@@ -167,6 +167,28 @@ To disable the service and remove all installed files:
 sudo make uninstall
 ```
 
+## Running the tests
+
+Tests need no root and no controller. They use GoogleTest (`libgtest-dev` on
+Debian/Ubuntu, `gtest` on Arch) plus the same build dependencies as `make`.
+
+```bash
+make test              # unit + component + smoke + integration
+make test-unit         # protocol, translation core, parsers   (tests/unit)
+make test-component    # IPC transport against a fake daemon   (tests/component)
+make test-smoke        # built binaries start and reject bad input (tests/smoke)
+make test-integration  # real daemon + ds4-ctl on a scratch dir (tests/integration)
+make test-sanitize     # unit suite under ASan + UBSan
+make test-unit GTEST_FILTER='*Golden*'   # narrow to matching tests
+```
+
+`DS4_RUNTIME_DIR`, `DS4_STATE_DIR` and `DS4_CONFIG_PATH` (see `src/paths.h`)
+relocate the daemon's socket, state and config, which is how the integration
+test runs a daemon next to a production one. It refuses to start while a real
+daemon is running unless `DS4_TEST_FORCE=1` is set. Every PR and every release
+tag runs these through `.github/workflows/tests.yml`. A bug fix should add a
+test in the `Regression` suite.
+
 ## Known Issues
 
 - **Emulated DS4 not detected in some Wine/Proton games — fixed by the `functionfs` backend**: `uhid` simply doesn't work for this: some titles (confirmed: Satisfactory) never detect a DS4 emulated through it, no matter the configuration, even in physical-passthrough mode — this was previously worked around by emulating a **DualSense** instead (`ds4-ctl set-type dualsense`), which never showed the issue. `functionfs` fixes it, most likely because it's the first backend to give the game a real USB enumeration handshake to detect. `ds4-ctl set-backend ds4 functionfs` (the default) is confirmed working end-to-end, including in titles that never detected the `uhid` DS4.

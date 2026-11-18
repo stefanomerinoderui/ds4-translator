@@ -34,6 +34,7 @@
 #include "usb-hid-transport.h"
 #include "hid-bpf-transport.h"
 #include "ipc-client.h"
+#include "paths.h"
 #include "translate.h"
 
 #ifndef DS4_VERSION
@@ -438,7 +439,7 @@ const char* hide_method_config_str(HideMethod method) {
 }
 
 HideMethod read_hide_method_config(HideMethod default_method) {
-    std::ifstream f("/etc/ds4-translator.conf");
+    std::ifstream f(ds4paths::config_path());
     if (!f.is_open()) {
         return default_method;
     }
@@ -466,7 +467,7 @@ HideMethod read_hide_method_config(HideMethod default_method) {
 // unlink hide method -- see the MAC squat block further down for why the other
 // methods can't use it. Defaults to on.
 bool read_mac_squat_config(bool default_enabled) {
-    std::ifstream f("/etc/ds4-translator.conf");
+    std::ifstream f(ds4paths::config_path());
     if (!f.is_open()) {
         return default_enabled;
     }
@@ -559,10 +560,12 @@ static bool wait_for_hidraw_under(const std::string& sysfs_path, int timeout_ms)
 // connect and remembered on disk across restarts.
 static const char kDefaultVirtualMac[] = "74:e7:d6:3a:47:e8";
 static const uint8_t kDefaultVirtualMacLe[6] = { 0xe8, 0x47, 0x3a, 0xd6, 0xe7, 0x74 };
-static const char kPhysicalMacStateDir[] = "/var/lib/ds4-translator";
-static const char kPhysicalMacStatePath[] = "/var/lib/ds4-translator/last-physical-mac";
-static const char kVirtualMacRuntimeDir[] = "/run/ds4-translator";
-static const char kVirtualMacRuntimePath[] = "/run/ds4-translator/virtual-mac";
+static const std::string kPhysicalMacStateDir = ds4paths::state_dir();
+static const std::string kPhysicalMacStatePath = kPhysicalMacStateDir + "/last-physical-mac";
+// virtual-mac is also read by udev-spoof.c inside other processes, which does
+// not honour DS4_RUNTIME_DIR; the override is for tests only.
+static const std::string kVirtualMacRuntimeDir = ds4paths::runtime_dir() + "/ds4-translator";
+static const std::string kVirtualMacRuntimePath = kVirtualMacRuntimeDir + "/virtual-mac";
 
 // Identity the emulated device is currently advertising. Both forms are kept:
 // uhid's uniq and the USB gadget's serialnumber want the string, DS4 feature
@@ -1652,7 +1655,7 @@ int setup_ipc_socket() {
     struct sockaddr_un addr;
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, "/run/ds4-translator.sock", sizeof(addr.sun_path) - 1);
+    strncpy(addr.sun_path, ds4paths::socket_path().c_str(), sizeof(addr.sun_path) - 1);
 
     unlink(addr.sun_path);
 
@@ -1675,7 +1678,7 @@ int setup_ipc_socket() {
 }
 
 ControllerType read_config(ControllerType default_type) {
-    std::ifstream f("/etc/ds4-translator.conf");
+    std::ifstream f(ds4paths::config_path());
     if (!f.is_open()) {
         return default_type;
     }
@@ -1720,7 +1723,7 @@ const char* backend_type_config_str(BackendType backend) {
 // what actually fixed that; DualSense never showed the issue on either.
 // Defaults reflect that: ds4->functionfs, dualsense->uhid.
 BackendType read_backend_config(ControllerType type, BackendType default_backend) {
-    std::ifstream f("/etc/ds4-translator.conf");
+    std::ifstream f(ds4paths::config_path());
     if (!f.is_open()) {
         return default_backend;
     }
@@ -1746,7 +1749,7 @@ BackendType read_backend_config(ControllerType type, BackendType default_backend
 // read_backend_config() above. Empty return means "no override configured"
 // -- callers fall back to their own backend-specific default name.
 std::string read_name_config(ControllerType type) {
-    std::ifstream f("/etc/ds4-translator.conf");
+    std::ifstream f(ds4paths::config_path());
     if (!f.is_open()) {
         return "";
     }
@@ -1829,7 +1832,7 @@ bool g_has_test_subscribers = false;
 
 void write_config(ControllerType type, BackendType ds4_backend, BackendType dualsense_backend,
                    const std::string& name_ds4, const std::string& name_dualsense) {
-    std::ofstream f("/etc/ds4-translator.conf");
+    std::ofstream f(ds4paths::config_path());
     if (f.is_open()) {
         f << "type=" << controller_type_config_str(type) << "\n";
         f << "backend_ds4=" << backend_type_config_str(ds4_backend) << "\n";
@@ -2360,15 +2363,15 @@ int main(int argc, char* argv[]) {
     if (server_fd < 0) {
         std::cerr << "Continuing without IPC socket support." << std::endl;
     } else {
-        std::cout << "IPC Unix socket created at /run/ds4-translator.sock" << std::endl;
+        std::cout << "IPC Unix socket created at " << ds4paths::socket_path() << std::endl;
     }
 
     if (target_type == TYPE_NONE) {
-        std::ofstream f("/run/ds4-translator.none");
+        std::ofstream f(ds4paths::none_sentinel_path());
         f.close();
         run_no_shell("udevadm", {"trigger"});
     } else {
-        unlink("/run/ds4-translator.none");
+        unlink(ds4paths::none_sentinel_path().c_str());
     }
 
     std::string phy_name = "";
@@ -3553,10 +3556,10 @@ int main(int argc, char* argv[]) {
             // rebind_physical_hid_driver() below does, well after this
             // point), so this reorder is a no-op for it either way.
             if (target_type == TYPE_NONE) {
-                std::ofstream f("/run/ds4-translator.none");
+                std::ofstream f(ds4paths::none_sentinel_path());
                 f.close();
             } else {
-                unlink("/run/ds4-translator.none");
+                unlink(ds4paths::none_sentinel_path().c_str());
             }
 
             // Captured before release_physical_connection() resets
@@ -4086,7 +4089,7 @@ int main(int argc, char* argv[]) {
     }
     if (server_fd >= 0) {
         close(server_fd);
-        unlink("/run/ds4-translator.sock");
+        unlink(ds4paths::socket_path().c_str());
     }
 
     // Destroy virtual controller BEFORE releasing/rebinding the physical

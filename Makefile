@@ -331,10 +331,24 @@ $(SAN_TEST_BIN): $(UNIT_TEST_SRC) $(UNIT_LIB_SRC) $(wildcard src/*.h)
 test-sanitize: $(SAN_TEST_BIN)
 	$(SAN_TEST_BIN) $(GTEST_ARGS)
 
+COMPONENT_TEST_BIN = $(TEST_BUILD_DIR)/component-tests
+COMPONENT_TEST_SRC = $(wildcard tests/component/*.cpp)
+$(COMPONENT_TEST_BIN): $(COMPONENT_TEST_SRC) src/ipc-client.cpp $(wildcard src/*.h)
+	@mkdir -p $(TEST_BUILD_DIR)
+	$(CXX) $(TEST_CXXFLAGS) -o $@ $(COMPONENT_TEST_SRC) src/ipc-client.cpp $(GTEST_LDFLAGS) -lpthread
+
+test-component: $(COMPONENT_TEST_BIN)
+	$(COMPONENT_TEST_BIN) $(GTEST_ARGS)
+
 test-smoke: all
 	tests/smoke/smoke.sh $(BUILD_DIR)
 
-test: test-unit test-smoke
+# Real daemon + ds4-ctl against a scratch dir (see paths.h); skips itself if a
+# production daemon is running on this machine.
+test-integration: all
+	tests/integration/test_daemon_ctl.sh $(BUILD_DIR)
+
+test: test-unit test-component test-smoke test-integration
 
 # Mirrors install: removes the UI too. uninstall-cli leaves it in place.
 uninstall: uninstall-ui uninstall-cli
@@ -358,4 +372,4 @@ uninstall-cli:
 
 .PHONY: all debug clean install install-cli stage-cli uninstall uninstall-cli \
         ui install-ui stage-ui uninstall-ui install-ui-user uninstall-ui-user arch-pkg arch-repo \
-        test test-unit test-smoke test-sanitize
+        test test-unit test-component test-smoke test-integration test-sanitize

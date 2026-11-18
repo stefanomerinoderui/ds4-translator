@@ -29,7 +29,7 @@ jobs:
       - name: Smoke tests
         run: make test-smoke
       - name: Sanity tests
-        run: make test-unit GTEST_FILTER='*Sanity*:*Golden*'
+        run: make test-unit test-component GTEST_FILTER='*Sanity*:*Golden*:Regression.*'
 
   # Unit, component and regression suites (all gtest binaries under tests/).
   unit:
@@ -38,14 +38,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-deps
-      - name: Run unit tests
-        run: make test-unit
+      - name: Run unit and component tests
+        run: make test-unit test-component
       - name: Upload JUnit XML
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: unit-test-results
           path: build/tests/*.xml
+
+  # Real daemon + ds4-ctl over a scratch socket (no root, no controller).
+  integration:
+    needs: smoke-sanity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-deps
+      - name: Daemon + ds4-ctl integration tests
+        run: make test-integration
 
   # Memory-safety / undefined-behaviour check of the same suites.
   security:

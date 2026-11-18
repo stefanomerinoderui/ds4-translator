@@ -10,9 +10,9 @@
 #include <sys/un.h>
 #include <unistd.h>
 
-namespace ds4ipc {
+#include "paths.h"
 
-const char *const kSocketPath = "/run/ds4-translator.sock";
+namespace ds4ipc {
 
 const char *const kIdentifyCommand = "identify";
 const char *const kLedResetCommand = "led --reset";
@@ -33,10 +33,14 @@ bool contains(const std::vector<std::string> &values, const std::string &value) 
 
 // Every command is a single short line, so one write is enough in practice;
 // a partial write is still retried rather than silently truncating.
+// send() with MSG_NOSIGNAL rather than write(): a daemon that closes the
+// connection mid-command must surface as an error here, not as a SIGPIPE
+// that kills the calling process (ds4-ctl, or the Qt UI, which does not
+// ignore the signal).
 bool write_all(int fd, const char *data, size_t size, std::string *error) {
     size_t written = 0;
     while (written < size) {
-        ssize_t n = write(fd, data + written, size - written);
+        ssize_t n = send(fd, data + written, size - written, MSG_NOSIGNAL);
         if (n < 0) {
             if (errno == EINTR) {
                 continue;
@@ -65,7 +69,8 @@ int connect_socket(std::string *error, bool non_blocking) {
     struct sockaddr_un addr;
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, kSocketPath, sizeof(addr.sun_path) - 1);
+    const std::string path = ds4paths::socket_path();
+    strncpy(addr.sun_path, path.c_str(), sizeof(addr.sun_path) - 1);
 
     if (connect(fd, reinterpret_cast<struct sockaddr *>(&addr), sizeof(addr)) < 0) {
         if (error) {

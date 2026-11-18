@@ -18,9 +18,6 @@
 // Nothing here depends on Qt or on any UI toolkit.
 namespace ds4ipc {
 
-// Unix socket the daemon listens on (see the server side in src/main.cpp).
-extern const char *const kSocketPath;
-
 // Longest controller name the daemon accepts, in bytes.
 constexpr int kMaxNameBytes = 63;
 
