@@ -85,7 +85,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, ubuntu-24.04]
+        # Not 22.04: the HID-BPF object is built against the *runner's* kernel
+        # BTF (vmlinux.h), and its struct_ops (hid_bpf_ops::hid_device_event)
+        # only exist in kernels new enough for HID-BPF, which 22.04 runners lack.
+        os: [ubuntu-24.04]
         compiler: [g++, clang++]
     runs-on: ${{ matrix.os }}
     steps:
@@ -145,7 +148,11 @@ jobs:
     steps:
       - name: Install dependencies
         run: |
-          pacman -Syu --noconfirm --needed git clang libusb libbpf bpf gtest pkgconf
+          # multilib provides the 32-bit glibc headers the -m32 build of
+          # libudev-sony-spoof32.so needs (same as the release workflow).
+          printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> /etc/pacman.conf
+          pacman -Syu --noconfirm --needed git clang libusb libbpf bpf gtest pkgconf \
+            lib32-glibc lib32-gcc-libs systemd python
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Build and test
         run: |
