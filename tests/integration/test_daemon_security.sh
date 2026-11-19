@@ -86,7 +86,7 @@ if sudo -n true 2>/dev/null && command -v setpriv >/dev/null; then
     chmod 755 "$WORK"
     # Runs the socket client as an unprivileged uid; payload on stdin.
     nobody_raw() {
-        printf '%s' "$1" | sudo -n setpriv --reuid=nobody --regid=nogroup --clear-groups \
+        printf '%s' "$1" | sudo -n setpriv --reuid=65534 --regid=65534 --clear-groups \
             python3 -I "$SOCKCLIENT" "$SOCK" raw
     }
     check "H2 unprivileged user can read status" "Virtual Emulation" nobody_raw status

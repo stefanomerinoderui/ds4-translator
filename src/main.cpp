@@ -3670,8 +3670,11 @@ int main(int argc, char* argv[]) {
                     break;
                 }
                 if (pending_clients.size() >= kMaxPendingClients) {
-                    close(new_fd);
-                    continue;
+                    // Evict the longest-waiting client rather than refusing the
+                    // new one: a flood of idle connections must not be able to
+                    // lock out a legitimate client that sends right away.
+                    close(pending_clients.front().fd);
+                    pending_clients.erase(pending_clients.begin());
                 }
                 pending_clients.push_back(PendingClient{new_fd, std::chrono::steady_clock::now() + kClientCommandTimeout});
             }
