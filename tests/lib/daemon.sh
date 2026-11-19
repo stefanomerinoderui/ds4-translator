@@ -38,7 +38,11 @@ cleanup_scratch() {
 # scratch dir within 5s.
 start_daemon() {
     [ -n "${DS4_RUNTIME_DIR:-}" ] && [ "$DS4_RUNTIME_DIR" != "/run" ] || { echo "refusing to run without a scratch DS4_RUNTIME_DIR"; exit 2; }
-    "$DAEMON" "$@" >"$WORK/daemon.log" 2>&1 &
+    # DAEMON_NOFILE lowers the descriptor limit for descriptor-exhaustion tests.
+    (
+        [ -z "${DAEMON_NOFILE:-}" ] || ulimit -n "$DAEMON_NOFILE"
+        exec "$DAEMON" "$@" >"$WORK/daemon.log" 2>&1
+    ) &
     DAEMON_PID=$!
     for _ in $(seq 1 50); do [ -S "$SOCK" ] && return 0; sleep 0.1; done
     fail "daemon created its control socket in the scratch dir"

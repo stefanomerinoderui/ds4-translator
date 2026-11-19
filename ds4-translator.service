@@ -20,6 +20,20 @@ RuntimeDirectory=ds4-translator
 ExecStopPost=-/usr/local/bin/rebind-unbound-controllers.sh
 Restart=on-failure
 RestartSec=10
+# Sandboxing. The daemon still needs root, /sys, /dev, configfs and BPF, so
+# only what it demonstrably does not use is cut off: other privilege
+# escalation paths, home directories, a shared /tmp, and every socket family
+# except the Unix control socket and netlink (uevents, libusb). /etc stays
+# writable because the daemon persists /etc/ds4-translator.conf there.
+# Not set, pending testing against real hardware: CapabilityBoundingSet= and
+# SystemCallFilter= (the daemon needs a wide, hard-to-enumerate set).
+NoNewPrivileges=yes
+ProtectSystem=full
+ReadWritePaths=/etc
+ProtectHome=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+LockPersonality=yes
 StandardOutput=journal
 StandardError=journal
 

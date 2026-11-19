@@ -22,7 +22,7 @@ jobs:
   smoke-sanity:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: ./.github/actions/setup-deps
       - name: Build
         run: make all
@@ -36,13 +36,13 @@ jobs:
     needs: smoke-sanity
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: ./.github/actions/setup-deps
       - name: Run unit and component tests
         run: make test-unit test-component
       - name: Upload JUnit XML
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: unit-test-results
           path: build/tests/*.xml
@@ -52,7 +52,7 @@ jobs:
     needs: smoke-sanity
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: ./.github/actions/setup-deps
       # Includes the daemon security suite, which uses passwordless sudo
       # (available on GitHub runners) to talk to the socket as another uid.
@@ -64,7 +64,7 @@ jobs:
     needs: smoke-sanity
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: ./.github/actions/setup-deps
       - name: Unit tests under ASan + UBSan
         run: make test-sanitize
@@ -74,7 +74,7 @@ jobs:
         run: make test-fuzz FUZZ_SECONDS=60
       - name: Upload fuzzer crashes
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: fuzz-crashes
           path: build/tests/fuzz-crashes/
@@ -89,7 +89,7 @@ jobs:
         compiler: [g++, clang++]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: ./.github/actions/setup-deps
       - name: Build and test with ${{ matrix.compiler }}
         run: make all test CXX=${{ matrix.compiler }}
@@ -101,7 +101,7 @@ jobs:
     needs: smoke-sanity
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0 # gitleaks scans history
       - uses: ./.github/actions/setup-deps
@@ -131,7 +131,7 @@ jobs:
           scan-build -o scan-report --status-bugs make all
       - name: Upload analyzer report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: scan-build-report
           path: scan-report/
@@ -146,7 +146,7 @@ jobs:
       - name: Install dependencies
         run: |
           pacman -Syu --noconfirm --needed git clang libusb libbpf bpf gtest pkgconf
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Build and test
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -158,7 +158,7 @@ jobs:
     needs: unit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: ./.github/actions/setup-deps
       - name: Performance budgets
         run: |

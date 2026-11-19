@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <cstring>
 #include <string>
 
 #include "ipc-client.h"
@@ -42,6 +43,31 @@ TEST(ValidateName, RejectsEmptyOverlongAndLineBreaks) {
     EXPECT_NE(validate_name(std::string(kMaxNameBytes + 1, 'x')), "");
     EXPECT_NE(validate_name("a\nb"), "");
     EXPECT_NE(validate_name("a\rb"), "");
+}
+
+TEST(ValidateName, RejectsControlCharacters) {
+    for (const char *bad : {"a\tb", "esc\x1b]0;pwn\x07", "del\x7f", "\x01"}) {
+        EXPECT_NE(validate_name(bad), "") << bad;
+    }
+    EXPECT_NE(validate_name(std::string("a\0b", 3)), "");
+}
+
+TEST(ValidateName, EnforcesUtf8) {
+    EXPECT_EQ(validate_name("Mando de Stef\xc3\xa1n \xe2\x9c\x93 \xf0\x9f\x8e\xae"), ""); // 2-, 3- and 4-byte sequences
+    for (const char *bad : {"\xff\xfe", "\xc3", "\xc0\xaf", "\xed\xa0\x80", "\xf4\x90\x80\x80", "a\x80", "\xe2\x82"}) {
+        EXPECT_NE(validate_name(bad), "") << bad; // stray/truncated/overlong/surrogate/out-of-range
+    }
+}
+
+TEST(ReadOnlyCommands, OnlyObservingCommandsAreOpen) {
+    EXPECT_TRUE(is_read_only_command("status"));
+    EXPECT_TRUE(is_read_only_command(kTestCommand));
+    EXPECT_TRUE(is_read_only_command(kTestAllCommand));
+    for (const char *cmd : {"", "set-type ds4", "set-name ds4 x", "led 1 2 3 4 5", "identify",
+                            "release-physical", "create-virtual ds4", "input 0", "forget-mac",
+                            "status ", "STATUS", "test all ", "led --reset"}) {
+        EXPECT_FALSE(is_read_only_command(cmd)) << cmd;
+    }
 }
 
 // ------------------------------------------------------------------ builders

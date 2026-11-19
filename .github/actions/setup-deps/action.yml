@@ -22,6 +22,9 @@ runs:
         set -e
         curl -sL -o /tmp/bpftool.tar.gz \
           https://github.com/libbpf/bpftool/releases/download/v7.7.0/bpftool-v7.7.0-amd64.tar.gz
+        # Pinned digest of the v7.7.0 amd64 release asset: a changed or
+        # tampered download fails here instead of being installed with sudo.
+        echo "09150596f09356b0ff632dd7f9856e0ea86bf96b269e9bc94278d9a9432a268c  /tmp/bpftool.tar.gz" | sha256sum -c -
         tar -xzf /tmp/bpftool.tar.gz -C /tmp bpftool
         sudo install -m 755 /tmp/bpftool /usr/local/bin/bpftool
         bpftool version

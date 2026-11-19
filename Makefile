@@ -81,17 +81,28 @@ HIDBPF_OBJ      := $(BUILD_DIR)/hid-bpf-transport.o
 HIDBPF_BPF_OBJ  := $(BUILD_DIR)/hid-bpf-transport.bpf.o
 HIDBPF_INSTALL_PATH := $(PREFIX)/lib/ds4-translator/hid-bpf-transport.bpf.o
 
-CXXFLAGS = -O3 $(STRICT_WARNINGS) -std=c++17 -DDS4_VERSION=\"$(VERSION)\" \
+# Hardening the build asks for explicitly, because whether a given toolchain
+# applies it by default varies (Ubuntu's gcc does, Arch's only partly).
+# -U first: some toolchains already define _FORTIFY_SOURCE, and a redefinition
+# is a warning, which STRICT_WARNINGS turns into an error. FORTIFY needs
+# optimisation, so the -O0 debug build leaves it out.
+HARDEN_COMMON      = -fstack-protector-strong -fstack-clash-protection -fcf-protection
+HARDEN_FLAGS       = $(HARDEN_COMMON) -fPIE
+HARDEN_FORTIFY     = -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=2
+HARDEN_LDFLAGS     = -pie -Wl,-z,relro,-z,now
+HARDEN_SHARED_LDFLAGS = -Wl,-z,relro,-z,now
+
+CXXFLAGS = -O3 $(STRICT_WARNINGS) $(HARDEN_FLAGS) $(HARDEN_FORTIFY) -std=c++17 -DDS4_VERSION=\"$(VERSION)\" \
            -DHID_BPF_OBJ_PATH=\"$(HIDBPF_INSTALL_PATH)\" $(UNBIND_CXXFLAGS) $(HIDBPF_CXXFLAGS)
-CFLAGS   = -O3 $(STRICT_WARNINGS) -DDS4_VERSION=\"$(VERSION)\" $(UNBIND_CXXFLAGS)
-LDFLAGS  = -lpthread $(UNBIND_LDFLAGS) $(HIDBPF_LDFLAGS) $(ENV_LDFLAGS)
+CFLAGS   = -O3 $(STRICT_WARNINGS) $(HARDEN_FLAGS) $(HARDEN_FORTIFY) -DDS4_VERSION=\"$(VERSION)\" $(UNBIND_CXXFLAGS)
+LDFLAGS  = -lpthread $(HARDEN_LDFLAGS) $(UNBIND_LDFLAGS) $(HIDBPF_LDFLAGS) $(ENV_LDFLAGS)
 
 TARGET_DAEMON = $(BUILD_DIR)/ds4-translator
 TARGET_CTL    = $(BUILD_DIR)/ds4-ctl
 TARGET_SPOOF  = $(BUILD_DIR)/libudev-sony-spoof.so
 TARGET_SPOOF32 = $(BUILD_DIR)/libudev-sony-spoof32.so
 
-DAEMON_SRC = src/main.cpp src/translate.cpp src/functionfs-backend.c $(UNBIND_SRC) $(IPC_SRC)
+DAEMON_SRC = src/main.cpp src/translate.cpp src/fs-util.cpp src/functionfs-backend.c $(UNBIND_SRC) $(IPC_SRC)
 # The control protocol itself: the client transport/command rules used by
 # ds4-ctl and the Qt UI in ui/ (which compiles src/ipc-client.cpp into its
 # own binary), plus the live-monitor STATE line format, which the daemon
@@ -100,16 +111,16 @@ IPC_SRC    = src/ipc-client.cpp
 CTL_SRC    = src/ctl.cpp $(IPC_SRC)
 SPOOF_SRC  = src/udev-spoof.c
 
-DAEMON_OBJ = $(BUILD_DIR)/main.o $(BUILD_DIR)/translate.o $(BUILD_DIR)/functionfs-backend.o $(UNBIND_OBJ) $(HIDBPF_OBJ) \
+DAEMON_OBJ = $(BUILD_DIR)/main.o $(BUILD_DIR)/translate.o $(BUILD_DIR)/fs-util.o $(BUILD_DIR)/functionfs-backend.o $(UNBIND_OBJ) $(HIDBPF_OBJ) \
              $(BUILD_DIR)/ipc-client.o
 CTL_OBJ    = $(BUILD_DIR)/ctl.o $(BUILD_DIR)/ipc-client.o
 
 all: $(TARGET_DAEMON) $(TARGET_CTL) $(TARGET_SPOOF) $(TARGET_SPOOF32) $(HIDBPF_BPF_OBJ)
 
 # Debug build: no optimisation, debug symbols, DS4_DEBUG enabled
-debug: CXXFLAGS = -O0 -g $(STRICT_WARNINGS) -std=c++17 -DDS4_DEBUG -DDS4_VERSION=\"$(VERSION)\" \
+debug: CXXFLAGS = -O0 -g $(STRICT_WARNINGS) $(HARDEN_FLAGS) -std=c++17 -DDS4_DEBUG -DDS4_VERSION=\"$(VERSION)\" \
                   -DHID_BPF_OBJ_PATH=\"$(HIDBPF_INSTALL_PATH)\" $(UNBIND_CXXFLAGS) $(HIDBPF_CXXFLAGS)
-debug: CFLAGS   = -O0 -g $(STRICT_WARNINGS) -DDS4_DEBUG -DDS4_VERSION=\"$(VERSION)\" $(UNBIND_CXXFLAGS)
+debug: CFLAGS   = -O0 -g $(STRICT_WARNINGS) $(HARDEN_FLAGS) -DDS4_DEBUG -DDS4_VERSION=\"$(VERSION)\" $(UNBIND_CXXFLAGS)
 debug: clean all
 
 $(BUILD_DIR):
@@ -122,10 +133,10 @@ $(TARGET_CTL): $(CTL_OBJ)
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
 
 $(TARGET_SPOOF): $(SPOOF_SRC) | $(BUILD_DIR)
-	$(CC) -O3 -fPIC -shared $(ENV_LDFLAGS) -o $@ $< -ldl
+	$(CC) -O3 -fPIC -shared $(HARDEN_COMMON) $(HARDEN_FORTIFY) $(HARDEN_SHARED_LDFLAGS) $(ENV_LDFLAGS) -o $@ $< -ldl -lpthread
 
 $(TARGET_SPOOF32): $(SPOOF_SRC) | $(BUILD_DIR)
-	$(CC) -m32 -O3 -fPIC -shared $(ENV_LDFLAGS) -o $@ $< -ldl
+	$(CC) -m32 -O3 -fPIC -shared $(HARDEN_COMMON) $(HARDEN_FORTIFY) $(HARDEN_SHARED_LDFLAGS) $(ENV_LDFLAGS) -o $@ $< -ldl -lpthread
 
 
 $(BUILD_DIR)/%.o: src/%.cpp | $(BUILD_DIR)
@@ -215,6 +226,7 @@ uninstall-ui-user:
 install: install-cli install-ui
 
 install-cli: stage-cli
+	systemd-sysusers /usr/lib/sysusers.d/ds4-translator.conf
 	udevadm control --reload-rules
 	udevadm trigger
 	systemctl daemon-reload
@@ -239,6 +251,7 @@ stage-cli: all
 	install -D -m 644 ds4-ctl.1 $(DESTDIR)/usr/share/man/man1/ds4-ctl.1
 	install -D -m 644 ds4-ctl-completion.bash $(DESTDIR)/usr/share/bash-completion/completions/ds4-ctl
 	install -D -m 644 dummy_hcd.conf $(DESTDIR)$(MODPROBEDIR)/dummy_hcd.conf
+	install -D -m 644 ds4-translator.sysusers $(DESTDIR)/usr/lib/sysusers.d/ds4-translator.conf
 	install -D -m 644 $(HIDBPF_BPF_OBJ) $(DESTDIR)$(HIDBPF_INSTALL_PATH)
 
 # Installable Arch Linux package(s), built by makepkg from a snapshot of the
@@ -312,7 +325,7 @@ UNIT_TEST_BIN = $(TEST_BUILD_DIR)/unit-tests
 UNIT_TEST_SRC = $(wildcard tests/unit/*.cpp)
 # hid-unbind-detect.cpp needs write_hid_driver_sysfs from main.cpp; the stub
 # stands in so it links without the daemon.
-UNIT_LIB_SRC  = src/ipc-client.cpp src/translate.cpp src/hid-unbind-detect.cpp tests/stubs/hid_driver_sysfs_stub.cpp
+UNIT_LIB_SRC  = src/ipc-client.cpp src/translate.cpp src/fs-util.cpp src/hid-unbind-detect.cpp tests/stubs/hid_driver_sysfs_stub.cpp
 
 $(UNIT_TEST_BIN): $(UNIT_TEST_SRC) $(UNIT_LIB_SRC) $(wildcard src/*.h)
 	@mkdir -p $(TEST_BUILD_DIR)
@@ -425,6 +438,7 @@ uninstall-cli:
 	rm -f $(DESTDIR)/usr/share/man/man1/ds4-ctl.1
 	rm -f $(DESTDIR)/usr/share/bash-completion/completions/ds4-ctl
 	rm -f $(DESTDIR)$(MODPROBEDIR)/dummy_hcd.conf
+	rm -f $(DESTDIR)/usr/lib/sysusers.d/ds4-translator.conf
 	rm -f $(DESTDIR)$(HIDBPF_INSTALL_PATH)
 	udevadm control --reload-rules
 	udevadm trigger

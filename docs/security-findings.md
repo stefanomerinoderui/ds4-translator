@@ -1,39 +1,37 @@
 # Security findings register
 
-Weaknesses found by the security review of the test-suite work, with the test
-that pins each one. **No production fixes were made alongside the tests.**
+Weaknesses found by a security review of the daemon, the helper libraries and
+the packaging, with their status and the tests that guard each fix. Tests named
+`Regression_<ID>_*` (gtest) or carrying the id in their check name (shell
+scripts under `tests/`) fail if a fix is reverted.
 
-Each pinned test is a *known-issue check*: it passes while the weakness exists
-and fails with `FIXED?` (shell) or a "turn this into a regression test" message
-(gtest) once it is gone. Whoever fixes a finding therefore has to flip the test
-into an ordinary regression check and update this table, so a finding can
-neither disappear nor come back unnoticed.
+Access policy for the control socket (finding H2): the socket stays
+connectable by every user, so read-only use (`status`, `test`, the UI's live
+view) works for everyone. Every other command needs root, the daemon's own
+user, or membership of the `ds4-translator` group (created by the package /
+`make install`; add yourself with `sudo usermod -aG ds4-translator "$USER"`).
+The peer is identified with `SO_PEERCRED` on every connection.
 
-Target access policy for the control socket (what the H2 fix should enforce):
-socket `root:ds4-translator` mode 0660, with `SO_PEERCRED` checked per
-connection. Read-only commands (`status`, `test`) stay open to everyone;
-mutating commands need root or the `ds4-translator` group.
+| ID | Sev. | Weakness | Status | Guarded by |
+|----|------|----------|--------|------------|
+| H1 | High | One idle client blocked the single-threaded main loop (blocking `read()` on the accepted fd, no timeout) | **Fixed**: accepted sockets are non-blocking, polled in the main loop, capped at 32 and dropped after 2 s without a command | `test_daemon_security.sh` (H1) |
+| H2 | High | World-writable socket with no peer check: any local user could take the pad, inject input, rewrite config, run `udevadm trigger` | **Fixed**: per-command `SO_PEERCRED` check, `ds4-translator` group (`ds4-translator.sysusers`) | `test_daemon_security.sh` (H2, needs passwordless sudo), `ReadOnlyCommands` unit tests |
+| H3 | High | `identify` closed a dup'd fd the Bluetooth output pacer could still target (write to a reused fd); unbounded detached threads | **Fixed**: one `identify` at a time; the pacer's pending report for that fd is flushed before `close()` | Not automatable (needs a Bluetooth pad); manual: loop `ds4-ctl identify` while a game drives rumble over BT |
+| H4 | High | uevent netlink sender never verified; `HID_ID` matched by substring; devpath tail unvalidated | **Fixed**: sender must be the kernel (`nl_pid == 0`), exact `HID_ID` and sysfs-id shape | `test_uevent.cpp` `Regression_H4_*`, `UeventSender`, `fuzz_uevent.cpp` |
+| M1 | Med. | Unbounded `test` subscribers; `accept()` EMFILE spun the loop at 100% CPU | **Fixed**: 16-monitor cap, spare descriptor to shed connections when the table is full | `test_daemon_security.sh` (M1) |
+| M2 | Med. | Daemon killed by SIGPIPE when a client reset mid-reply (outside systemd) | **Fixed**: SIGPIPE ignored | `test_daemon_security.sh` (M2) |
+| M3 | Med. | Possible use-after-free: the USB watchdog `libusb_close()`s the handle while the pump thread may be in a transfer on it | **Open, deliberately**: the close is libusb's documented way to unstick a transfer that blocks past its timeout (confirmed live in the source comments); changing it without a pad to test risks reintroducing a multi-minute hang | Manual: unplug the pad mid-transfer under an ASan build |
+| L1 | Low | `set-name` accepted control characters and invalid UTF-8 (echoed to other users' terminals) | **Fixed**: shared `validate_name` in the daemon, also applied to names read from the config file | `test_ipc_protocol.cpp` `ValidateName`, `test_daemon_security.sh` (L1) |
+| L2 | Low | Config/state/sentinel files written through symlinks, config not atomic | **Fixed**: `ds4fs::write_file_atomic` (temp file with `O_EXCL\|O_NOFOLLOW`, `fsync`, `rename`) | `test_fs_util.cpp`, `test_daemon_security.sh` (L2) |
+| L3 | Low | `udev-spoof.so`: NULL `sysattr` crash, shared static uevent buffer, racy lazy init | **Fixed**: NULL guard, per-thread buffer ring, `pthread_once` | `test_udev_spoof.cpp` `Regression_L3_*` |
+| L4 | Low | Virtual hidraw nodes `MODE="0666"` | **Fixed**: `0660` (the `uaccess` ACL still grants the logged-in seat user) | `static_checks.sh` (L4) |
+| L5 | Low | `ds4-translator.service` had no sandboxing | **Partly fixed**: `NoNewPrivileges`, `ProtectSystem=full` (+`ReadWritePaths=/etc`), `ProtectHome`, `PrivateTmp`, `RestrictAddressFamilies`, `LockPersonality`. **Open**: `CapabilityBoundingSet=` and `SystemCallFilter=` need testing against real hardware | `static_checks.sh` (L5; the two open directives are pinned as known issues) |
+| L6 | Low | No hardening flags | **Fixed**: stack protector, stack-clash protection, CET, `_FORTIFY_SOURCE=2`, PIE, full RELRO | `static_checks.sh` (L6) |
+| L7 | Low | CI supply chain | **Fixed**: actions pinned to commit SHAs, bpftool SHA-256 verified, `permissions:` everywhere, the signing key is no longer present while the project's build scripts run | `static_checks.sh` (L7) |
+| L8 | Low | UI single-instance socket fell back to an unchecked `/tmp` directory | **Fixed**: directory created 0700 and verified (directory, owned by us, no group/other access) before use | Manual (needs Qt and a second user): pre-create `/tmp/ds4-translator-ui-<uid>` as another user with `XDG_RUNTIME_DIR` unset |
 
-| ID | Severity | Weakness | Where | Pinned by |
-|----|----------|----------|-------|-----------|
-| H1 | High | One idle client blocks the single-threaded main loop (blocking `read()` on the accepted fd, no timeout), freezing input forwarding for everyone | `src/main.cpp` accept/read in the main loop | `test_daemon_security.sh` (H1) |
-| H2 | High | Socket is mode 0666 with no peer-credential check: any local user can take the physical pad (`release-physical` + `create-virtual` + `input`), rewrite `/etc/ds4-translator.conf`, trigger `udevadm trigger`, read the pad MAC | `src/main.cpp` `setup_ipc_socket` and command chain | `test_daemon_security.sh` (H2; the other-uid part needs passwordless sudo) |
-| H3 | High | `identify` closes a dup'd fd that `BtOutputPacer` may still hold, so a later flush can write to a reused fd; each call also spawns an unbounded detached thread | `src/main.cpp` identify handler, `BtOutputPacer` | **Not automatable** (needs a Bluetooth pad). Manual: loop `ds4-ctl identify` while a game drives rumble over BT, under ASan/TSan |
-| H4 | High | uevent netlink sender is never verified (`nl_pid`/`SCM_CREDENTIALS`), `HID_ID` is matched by substring, and the hid id handed to sysfs writes is just the last `DEVPATH` component | `src/hid-unbind-detect.cpp` `hid_uevent_monitor_read` | `test_uevent.cpp` `KnownIssue_H4_*`; `fuzz_uevent.cpp` |
-| M1 | Medium | No cap on `test` subscribers; when `accept()` hits EMFILE the listen fd stays readable and `poll()` spins at 100% CPU | `src/main.cpp` subscriber list | `test_daemon_security.sh` (M1) |
-| M2 | Medium | Daemon replies with `write()` and does not ignore SIGPIPE; a client that resets mid-reply kills it outside systemd (systemd ignores SIGPIPE by default) | `src/main.cpp` reply writes | `test_daemon_security.sh` (M2) |
-| M3 | Medium | Possible use-after-free: the USB watchdog `libusb_close()`s the handle while the pump thread may be inside a transfer on it | `src/usb-hid-transport.cpp` | **Not automatable** (needs hardware). Manual: unplug the pad mid-transfer under an ASan build |
-| L1 | Low | Server-side `set-name` accepts ESC/control characters and invalid UTF-8; they are echoed to other users' terminals by `status`/`set-name` | `src/main.cpp` set-name handler | `test_daemon_security.sh` (L1) |
-| L2 | Low | Sentinel/state files are written through symlinks with a plain `ofstream` (arbitrary root file write if the directory is writable by others); `write_config` truncates in place (not atomic) | `src/main.cpp` | `test_daemon_security.sh` (L2); malformed-config robustness checks |
-| L3 | Low | `udev-spoof.so`: NULL `sysattr` crashes the host process; the spoofed uevent text is one static buffer shared by all callers and threads | `src/udev-spoof.c` | `test_udev_spoof.cpp` `KnownIssue_L3_*` |
-| L4 | Low | Virtual controller hidraw nodes get `MODE="0666"` (`uaccess` alone would do) | `72-ds4-translator-hide.rules` | `static_checks.sh` (L4) |
-| L5 | Low | `ds4-translator.service` has no sandboxing (`NoNewPrivileges`, `ProtectSystem`, `ProtectHome`, `PrivateTmp`, `CapabilityBoundingSet`, `RestrictAddressFamilies`, `SystemCallFilter`) | `ds4-translator.service` | `static_checks.sh` (L5, plus the `systemd-analyze security` score) |
-| L6 | Low | The Makefile requests no hardening flags (`_FORTIFY_SOURCE`, stack protector, PIE, full RELRO) and drops makepkg's CFLAGS for the daemon | `Makefile` | `static_checks.sh` (L6, plus a per-binary hardening report) |
-| L7 | Low | CI: actions pinned by tag not SHA, bpftool downloaded without a checksum, `lint.yml` has no `permissions:` block, GPG signing key imported in the same step that builds | `.github/` | `static_checks.sh` (L7) |
-| L8 | Low | UI single-instance socket falls back to a predictable `/tmp/ds4-translator-ui-<uid>` with no owner check | `ui/src/singleinstance.cpp` | **Not automated** (needs Qt and a second user). Manual: pre-create the directory as another user with `XDG_RUNTIME_DIR` unset |
-
-## Burning a finding down
-1. Fix the code.
-2. The matching known-issue check now fails (`FIXED?` / "turn this into a regression test").
-3. Invert it into a normal assertion of the secure behaviour (`known_issue` -> `check`/`EXPECT_*`), moving gtest cases out of the `KnownIssue_` naming.
-4. Delete or update the row above.
+## Keeping them fixed
+- A "known issue" check (`known_issue` in the shell helpers) passes while a
+  weakness exists and fails with `FIXED?` once it is gone. The two remaining
+  `L5` directives use it, so adding them forces this table to be updated.
+- New findings: add a row, write the failing test first, then fix.

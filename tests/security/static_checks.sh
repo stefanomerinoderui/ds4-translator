@@ -16,35 +16,48 @@ cd "$ROOT" || exit 2
 have() { command -v "$1" >/dev/null 2>&1; }
 
 # ------------------------------------------------------- L6: binary hardening
-# Whether a given toolchain hardens by default varies (Ubuntu does, Arch only
-# partly), so the build must ask for it explicitly. The measured result for
-# each artifact is printed either way.
-known_issue L6 "Makefile does not request _FORTIFY_SOURCE" bash -c "! grep -q '_FORTIFY_SOURCE' Makefile"
-known_issue L6 "Makefile does not request -fstack-protector-strong" bash -c "! grep -q 'stack-protector' Makefile"
-known_issue L6 "Makefile does not request PIE / full RELRO" bash -c "! grep -qE -- '-pie|-fPIE|z,now' Makefile"
+# Whether a toolchain hardens by default varies (Ubuntu does, Arch only
+# partly), so the build must ask for it explicitly and the result must show.
+require "Makefile requests _FORTIFY_SOURCE" grep -q '_FORTIFY_SOURCE' Makefile
+require "Makefile requests the stack protector" grep -q 'fstack-protector-strong' Makefile
+require "Makefile links PIE" grep -q -- '-pie' Makefile
+require "Makefile requests full RELRO (-z now)" grep -q 'z,relro,-z,now' Makefile
 
-hardening_report() {
-    local bin="$1" pie relro now canary fortify
-    pie=$(readelf -h "$bin" 2>/dev/null | grep -q 'Type:.*DYN' && echo yes || echo NO)
-    relro=$(readelf -lW "$bin" 2>/dev/null | grep -q GNU_RELRO && echo yes || echo NO)
-    now=$(readelf -dW "$bin" 2>/dev/null | grep -qE 'BIND_NOW|FLAGS.*NOW' && echo yes || echo NO)
-    canary=$(nm -D "$bin" 2>/dev/null | grep -q __stack_chk_fail && echo yes || echo NO)
-    fortify=$(nm -D "$bin" 2>/dev/null | grep -q '__.*_chk' && echo yes || echo NO)
-    printf 'HARDENING %-26s PIE=%s RELRO=%s BIND_NOW=%s CANARY=%s FORTIFY=%s\n' \
-        "$(basename "$bin")" "$pie" "$relro" "$now" "$canary" "$fortify"
+# hardening_status <binary> <PIE|RELRO|BIND_NOW|CANARY|FORTIFY>
+hardening_status() {
+    local bin="$1"
+    case "$2" in
+        PIE)      readelf -h "$bin" 2>/dev/null | grep -q 'Type:.*DYN' ;;
+        RELRO)    readelf -lW "$bin" 2>/dev/null | grep -q GNU_RELRO ;;
+        BIND_NOW) readelf -dW "$bin" 2>/dev/null | grep -qE 'BIND_NOW|FLAGS.*NOW' ;;
+        CANARY)   nm -D "$bin" 2>/dev/null | grep -q __stack_chk_fail ;;
+        FORTIFY)  nm -D "$bin" 2>/dev/null | grep -q '__.*_chk' ;;
+    esac
 }
+
 if have readelf && have nm; then
-    for b in ds4-translator ds4-ctl libudev-sony-spoof.so; do
-        [ -e "$BUILD_DIR/$b" ] && hardening_report "$BUILD_DIR/$b"
+    for b in ds4-translator ds4-ctl; do
+        [ -e "$BUILD_DIR/$b" ] || continue
+        for feature in PIE RELRO BIND_NOW CANARY FORTIFY; do
+            require "$b is built with $feature" hardening_status "$BUILD_DIR/$b" "$feature"
+        done
+    done
+    # The shim has no stack arrays, so a canary is not expected there.
+    for feature in PIE RELRO BIND_NOW; do
+        [ -e "$BUILD_DIR/libudev-sony-spoof.so" ] &&
+            require "libudev-sony-spoof.so is built with $feature" hardening_status "$BUILD_DIR/libudev-sony-spoof.so" "$feature"
     done
 else
-    skip "hardening report (readelf/nm missing)"
+    skip "hardening checks (readelf/nm missing)"
 fi
 
 # -------------------------------------------------- L5: systemd unit hardening
 unit=ds4-translator.service
-for directive in NoNewPrivileges ProtectSystem ProtectHome PrivateTmp CapabilityBoundingSet \
-                 RestrictAddressFamilies SystemCallFilter; do
+for directive in NoNewPrivileges ProtectSystem ProtectHome PrivateTmp RestrictAddressFamilies LockPersonality; do
+    require "$unit sets $directive" grep -q "^$directive=" "$unit"
+done
+# Still open: both need testing against real hardware (see the unit file).
+for directive in CapabilityBoundingSet SystemCallFilter; do
     known_issue L5 "$unit lacks $directive" bash -c "! grep -q '^$directive=' $unit"
 done
 if have systemd-analyze; then
@@ -53,23 +66,22 @@ fi
 
 # ------------------------------------------------------------ L4: udev rules
 rules=72-ds4-translator-hide.rules
-grep -q 'MODE="0600"' "$rules" && pass "hiding rules lock physical nodes to root (0600)" \
-    || fail "hiding rules lock physical nodes to root (0600)"
-known_issue L4 "virtual controller hidraw nodes are world-accessible (MODE=0666)" grep -q 'MODE="0666"' "$rules"
+require "hiding rules lock physical nodes to root (0600)" grep -q 'MODE="0600"' "$rules"
+require "no udev rule makes a node world-accessible (MODE 0666)" bash -c "! grep -q 'MODE=\"0666\"' $rules"
 
 # ------------------------------------------------------ L7: CI supply chain
 workflow_files=$(ls .github/workflows/*.yml .github/actions/*/action.yml)
 unpinned() {
     # shellcheck disable=SC2086 # intentional word splitting over the file list
-    grep -hE '^\s*-?\s*uses:\s*[^.]' $workflow_files | grep -vE '@[0-9a-f]{40}(\s|$)' | grep -q .
+    ! grep -hE '^\s*-?\s*uses:\s+[^.[:space:]]' $workflow_files | grep -vE '@[0-9a-f]{40}(\s|$)' | grep -q .
 }
-known_issue L7 "workflow actions are pinned by tag, not commit SHA" unpinned
-# shellcheck disable=SC2086
-known_issue L7 "bpftool is downloaded without a checksum (setup-deps action)" \
-    bash -c "grep -q 'releases/download/.*bpftool' .github/actions/setup-deps/action.yml && ! grep -q 'sha256sum' .github/actions/setup-deps/action.yml"
-known_issue L7 "lint.yml has no permissions: block" bash -c "! grep -q '^permissions:' .github/workflows/lint.yml"
-grep -q '^permissions:' .github/workflows/tests.yml && pass "tests.yml declares least-privilege permissions" \
-    || fail "tests.yml declares least-privilege permissions"
+require "every workflow action is pinned to a commit SHA" unpinned
+require "bpftool download is checksum-verified" \
+    bash -c "grep -q 'sha256sum -c' .github/actions/setup-deps/action.yml"
+require "every workflow declares permissions:" \
+    bash -c "for f in .github/workflows/*.yml; do grep -q '^permissions:' \$f || exit 1; done"
+require "the signing key is not available to the build step" \
+    bash -c "! awk '/name: Build packages\$/,/name: Sign packages/' .github/workflows/release.yml | grep -q ARCH_GPG_PRIVATE_KEY"
 
 if have actionlint; then
     actionlint && pass "actionlint: workflows are well-formed" || fail "actionlint: workflows are well-formed"

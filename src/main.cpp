@@ -20,6 +20,8 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/wait.h>
+#include <grp.h>
+#include <pwd.h>
 #include <sstream>
 #include <cstdlib>
 #include <cerrno>
@@ -34,6 +36,7 @@
 #include "usb-hid-transport.h"
 #include "hid-bpf-transport.h"
 #include "ipc-client.h"
+#include "fs-util.h"
 #include "paths.h"
 #include "translate.h"
 
@@ -664,13 +667,12 @@ static void remember_physical_mac(const std::string& mac) {
 
     std::error_code ec;
     fs::create_directories(kPhysicalMacStateDir, ec);
-    std::ofstream f(kPhysicalMacStatePath, std::ios::trunc);
-    if (!f.is_open()) {
-        std::cerr << "mac-squat: can't write " << kPhysicalMacStatePath
-                  << " -- the pad's MAC won't be squatted until it connects again." << std::endl;
+    std::string write_error;
+    if (!ds4fs::write_file_atomic(kPhysicalMacStatePath, mac + "\n", 0644, &write_error)) {
+        std::cerr << "mac-squat: can't write " << kPhysicalMacStatePath << " (" << write_error
+                  << ") -- the pad's MAC won't be squatted until it connects again." << std::endl;
         return;
     }
-    f << mac << "\n";
     std::cout << "mac-squat: remembered physical controller MAC " << mac << std::endl;
 }
 
@@ -713,8 +715,7 @@ static void select_virtual_mac(ControllerType type) {
     // back to the historical constant if the file isn't there.
     std::error_code ec;
     fs::create_directories(kVirtualMacRuntimeDir, ec);
-    std::ofstream rf(kVirtualMacRuntimePath, std::ios::trunc);
-    if (rf.is_open()) rf << g_virtual_mac_str << "\n";
+    (void)ds4fs::write_file_atomic(kVirtualMacRuntimePath, g_virtual_mac_str + "\n", 0644, nullptr);
 }
 
 // hid-generic deliberately refuses every device the kernel lists in its
@@ -1543,6 +1544,20 @@ public:
         pending_fd_ = -1;
     }
 
+    // Writes any queued report destined for `fd` right now and clears it.
+    // For callers that own a private (dup'd) fd and are about to close it:
+    // otherwise the flush thread could write to that number after it has been
+    // closed and handed to something else.
+    void flush_pending_for_fd(int fd) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (pending_ && pending_fd_ == fd) {
+            pending_ = false;
+            pending_fd_ = -1;
+            last_write_ = std::chrono::steady_clock::now();
+            write_locked(fd, pending_state_);
+        }
+    }
+
     void stop() {
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -1603,6 +1618,13 @@ void discard_pending_bt_output() {
     g_bt_output_pacer.discard_pending();
 }
 
+// At most one `identify` blink sequence at a time (see the identify command).
+std::atomic<bool> g_identify_running(false);
+
+void flush_bt_output_for_fd(int fd) {
+    g_bt_output_pacer.flush_pending_for_fd(fd);
+}
+
 void stop_bt_output_pacer() {
     g_bt_output_pacer.stop();
 }
@@ -1641,9 +1663,46 @@ int uhid_write(int fd, const struct uhid_event& ev) {
     return 0;
 }
 
+// Name of the group whose members may change daemon settings, alongside root
+// and the daemon's own user (see ipc_peer_is_privileged()).
+constexpr char kControlGroup[] = "ds4-translator";
+
+// Whether the process on the other end of an accepted connection may run
+// state-changing commands. The socket itself stays connectable by everyone so
+// that `status` and the live monitor work for any user; anything that changes
+// settings, drives the pad or injects input needs root, the daemon's own user
+// (a dev daemon run unprivileged), or membership of the ds4-translator group.
+bool ipc_peer_is_privileged(int client_fd) {
+    struct ucred cred;
+    socklen_t len = sizeof(cred);
+    if (getsockopt(client_fd, SOL_SOCKET, SO_PEERCRED, &cred, &len) != 0) {
+        return false;
+    }
+    if (cred.uid == 0 || cred.uid == geteuid()) {
+        return true;
+    }
+    const struct group* grp = getgrnam(kControlGroup);
+    if (grp == nullptr) {
+        return false;
+    }
+    if (grp->gr_gid == cred.gid) {
+        return true;
+    }
+    const struct passwd* pw = getpwuid(cred.uid);
+    if (pw == nullptr) {
+        return false;
+    }
+    for (char* const* member = grp->gr_mem; member != nullptr && *member != nullptr; ++member) {
+        if (strcmp(*member, pw->pw_name) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // Setup IPC Unix Domain Socket
 int setup_ipc_socket() {
-    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (fd < 0) {
         std::cerr << "Failed to create IPC socket: " << strerror(errno) << std::endl;
         return -1;
@@ -1671,7 +1730,8 @@ int setup_ipc_socket() {
         return -1;
     }
 
-    // Set permissions to allow non-root status check/configuration
+    // Connectable by every user; what each peer may *do* is decided per
+    // command from its credentials (ipc_peer_is_privileged()).
     chmod(addr.sun_path, 0666);
 
     return fd;
@@ -1761,6 +1821,11 @@ std::string read_name_config(ControllerType type) {
             while (!val.empty() && (val.back() == '\n' || val.back() == '\r')) {
                 val.pop_back();
             }
+            if (!val.empty() && !ds4ipc::validate_name(val).empty()) {
+                std::cerr << "Ignoring invalid " << key << " in " << ds4paths::config_path()
+                          << ": " << ds4ipc::validate_name(val) << std::endl;
+                return "";
+            }
             return val;
         }
     }
@@ -1832,24 +1897,27 @@ bool g_has_test_subscribers = false;
 
 void write_config(ControllerType type, BackendType ds4_backend, BackendType dualsense_backend,
                    const std::string& name_ds4, const std::string& name_dualsense) {
-    std::ofstream f(ds4paths::config_path());
-    if (f.is_open()) {
-        f << "type=" << controller_type_config_str(type) << "\n";
-        f << "backend_ds4=" << backend_type_config_str(ds4_backend) << "\n";
-        f << "backend_dualsense=" << backend_type_config_str(dualsense_backend) << "\n";
-        // Reads the live global rather than taking a parameter, so every
-        // existing write_config() call site (type/backend changes) keeps
-        // persisting whatever hide method is currently active without
-        // needing to be touched.
-        f << "hide_method=" << hide_method_config_str(g_hide_method) << "\n";
-        f << "mac_squat=" << (g_mac_squat_enabled ? "true" : "false") << "\n";
-        // Omitted entirely (rather than written empty) when unset, so a
-        // hand-edited config file with no name_* line behaves identically
-        // to one that was never touched by set-name.
-        if (!name_ds4.empty()) f << "name_ds4=" << name_ds4 << "\n";
-        if (!name_dualsense.empty()) f << "name_dualsense=" << name_dualsense << "\n";
-    } else {
-        std::cerr << "Failed to write config file: /etc/ds4-translator.conf: " << strerror(errno) << std::endl;
+    std::ostringstream f;
+    f << "type=" << controller_type_config_str(type) << "\n";
+    f << "backend_ds4=" << backend_type_config_str(ds4_backend) << "\n";
+    f << "backend_dualsense=" << backend_type_config_str(dualsense_backend) << "\n";
+    // Reads the live global rather than taking a parameter, so every
+    // existing write_config() call site (type/backend changes) keeps
+    // persisting whatever hide method is currently active without
+    // needing to be touched.
+    f << "hide_method=" << hide_method_config_str(g_hide_method) << "\n";
+    f << "mac_squat=" << (g_mac_squat_enabled ? "true" : "false") << "\n";
+    // Omitted entirely (rather than written empty) when unset, so a
+    // hand-edited config file with no name_* line behaves identically
+    // to one that was never touched by set-name.
+    if (!name_ds4.empty()) f << "name_ds4=" << name_ds4 << "\n";
+    if (!name_dualsense.empty()) f << "name_dualsense=" << name_dualsense << "\n";
+
+    // Atomic replace: a crash mid-write must not leave an empty config that
+    // silently resets the hide method and types to their defaults.
+    std::string write_error;
+    if (!ds4fs::write_file_atomic(ds4paths::config_path(), f.str(), 0644, &write_error)) {
+        std::cerr << "Failed to write config file: " << ds4paths::config_path() << ": " << write_error << std::endl;
     }
 }
 
@@ -2355,6 +2423,10 @@ int main(int argc, char* argv[]) {
 
     (void)std::signal(SIGINT, signal_handler);
     (void)std::signal(SIGTERM, signal_handler);
+    // A client that resets the connection mid-reply must surface as a failed
+    // write, not kill the daemon (systemd ignores SIGPIPE for services, but a
+    // daemon started by hand or under a test harness does not).
+    (void)std::signal(SIGPIPE, SIG_IGN);
 
     std::cout << "Starting DS4 Translator daemon..." << std::endl;
     std::cout << "Initial Target Emulation: " << controller_type_name(target_type) << std::endl;
@@ -2367,8 +2439,7 @@ int main(int argc, char* argv[]) {
     }
 
     if (target_type == TYPE_NONE) {
-        std::ofstream f(ds4paths::none_sentinel_path());
-        f.close();
+        (void)ds4fs::write_file_atomic(ds4paths::none_sentinel_path(), "", 0644, nullptr);
         run_no_shell("udevadm", {"trigger"});
     } else {
         unlink(ds4paths::none_sentinel_path().c_str());
@@ -2542,6 +2613,25 @@ int main(int argc, char* argv[]) {
         bool all;
     };
     std::vector<TestSubscriber> test_subscribers;
+    // Cap on live monitors: each one costs a write every broadcast tick and an
+    // fd, and an unbounded list lets a client exhaust descriptors.
+    constexpr size_t kMaxTestSubscribers = 16;
+
+    // Connections that have been accepted but have not sent their command yet.
+    // They are polled like any other fd and dropped after a short deadline, so
+    // an idle (or malicious) client can never stall the main loop the way a
+    // blocking read() on the accepted socket did.
+    struct PendingClient {
+        int fd;
+        std::chrono::steady_clock::time_point deadline;
+    };
+    std::vector<PendingClient> pending_clients;
+    constexpr size_t kMaxPendingClients = 32;
+    constexpr std::chrono::seconds kClientCommandTimeout(2);
+    // Spare descriptor released to shed a connection when accept() hits
+    // EMFILE, so a full fd table cannot leave the listen socket readable
+    // forever and spin the loop.
+    int accept_reserve_fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
 
     // Report timing of the physical controller, measured only while someone
     // is watching (a clock read per report is cheap, but the hot path stays
@@ -3030,7 +3120,20 @@ int main(int argc, char* argv[]) {
             server_poll_idx = static_cast<int>(pfds.size() - 1);
         }
 
+        const size_t pending_poll_base = pfds.size();
+        const size_t pending_polled = pending_clients.size();
+        for (const PendingClient& pending : pending_clients) {
+            struct pollfd p;
+            p.fd = pending.fd;
+            p.events = POLLIN;
+            p.revents = 0;
+            pfds.push_back(p);
+        }
+
         int poll_timeout = standalone_virtual ? 8 : (test_subscribers.empty() ? 1000 : 33);
+        if (!pending_clients.empty()) {
+            poll_timeout = std::min(poll_timeout, 100);
+        }
         int poll_ret = poll(pfds.data(), pfds.size(), poll_timeout);
         if (poll_ret < 0) {
             if (errno == EINTR) continue;
@@ -3070,9 +3173,14 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        // Handle Unix Domain Socket configuration clients
-        if (server_poll_idx >= 0 && (pfds[server_poll_idx].revents & POLLIN)) {
-            int client_fd = accept(server_fd, nullptr, nullptr);
+        // Handle Unix Domain Socket configuration clients: first those that
+        // have sent (or closed) since last tick, then accept new connections.
+        for (size_t pending_idx = 0; pending_idx < pending_polled; ++pending_idx) {
+            if (!(pfds[pending_poll_base + pending_idx].revents & (POLLIN | POLLHUP | POLLERR))) {
+                continue;
+            }
+            int client_fd = pending_clients[pending_idx].fd;
+            pending_clients[pending_idx].fd = -1; // the handler below owns it now
             if (client_fd >= 0) {
                 char rx_buf[256];
                 memset(rx_buf, 0, sizeof(rx_buf));
@@ -3086,7 +3194,15 @@ int main(int argc, char* argv[]) {
                     std::string response = "Unknown command";
                     ControllerType want_virtual = TYPE_DS4; // set by parse_emulated_type() in the set-type/create-virtual matches
                     bool keep_open = false; // set by "test": ownership of client_fd moves to test_subscribers
-                    if (cmd == "status") {
+                    const bool command_allowed = ds4ipc::is_read_only_command(cmd) || ipc_peer_is_privileged(client_fd);
+                    const bool too_many_monitors = (cmd == ds4ipc::kTestCommand || cmd == ds4ipc::kTestAllCommand) &&
+                                                   test_subscribers.size() >= kMaxTestSubscribers;
+                    if (!command_allowed) {
+                        response = std::string("Permission denied: this command needs root or membership of the '") +
+                                   kControlGroup + "' group.";
+                    } else if (too_many_monitors) {
+                        response = "Error: too many live monitors are already connected.";
+                    } else if (cmd == "status") {
                         std::string phy_display = phy_name.empty() ? "None" :
                             ((g_phy_is_unbind_transport || g_phy_is_bpf_transport) ? phy_name : ("/dev/" + phy_name));
                         response = "Physical Controller: " + phy_display + "\n";
@@ -3293,17 +3409,15 @@ int main(int argc, char* argv[]) {
                         std::string new_name = cmd.substr(prefix.size());
                         if (new_name == "--reset") new_name.clear();
 
-                        // Socket is world-writable (see chmod 0666 above) so any
-                        // local process can reach this, not just ds4-ctl -- these
-                        // two checks are the real enforcement point, not just a
-                        // convenience mirrored client-side. A newline would
-                        // corrupt the line-delimited config file; the length cap
-                        // matches the smaller of the UHID name[128] buffer and a
-                        // conservative USB string-descriptor limit.
-                        if (new_name.find('\n') != std::string::npos || new_name.find('\r') != std::string::npos) {
-                            response = "Error: name cannot contain newline characters.";
-                        } else if (new_name.size() > 63) {
-                            response = "Error: name too long (max 63 bytes).";
+                        // Any client that can connect (not just ds4-ctl) reaches
+                        // this, so the shared validator here is the real
+                        // enforcement point, not a convenience mirrored
+                        // client-side: it rejects line breaks and control
+                        // characters (config file / terminal safety), invalid
+                        // UTF-8, and anything over the UHID/USB length cap.
+                        const std::string name_problem = new_name.empty() ? std::string() : ds4ipc::validate_name(new_name);
+                        if (!name_problem.empty()) {
+                            response = "Error: " + name_problem;
                         } else {
                             std::string &target_name = is_ds4 ? g_name_ds4 : g_name_dualsense;
                             const char *default_name = is_ds4 ? "Sony Computer Entertainment Wireless Controller"
@@ -3388,6 +3502,11 @@ int main(int argc, char* argv[]) {
                     } else if (cmd == "identify") {
                         if (phy_fd < 0) {
                             response = "Error: No physical controller connected.";
+                        } else if (g_identify_running.exchange(true)) {
+                            // One blink sequence at a time: each holds a dup'd fd
+                            // and a thread for about a second, so repeated calls
+                            // would otherwise pile both up without limit.
+                            response = "Error: already identifying the controller.";
                         } else {
                             // Detached, like the reconnect path above: this
                             // blinks over about a second, and a Bluetooth
@@ -3396,6 +3515,7 @@ int main(int argc, char* argv[]) {
                             // end, so a game's colour survives the blinking.
                             int dup_fd = dup(phy_fd);
                             if (dup_fd < 0) {
+                                g_identify_running = false;
                                 response = "Error: failed to open the controller for writing.";
                             } else {
                                 std::thread([fd = dup_fd, bt = is_bluetooth]() {
@@ -3412,7 +3532,12 @@ int main(int argc, char* argv[]) {
                                     send_physical_output_report(fd, bt, cur_motor_left,
                                                                  cur_motor_right, cur_r, cur_g,
                                                                  cur_b);
+                                    // The pacer may still hold this fd as its
+                                    // pending target; settle it before the fd
+                                    // number can be reused.
+                                    flush_bt_output_for_fd(fd);
                                     close(fd);
+                                    g_identify_running = false;
                                 }).detach();
                                 response = "OK: Light bar blinking on the physical controller.";
                             }
@@ -3514,6 +3639,44 @@ int main(int argc, char* argv[]) {
             }
         }
 
+        // Drop answered clients and any that never sent a command in time.
+        {
+            const auto now = std::chrono::steady_clock::now();
+            for (auto it = pending_clients.begin(); it != pending_clients.end(); ) {
+                if (it->fd < 0) {
+                    it = pending_clients.erase(it);
+                } else if (now >= it->deadline) {
+                    close(it->fd);
+                    it = pending_clients.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+
+        if (server_poll_idx >= 0 && (pfds[server_poll_idx].revents & POLLIN)) {
+            for (int accepted = 0; accepted < 16; ++accepted) {
+                const int new_fd = accept4(server_fd, nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC);
+                if (new_fd < 0) {
+                    if ((errno == EMFILE || errno == ENFILE) && accept_reserve_fd >= 0) {
+                        // Out of descriptors: free the spare one to accept and
+                        // immediately drop the connection, so the listen
+                        // socket stops reporting readable.
+                        close(accept_reserve_fd);
+                        const int shed_fd = accept4(server_fd, nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC);
+                        if (shed_fd >= 0) close(shed_fd);
+                        accept_reserve_fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
+                    }
+                    break;
+                }
+                if (pending_clients.size() >= kMaxPendingClients) {
+                    close(new_fd);
+                    continue;
+                }
+                pending_clients.push_back(PendingClient{new_fd, std::chrono::steady_clock::now() + kClientCommandTimeout});
+            }
+        }
+
         // Recreate virtual device on dynamic emulation type and/or backend reload
         if (type_change_requested || backend_change_requested) {
             if (vdev_configured()) {
@@ -3556,8 +3719,7 @@ int main(int argc, char* argv[]) {
             // rebind_physical_hid_driver() below does, well after this
             // point), so this reorder is a no-op for it either way.
             if (target_type == TYPE_NONE) {
-                std::ofstream f(ds4paths::none_sentinel_path());
-                f.close();
+                (void)ds4fs::write_file_atomic(ds4paths::none_sentinel_path(), "", 0644, nullptr);
             } else {
                 unlink(ds4paths::none_sentinel_path().c_str());
             }

@@ -86,6 +86,12 @@ std::string join_values(const std::vector<std::string> &values);
 // is not, so a front-end can reject it before anything is sent.
 std::string validate_name(const std::string &name);
 
+// True for the commands that only observe (status and the live-input
+// streams). Everything else changes daemon state or drives hardware, and the
+// daemon restricts it to privileged peers (root, its own user, or the
+// ds4-translator group).
+bool is_read_only_command(const std::string &command);
+
 // Command builders. Each returns the exact string to send, and sets *error
 // (leaving the result empty) if an argument is not valid.
 std::string build_set_type(const std::string &type, std::string *error);

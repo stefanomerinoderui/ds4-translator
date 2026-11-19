@@ -38,6 +38,12 @@ expect_rc() {
     fi
 }
 
+# require <description> <cmd...>: passes when the command succeeds.
+require() {
+    local desc="$1"; shift
+    if "$@" >/dev/null 2>&1; then pass "$desc"; else fail "$desc"; fi
+}
+
 # known_issue <id> <description> <vulnerable-command...>
 # The command must succeed (exit 0) exactly while the weakness exists.
 known_issue() {

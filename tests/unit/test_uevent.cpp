@@ -2,15 +2,16 @@
 // The reader takes any fd, so datagrams are fed through a socketpair instead of
 // a real NETLINK_KOBJECT_UEVENT socket.
 //
-// "KnownIssue" tests pin documented weaknesses (docs/security-findings.md):
-// they pass while the weakness exists and fail once it is fixed, so the fix
-// has to turn them into regression tests.
+// Tests named Regression_<ID>_* guard fixes for findings in
+// docs/security-findings.md.
 #include <gtest/gtest.h>
 
 #include <initializer_list>
 #include <string>
 
+#include <linux/netlink.h>
 #include <sys/socket.h>
+#include <sys/un.h>
 #include <unistd.h>
 
 #include "hid-unbind-detect.h"
@@ -113,28 +114,46 @@ TEST_F(UeventFeed, DatagramIsAlwaysConsumed) {
     EXPECT_EQ(recv(fds_[1], &probe, 1, MSG_DONTWAIT), -1);
 }
 
-// ------------------------------------------------------------ known issues
+// ------------------------------------------------------------- regressions
 
-// H4: the reader recv()s from any peer. Nothing checks the sender is the
-// kernel (nl_pid == 0 / SCM_CREDENTIALS), so on a real netlink socket any
-// local process can unicast a forged event. Here an ordinary socket pair
-// stands in for "not the kernel", and the event is still accepted.
-TEST_F(UeventFeed, KnownIssue_H4_AcceptsEventFromNonKernelSender) {
-    std::string id;
-    EXPECT_TRUE(feed(ds4_add(), &id)) << "sender check added? turn this into a regression test";
+// H4: a datagram from a user-space netlink peer (non-zero port id) is a forgery:
+// only the kernel sends from port id 0.
+TEST(UeventSender, Regression_H4_OnlyKernelNetlinkSenderIsTrusted) {
+    sockaddr_nl kernel{};
+    kernel.nl_family = AF_NETLINK;
+    kernel.nl_pid = 0;
+    EXPECT_TRUE(hid_uevent_sender_is_kernel(&kernel, sizeof(kernel)));
+
+    sockaddr_nl process = kernel;
+    process.nl_pid = 4242;
+    EXPECT_FALSE(hid_uevent_sender_is_kernel(&process, sizeof(process)));
+
+    EXPECT_FALSE(hid_uevent_sender_is_kernel(&process, sizeof(sa_family_t) + 1)); // truncated address
 }
 
-// H4: HID_ID is matched by substring, so surrounding junk is accepted.
-TEST_F(UeventFeed, KnownIssue_H4_HidIdMatchedBySubstring) {
-    EXPECT_TRUE(feed(ds4_add(kUsbPath, "0003:XX0000054CXX:XX000005C4XX")))
-        << "strict HID_ID parsing added? turn this into a regression test";
+TEST(UeventSender, NonNetlinkPeersAreNotJudged) {
+    // The socketpair used by these tests has no netlink address to check.
+    EXPECT_TRUE(hid_uevent_sender_is_kernel(nullptr, 0));
+    sockaddr_un local{};
+    local.sun_family = AF_UNIX;
+    EXPECT_TRUE(hid_uevent_sender_is_kernel(&local, sizeof(local)));
 }
 
-// H4: the id handed to sysfs writes is just the last DEVPATH component; its
-// shape is never validated.
-TEST_F(UeventFeed, KnownIssue_H4_DevpathTailIsNotValidatedAsHidId) {
-    std::string id;
-    EXPECT_TRUE(feed(ds4_add("/devices/anything/not-a-hid-id"), &id))
-        << "devpath validation added? turn this into a regression test";
-    EXPECT_EQ(id, "not-a-hid-id");
+// H4: HID_ID must have exactly the kernel's BBBB:VVVVVVVV:PPPPPPPP shape.
+TEST_F(UeventFeed, Regression_H4_HidIdMustMatchExactly) {
+    EXPECT_FALSE(feed(ds4_add(kUsbPath, "0003:XX0000054CXX:XX000005C4XX")));
+    EXPECT_FALSE(feed(ds4_add(kUsbPath, "0003:0000054C:000005C4junk")));
+    EXPECT_FALSE(feed(ds4_add(kUsbPath, "junk0003:0000054C:000005C4")));
+    EXPECT_FALSE(feed(ds4_add(kUsbPath, "0003:054C:05C4")));          // sysfs shape, not uevent shape
+    EXPECT_FALSE(feed(ds4_add(kUsbPath, "0003:0000054C:000005C4:1")));
+    EXPECT_TRUE(feed(ds4_add(kUsbPath, "0003:0000054c:000005c4")));   // lower-case hex is fine
+}
+
+// H4: the id handed to sysfs writes must be exactly a DS4 sysfs id.
+TEST_F(UeventFeed, Regression_H4_DevpathTailMustBeAnExactHidId) {
+    for (const char *tail : {"not-a-hid-id", "../../etc", "0003:054C:05C4.0042/../x", "0003:054C:05C4",
+                             "0003:054C:0CE6.0042" /* a DualSense, not a DS4 */, "0003:054C:05C4.00421",
+                             "0003:054C:05C4.00G2"}) {
+        EXPECT_FALSE(feed(ds4_add(std::string("/devices/anything/") + tail))) << tail;
+    }
 }

@@ -3,15 +3,17 @@
 // tests/stubs/libudev_stub.c (found through LD_LIBRARY_PATH), so the shim's
 // dlopen("libudev.so.1") reaches the stub instead of the system libudev.
 //
-// "KnownIssue" tests pin documented weaknesses (docs/security-findings.md):
-// they pass while the weakness exists and fail once it is fixed.
+// Tests named Regression_<ID>_* guard fixes for findings in
+// docs/security-findings.md.
 #include <gtest/gtest.h>
 
-#include <csignal>
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <regex>
 #include <string>
+#include <thread>
+#include <vector>
 
 extern "C" {
 struct udev_device {
@@ -92,23 +94,51 @@ TEST(UdevSpoof, RealDeviceSysattrPassesThrough) {
     EXPECT_EQ(udev_device_get_sysattr_value(&dev, "serial"), nullptr);
 }
 
-// ------------------------------------------------------------ known issues
+// ------------------------------------------------------------- regressions
 
-// L3: a NULL attribute name on the fake parent goes straight into strcmp().
-TEST(UdevSpoofDeathTest, KnownIssue_L3_NullSysattrCrashes) {
+// L3: a NULL attribute name must not reach strcmp() inside the host process.
+TEST(UdevSpoof, Regression_L3_NullSysattrReturnsNull) {
     udev_device dev = virtual_ds4();
     udev_device *parent = fake_parent(&dev);
-    EXPECT_EXIT((void)udev_device_get_sysattr_value(parent, nullptr), ::testing::KilledBySignal(SIGSEGV), "")
-        << "NULL sysattr handled? turn this into a regression test";
+    EXPECT_EQ(udev_device_get_sysattr_value(parent, nullptr), nullptr);
+    EXPECT_EQ(udev_device_get_sysattr_value(&dev, nullptr), nullptr);
 }
 
-// L3: the spoofed uevent text lives in one static buffer shared by every
-// caller and thread, so concurrent queries overwrite each other.
-TEST(UdevSpoof, KnownIssue_L3_UeventBufferIsSharedAcrossCalls) {
+// L3: a device with no uevent attribute yields an empty base, not a crash.
+TEST(UdevSpoof, Regression_L3_MissingRealUeventIsHandled) {
+    udev_device dev = {"054c", "05c4", kVirtualPath, nullptr};
+    const char *uevent = udev_device_get_sysattr_value(fake_parent(&dev), "uevent");
+    ASSERT_NE(uevent, nullptr);
+    EXPECT_NE(std::string(uevent).find("PRODUCT=054c/05c4/0100"), std::string::npos);
+}
+
+// L3: each call gets its own buffer, so a second query no longer overwrites
+// the first caller's result.
+TEST(UdevSpoof, Regression_L3_UeventResultsDoNotClobberEachOther) {
     udev_device a = virtual_ds4();
     udev_device b = {"054c", "05c4", kVirtualPath, "OTHER=device\n"};
     const char *first = udev_device_get_sysattr_value(fake_parent(&a), "uevent");
     const char *second = udev_device_get_sysattr_value(fake_parent(&b), "uevent");
-    EXPECT_EQ(first, second) << "per-call buffers? turn this into a regression test";
-    EXPECT_NE(std::string(first).find("OTHER=device"), std::string::npos); // first result was clobbered
+    EXPECT_NE(first, second);
+    EXPECT_NE(std::string(first).find("DEVTYPE=usb_device"), std::string::npos);
+    EXPECT_NE(std::string(second).find("OTHER=device"), std::string::npos);
+}
+
+// L3: concurrent first calls and concurrent uevent queries from many threads
+// must neither crash nor mix results (race-free init + per-thread buffers).
+TEST(UdevSpoof, Regression_L3_ConcurrentCallsStayConsistent) {
+    std::atomic<int> bad{0};
+    std::vector<std::thread> threads;
+    for (int t = 0; t < 8; ++t) {
+        threads.emplace_back([&bad, t] {
+            const std::string marker = "THREAD=" + std::to_string(t) + "\n";
+            for (int i = 0; i < 2000; ++i) {
+                udev_device dev = {"054c", "05c4", kVirtualPath, marker.c_str()};
+                const char *uevent = udev_device_get_sysattr_value(fake_parent(&dev), "uevent");
+                if (uevent == nullptr || std::string(uevent).find(marker) == std::string::npos) ++bad;
+            }
+        });
+    }
+    for (std::thread &th : threads) th.join();
+    EXPECT_EQ(bad.load(), 0);
 }

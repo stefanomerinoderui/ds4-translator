@@ -76,6 +76,15 @@ By default, the service starts emulating a virtual **DualShock 4** controller.
 
 ## Runtime Configuration Utility (`ds4-ctl`)
 
+The control socket is open to every user for read-only use (`ds4-ctl status`,
+`ds4-ctl test`, the UI's live view). Anything that changes settings or drives
+the controller needs root, or membership of the `ds4-translator` group, which
+the package/`make install` creates:
+
+```bash
+sudo usermod -aG ds4-translator "$USER"   # then log out and back in
+```
+
 Users can query the status and change the emulated virtual controller type dynamically at runtime using the `ds4-ctl` tool (which does not require root privileges).
 
 ### Query Daemon Status

@@ -22,37 +22,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # Full history + tags: `git describe --tags` (used as a sanity
           # check below, and by anyone rebuilding from this same checkout)
           # needs more than the tagged commit alone to resolve reliably.
           fetch-depth: 0
 
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          # gcc/g++-multilib provide -m32 support, needed to build the
-          # 32-bit libudev-sony-spoof32.so target alongside the 64-bit one.
-          # libusb-1.0-0-dev is required unconditionally by the Makefile
-          # now (the default hide method's USB transport, src/usb-hid-transport.cpp).
-          # libbpf-dev/clang are required unconditionally too (hard
-          # $(error ...) gates in the Makefile) -- see lint.yml's identical
-          # step for the full rationale (HID-BPF Bluetooth transport).
-          sudo apt-get install -y build-essential gcc-multilib g++-multilib libusb-1.0-0-dev libbpf-dev clang pkg-config
-
-      - name: Install bpftool
-        run: |
-          # See lint.yml's identical step: apt's bpftool (via
-          # linux-tools-generic) is version-locked to `uname -r` and
-          # mismatches GH's runner kernel; a static release binary avoids
-          # that entirely.
-          set -e
-          curl -sL -o /tmp/bpftool.tar.gz \
-            https://github.com/libbpf/bpftool/releases/download/v7.7.0/bpftool-v7.7.0-amd64.tar.gz
-          tar -xzf /tmp/bpftool.tar.gz -C /tmp bpftool
-          sudo install -m 755 /tmp/bpftool /usr/local/bin/bpftool
-          bpftool version
+      - uses: ./.github/actions/setup-deps
 
       - name: Build
         run: make all VERSION="${GITHUB_REF_NAME}"
@@ -81,7 +58,7 @@ jobs:
           echo "ASSET_PATH=${DIST_NAME}.tar.gz" >> "$GITHUB_ENV"
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: ${{ env.ASSET_PATH }}
           generate_release_notes: true
@@ -110,32 +87,42 @@ jobs:
             lib32-glibc lib32-gcc-libs libusb libbpf systemd kmod
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # `git describe --tags` derives the package version.
           fetch-depth: 0
 
-      - name: Build packages and repository database
-        env:
-          # Signing-subkey export (see packaging/arch/README.md). When the
-          # secret is not set, e.g. on a fork, everything is built unsigned.
-          ARCH_GPG_PRIVATE_KEY: ${{ secrets.ARCH_GPG_PRIVATE_KEY }}
+      - name: Build packages
         run: |
+          # No secrets in this step: makepkg runs the project's build scripts,
+          # and nothing they execute may be able to reach the signing key.
           # makepkg refuses to run as root.
           useradd -m builder
           chown -R builder .
           git config --global --add safe.directory "$PWD"
           runuser -u builder -- git config --global --add safe.directory "$PWD"
+          runuser -u builder -- make arch-pkg
+
+      - name: Sign packages and build the repository database
+        env:
+          # Signing-subkey export (see packaging/arch/README.md). When the
+          # secret is not set, e.g. on a fork, everything stays unsigned.
+          ARCH_GPG_PRIVATE_KEY: ${{ secrets.ARCH_GPG_PRIVATE_KEY }}
+        run: |
           sign=""
           if [ -n "$ARCH_GPG_PRIVATE_KEY" ]; then
             printf '%s\n' "$ARCH_GPG_PRIVATE_KEY" | runuser -u builder -- gpg --batch --import
             fpr=$(runuser -u builder -- gpg --list-secret-keys --with-colons | awk -F: '/^fpr/ {print $10; exit}')
             [ -n "$fpr" ] || { echo "ARCH_GPG_PRIVATE_KEY did not import a key" >&2; exit 1; }
+            # Same detached binary signatures makepkg --sign would have made.
+            for pkg in build/arch/*.pkg.tar.zst; do
+              runuser -u builder -- gpg --batch --yes --local-user "$fpr" --detach-sign --no-armor "$pkg"
+            done
             sign="ARCH_SIGN_KEY=$fpr"
           else
             echo "::warning::ARCH_GPG_PRIVATE_KEY is not set; publishing unsigned packages."
           fi
-          runuser -u builder -- make arch-pkg arch-repo $sign
+          runuser -u builder -- make arch-repo $sign
 
       - name: Assemble the site
         run: |
@@ -150,7 +137,7 @@ jobs:
              "$GITHUB_WORKSPACE/packaging/arch/index.html" ../../site/
 
       - name: Upload the site
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: arch-repo-site
           path: site/
@@ -177,16 +164,16 @@ jobs:
       cancel-in-progress: false
     steps:
       - name: Download the site
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: arch-repo-site
           path: site
 
       - name: Package the site for Pages
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
         with:
           path: site
 
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
