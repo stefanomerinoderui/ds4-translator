@@ -84,17 +84,20 @@ require "H2 socket is connectable by every user" test "$(stat -c %a "$SOCK")" = 
 
 if sudo -n true 2>/dev/null && command -v setpriv >/dev/null; then
     chmod 755 "$WORK"
+    # The checkout may sit under a home directory other users cannot enter.
+    cp "$SOCKCLIENT" "$WORK/sockclient.py"
+    chmod 644 "$WORK/sockclient.py"
     # Runs the socket client as an unprivileged uid; payload on stdin.
     nobody_raw() {
         printf '%s' "$1" | sudo -n setpriv --reuid=65534 --regid=65534 --clear-groups \
-            python3 -I "$SOCKCLIENT" "$SOCK" raw
+            python3 -I "$WORK/sockclient.py" "$SOCK" raw
     }
     check "H2 unprivileged user can read status" "Virtual Emulation" nobody_raw status
-    check "H2 unprivileged user cannot change settings" "Permission denied" nobody_raw "set-hide-method legacy"
-    check "H2 unprivileged user cannot take the pad" "Permission denied" nobody_raw "release-physical"
-    check "H2 unprivileged user cannot inject input" "Permission denied" nobody_raw "input 00"
-    check "H2 unprivileged user cannot set the LED" "Permission denied" nobody_raw "led 1 2 3 4 5"
-    check "H2 unprivileged user cannot rename the controller" "Permission denied" nobody_raw "set-name ds4 x"
+    check "H2 unprivileged user cannot change settings" "needs root or membership" nobody_raw "set-hide-method legacy"
+    check "H2 unprivileged user cannot take the pad" "needs root or membership" nobody_raw "release-physical"
+    check "H2 unprivileged user cannot inject input" "needs root or membership" nobody_raw "input 00"
+    check "H2 unprivileged user cannot set the LED" "needs root or membership" nobody_raw "led 1 2 3 4 5"
+    check "H2 unprivileged user cannot rename the controller" "needs root or membership" nobody_raw "set-name ds4 x"
     require "H2 the denied commands changed nothing" \
         bash -c "! '$CTL' status | grep -q 'Hide Method: legacy'"
     check "H2 the daemon's own user is still allowed" "Hide method" "$CTL" set-hide-method unlink
