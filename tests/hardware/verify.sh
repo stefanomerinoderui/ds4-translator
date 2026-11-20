@@ -52,13 +52,18 @@ else
     fail "no physical controller detected -- connect the pad first"
 fi
 require "hid-bpf object is where the service expects it" test -f /usr/lib/ds4-translator/hid-bpf-transport.bpf.o -o -f /usr/local/lib/ds4-translator/hid-bpf-transport.bpf.o
-if journalctl -u "$UNIT" -b --no-pager 2>/dev/null |
+# Only the current run of the service: earlier invocations (an older unit, a
+# crashed start) would report errors that are already gone.
+sandbox_errors() {
+    journalctl "_SYSTEMD_INVOCATION_ID=$(unit_prop InvocationID)" --no-pager 2>/dev/null |
         grep -iE 'read-only file system|operation not permitted|permission denied|EPERM|EROFS' |
-        grep -vE 'UDC: Permission denied' | head -5 | grep -q .; then
+        grep -vE 'UDC: Permission denied' | head -5
+}
+if [ -n "$(sandbox_errors)" ]; then
     fail "journal shows sandbox-related errors:"
-    journalctl -u "$UNIT" -b --no-pager | grep -iE 'read-only file system|operation not permitted|permission denied|EPERM|EROFS' | head -5
+    sandbox_errors
 else
-    pass "no sandbox-related errors in this boot's journal"
+    pass "no sandbox-related errors in the current service run"
 fi
 
 # ----------------------------------------------------------- access control
