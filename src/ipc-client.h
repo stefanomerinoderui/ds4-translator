@@ -18,9 +18,6 @@
 // Nothing here depends on Qt or on any UI toolkit.
 namespace ds4ipc {
 
-// Unix socket the daemon listens on (see the server side in src/main.cpp).
-extern const char *const kSocketPath;
-
 // Longest controller name the daemon accepts, in bytes.
 constexpr int kMaxNameBytes = 63;
 
@@ -88,6 +85,12 @@ std::string join_values(const std::vector<std::string> &values);
 // Returns an empty string if the name is acceptable, otherwise the reason it
 // is not, so a front-end can reject it before anything is sent.
 std::string validate_name(const std::string &name);
+
+// True for the commands that only observe (status and the live-input
+// streams). Everything else changes daemon state or drives hardware, and the
+// daemon restricts it to privileged peers (root, its own user, or the
+// ds4-translator group).
+bool is_read_only_command(const std::string &command);
 
 // Command builders. Each returns the exact string to send, and sets *error
 // (leaving the result empty) if an argument is not valid.

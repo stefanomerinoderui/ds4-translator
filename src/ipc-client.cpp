@@ -10,9 +10,9 @@
 #include <sys/un.h>
 #include <unistd.h>
 
-namespace ds4ipc {
+#include "paths.h"
 
-const char *const kSocketPath = "/run/ds4-translator.sock";
+namespace ds4ipc {
 
 const char *const kIdentifyCommand = "identify";
 const char *const kLedResetCommand = "led --reset";
@@ -33,10 +33,14 @@ bool contains(const std::vector<std::string> &values, const std::string &value) 
 
 // Every command is a single short line, so one write is enough in practice;
 // a partial write is still retried rather than silently truncating.
+// send() with MSG_NOSIGNAL rather than write(): a daemon that closes the
+// connection mid-command must surface as an error here, not as a SIGPIPE
+// that kills the calling process (ds4-ctl, or the Qt UI, which does not
+// ignore the signal).
 bool write_all(int fd, const char *data, size_t size, std::string *error) {
     size_t written = 0;
     while (written < size) {
-        ssize_t n = write(fd, data + written, size - written);
+        ssize_t n = send(fd, data + written, size - written, MSG_NOSIGNAL);
         if (n < 0) {
             if (errno == EINTR) {
                 continue;
@@ -65,7 +69,8 @@ int connect_socket(std::string *error, bool non_blocking) {
     struct sockaddr_un addr;
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, kSocketPath, sizeof(addr.sun_path) - 1);
+    const std::string path = ds4paths::socket_path();
+    strncpy(addr.sun_path, path.c_str(), sizeof(addr.sun_path) - 1);
 
     if (connect(fd, reinterpret_cast<struct sockaddr *>(&addr), sizeof(addr)) < 0) {
         if (error) {
@@ -249,18 +254,69 @@ std::string join_values(const std::vector<std::string> &values) {
     return joined;
 }
 
+namespace {
+
+// True if `text` is well-formed UTF-8 (no overlong forms, surrogates or code
+// points above U+10FFFF).
+bool is_valid_utf8(const std::string &text) {
+    size_t i = 0;
+    while (i < text.size()) {
+        const unsigned char lead = static_cast<unsigned char>(text[i]);
+        size_t extra = 0;
+        uint32_t code = 0;
+        uint32_t min = 0;
+        if (lead < 0x80) {
+            ++i;
+            continue;
+        } else if ((lead & 0xE0) == 0xC0) {
+            extra = 1; code = lead & 0x1F; min = 0x80;
+        } else if ((lead & 0xF0) == 0xE0) {
+            extra = 2; code = lead & 0x0F; min = 0x800;
+        } else if ((lead & 0xF8) == 0xF0) {
+            extra = 3; code = lead & 0x07; min = 0x10000;
+        } else {
+            return false;
+        }
+        if (i + extra >= text.size()) {
+            return false; // truncated sequence
+        }
+        for (size_t k = 1; k <= extra; ++k) {
+            const unsigned char cont = static_cast<unsigned char>(text[i + k]);
+            if ((cont & 0xC0) != 0x80) return false;
+            code = (code << 6) | (cont & 0x3F);
+        }
+        if (code < min || code > 0x10FFFF || (code >= 0xD800 && code <= 0xDFFF)) return false;
+        i += extra + 1;
+    }
+    return true;
+}
+
+} // namespace
+
 std::string validate_name(const std::string &name) {
     if (name.empty()) {
         return "name cannot be empty (use --reset to restore the default).";
     }
-    if (name.find('\n') != std::string::npos || name.find('\r') != std::string::npos) {
-        return "name cannot contain newline characters.";
+    // Control characters (ESC, BEL, NUL, TAB, ...) would be echoed to other
+    // users' terminals by `status` and break the line-based config file.
+    for (const char c : name) {
+        const unsigned char u = static_cast<unsigned char>(c);
+        if (u < 0x20 || u == 0x7F) {
+            return "name cannot contain control characters.";
+        }
+    }
+    if (!is_valid_utf8(name)) {
+        return "name must be valid UTF-8.";
     }
     if (name.size() > static_cast<size_t>(kMaxNameBytes)) {
         return "name too long (" + std::to_string(name.size()) + " bytes, max " +
                std::to_string(kMaxNameBytes) + ").";
     }
     return std::string();
+}
+
+bool is_read_only_command(const std::string &command) {
+    return command == "status" || command == kTestCommand || command == kTestAllCommand;
 }
 
 namespace {

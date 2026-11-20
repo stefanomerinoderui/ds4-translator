@@ -81,17 +81,28 @@ HIDBPF_OBJ      := $(BUILD_DIR)/hid-bpf-transport.o
 HIDBPF_BPF_OBJ  := $(BUILD_DIR)/hid-bpf-transport.bpf.o
 HIDBPF_INSTALL_PATH := $(PREFIX)/lib/ds4-translator/hid-bpf-transport.bpf.o
 
-CXXFLAGS = -O3 $(STRICT_WARNINGS) -std=c++17 -DDS4_VERSION=\"$(VERSION)\" \
+# Hardening the build asks for explicitly, because whether a given toolchain
+# applies it by default varies (Ubuntu's gcc does, Arch's only partly).
+# -U first: some toolchains already define _FORTIFY_SOURCE, and a redefinition
+# is a warning, which STRICT_WARNINGS turns into an error. FORTIFY needs
+# optimisation, so the -O0 debug build leaves it out.
+HARDEN_COMMON      = -fstack-protector-strong -fstack-clash-protection -fcf-protection
+HARDEN_FLAGS       = $(HARDEN_COMMON) -fPIE
+HARDEN_FORTIFY     = -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=2
+HARDEN_LDFLAGS     = -pie -Wl,-z,relro,-z,now
+HARDEN_SHARED_LDFLAGS = -Wl,-z,relro,-z,now
+
+CXXFLAGS = -O3 $(STRICT_WARNINGS) $(HARDEN_FLAGS) $(HARDEN_FORTIFY) -std=c++17 -DDS4_VERSION=\"$(VERSION)\" \
            -DHID_BPF_OBJ_PATH=\"$(HIDBPF_INSTALL_PATH)\" $(UNBIND_CXXFLAGS) $(HIDBPF_CXXFLAGS)
-CFLAGS   = -O3 $(STRICT_WARNINGS) -DDS4_VERSION=\"$(VERSION)\" $(UNBIND_CXXFLAGS)
-LDFLAGS  = -lpthread $(UNBIND_LDFLAGS) $(HIDBPF_LDFLAGS) $(ENV_LDFLAGS)
+CFLAGS   = -O3 $(STRICT_WARNINGS) $(HARDEN_FLAGS) $(HARDEN_FORTIFY) -DDS4_VERSION=\"$(VERSION)\" $(UNBIND_CXXFLAGS)
+LDFLAGS  = -lpthread $(HARDEN_LDFLAGS) $(UNBIND_LDFLAGS) $(HIDBPF_LDFLAGS) $(ENV_LDFLAGS)
 
 TARGET_DAEMON = $(BUILD_DIR)/ds4-translator
 TARGET_CTL    = $(BUILD_DIR)/ds4-ctl
 TARGET_SPOOF  = $(BUILD_DIR)/libudev-sony-spoof.so
 TARGET_SPOOF32 = $(BUILD_DIR)/libudev-sony-spoof32.so
 
-DAEMON_SRC = src/main.cpp src/functionfs-backend.c $(UNBIND_SRC) $(IPC_SRC)
+DAEMON_SRC = src/main.cpp src/translate.cpp src/fs-util.cpp src/functionfs-backend.c $(UNBIND_SRC) $(IPC_SRC)
 # The control protocol itself: the client transport/command rules used by
 # ds4-ctl and the Qt UI in ui/ (which compiles src/ipc-client.cpp into its
 # own binary), plus the live-monitor STATE line format, which the daemon
@@ -100,16 +111,16 @@ IPC_SRC    = src/ipc-client.cpp
 CTL_SRC    = src/ctl.cpp $(IPC_SRC)
 SPOOF_SRC  = src/udev-spoof.c
 
-DAEMON_OBJ = $(BUILD_DIR)/main.o $(BUILD_DIR)/functionfs-backend.o $(UNBIND_OBJ) $(HIDBPF_OBJ) \
+DAEMON_OBJ = $(BUILD_DIR)/main.o $(BUILD_DIR)/translate.o $(BUILD_DIR)/fs-util.o $(BUILD_DIR)/functionfs-backend.o $(UNBIND_OBJ) $(HIDBPF_OBJ) \
              $(BUILD_DIR)/ipc-client.o
 CTL_OBJ    = $(BUILD_DIR)/ctl.o $(BUILD_DIR)/ipc-client.o
 
 all: $(TARGET_DAEMON) $(TARGET_CTL) $(TARGET_SPOOF) $(TARGET_SPOOF32) $(HIDBPF_BPF_OBJ)
 
 # Debug build: no optimisation, debug symbols, DS4_DEBUG enabled
-debug: CXXFLAGS = -O0 -g $(STRICT_WARNINGS) -std=c++17 -DDS4_DEBUG -DDS4_VERSION=\"$(VERSION)\" \
+debug: CXXFLAGS = -O0 -g $(STRICT_WARNINGS) $(HARDEN_FLAGS) -std=c++17 -DDS4_DEBUG -DDS4_VERSION=\"$(VERSION)\" \
                   -DHID_BPF_OBJ_PATH=\"$(HIDBPF_INSTALL_PATH)\" $(UNBIND_CXXFLAGS) $(HIDBPF_CXXFLAGS)
-debug: CFLAGS   = -O0 -g $(STRICT_WARNINGS) -DDS4_DEBUG -DDS4_VERSION=\"$(VERSION)\" $(UNBIND_CXXFLAGS)
+debug: CFLAGS   = -O0 -g $(STRICT_WARNINGS) $(HARDEN_FLAGS) -DDS4_DEBUG -DDS4_VERSION=\"$(VERSION)\" $(UNBIND_CXXFLAGS)
 debug: clean all
 
 $(BUILD_DIR):
@@ -122,10 +133,10 @@ $(TARGET_CTL): $(CTL_OBJ)
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
 
 $(TARGET_SPOOF): $(SPOOF_SRC) | $(BUILD_DIR)
-	$(CC) -O3 -fPIC -shared $(ENV_LDFLAGS) -o $@ $< -ldl
+	$(CC) -O3 -fPIC -shared $(HARDEN_COMMON) $(HARDEN_FORTIFY) $(HARDEN_SHARED_LDFLAGS) $(ENV_LDFLAGS) -o $@ $< -ldl -lpthread
 
 $(TARGET_SPOOF32): $(SPOOF_SRC) | $(BUILD_DIR)
-	$(CC) -m32 -O3 -fPIC -shared $(ENV_LDFLAGS) -o $@ $< -ldl
+	$(CC) -m32 -O3 -fPIC -shared $(HARDEN_COMMON) $(HARDEN_FORTIFY) $(HARDEN_SHARED_LDFLAGS) $(ENV_LDFLAGS) -o $@ $< -ldl -lpthread
 
 
 $(BUILD_DIR)/%.o: src/%.cpp | $(BUILD_DIR)
@@ -215,6 +226,7 @@ uninstall-ui-user:
 install: install-cli install-ui
 
 install-cli: stage-cli
+	systemd-sysusers /usr/lib/sysusers.d/ds4-translator.conf
 	udevadm control --reload-rules
 	udevadm trigger
 	systemctl daemon-reload
@@ -239,6 +251,7 @@ stage-cli: all
 	install -D -m 644 ds4-ctl.1 $(DESTDIR)/usr/share/man/man1/ds4-ctl.1
 	install -D -m 644 ds4-ctl-completion.bash $(DESTDIR)/usr/share/bash-completion/completions/ds4-ctl
 	install -D -m 644 dummy_hcd.conf $(DESTDIR)$(MODPROBEDIR)/dummy_hcd.conf
+	install -D -m 644 ds4-translator.sysusers $(DESTDIR)/usr/lib/sysusers.d/ds4-translator.conf
 	install -D -m 644 $(HIDBPF_BPF_OBJ) $(DESTDIR)$(HIDBPF_INSTALL_PATH)
 
 # Installable Arch Linux package(s), built by makepkg from a snapshot of the
@@ -294,6 +307,145 @@ arch-repo:
 	    cp ds4-translator.files.tar.zst.sig ds4-translator.files.sig; \
 	fi
 
+
+# ------------------------------------------------------------------- tests
+# GoogleTest suites under tests/. Everything here runs unprivileged on a
+# machine with no controller attached (CI runners included): the suites cover
+# the pure logic and the IPC/CLI surface, never real hardware. They are built
+# with the same STRICT_WARNINGS as the product so test code is linted too.
+TEST_BUILD_DIR = $(BUILD_DIR)/tests
+GTEST_CXXFLAGS := $(shell pkg-config --cflags gtest 2>/dev/null)
+GTEST_LDFLAGS  := $(shell pkg-config --libs gtest_main 2>/dev/null || echo -lgtest -lgtest_main)
+TEST_CXXFLAGS  = -O1 -g $(STRICT_WARNINGS) -std=c++17 -DDS4_VERSION=\"test\" -Isrc $(GTEST_CXXFLAGS)
+# Narrow the run to matching test names, e.g. GTEST_FILTER='*Sanity*'.
+GTEST_FILTER ?= *
+GTEST_ARGS    = --gtest_filter='$(GTEST_FILTER)' --gtest_output=xml:$(TEST_BUILD_DIR)/$(notdir $@).xml
+
+UNIT_TEST_BIN = $(TEST_BUILD_DIR)/unit-tests
+UNIT_TEST_SRC = $(wildcard tests/unit/*.cpp)
+# hid-unbind-detect.cpp needs write_hid_driver_sysfs from main.cpp; the stub
+# stands in so it links without the daemon.
+UNIT_LIB_SRC  = src/ipc-client.cpp src/translate.cpp src/fs-util.cpp src/hid-unbind-detect.cpp tests/stubs/hid_driver_sysfs_stub.cpp
+
+$(UNIT_TEST_BIN): $(UNIT_TEST_SRC) $(UNIT_LIB_SRC) $(wildcard src/*.h)
+	@mkdir -p $(TEST_BUILD_DIR)
+	$(CXX) $(TEST_CXXFLAGS) -o $@ $(UNIT_TEST_SRC) $(UNIT_LIB_SRC) $(GTEST_LDFLAGS) -lpthread
+
+test-unit: $(UNIT_TEST_BIN)
+	$(UNIT_TEST_BIN) $(GTEST_ARGS)
+
+# Fake-libusb transport tests; see the rules further down.
+USB_TEST_SRC = tests/component/test_usb_transport.cpp tests/stubs/libusb_stub.cpp \
+               src/usb-hid-transport.cpp tests/stubs/hid_driver_sysfs_stub.cpp
+USB_TEST_BIN = $(TEST_BUILD_DIR)/usb-transport-tests
+
+# Same unit suites under ASan+UBSan: memory/UB bugs in the parsers fail the run.
+SAN_TEST_BIN = $(TEST_BUILD_DIR)/unit-tests-san
+$(SAN_TEST_BIN): $(UNIT_TEST_SRC) $(UNIT_LIB_SRC) $(wildcard src/*.h)
+	@mkdir -p $(TEST_BUILD_DIR)
+	$(CXX) $(TEST_CXXFLAGS) -fsanitize=address,undefined -fno-sanitize-recover=undefined \
+	    -fno-omit-frame-pointer -o $@ $(UNIT_TEST_SRC) $(UNIT_LIB_SRC) $(GTEST_LDFLAGS) -lpthread
+
+test-sanitize: $(SAN_TEST_BIN) $(USB_TEST_BIN)-san
+	$(SAN_TEST_BIN) $(GTEST_ARGS)
+	$(USB_TEST_BIN)-san $(GTEST_ARGS)
+
+COMPONENT_TEST_BIN = $(TEST_BUILD_DIR)/component-tests
+COMPONENT_TEST_SRC = tests/component/test_ipc_transport.cpp
+$(COMPONENT_TEST_BIN): $(COMPONENT_TEST_SRC) src/ipc-client.cpp $(wildcard src/*.h)
+	@mkdir -p $(TEST_BUILD_DIR)
+	$(CXX) $(TEST_CXXFLAGS) -o $@ $(COMPONENT_TEST_SRC) src/ipc-client.cpp $(GTEST_LDFLAGS) -lpthread
+
+# udev-spoof.so against a stub libudev (see tests/stubs/libudev_stub.c): the
+# shim dlopen()s libudev.so.1, so the stub is put first on LD_LIBRARY_PATH.
+SPOOF_STUB_DIR  = $(TEST_BUILD_DIR)/udev-stub
+SPOOF_TEST_BIN  = $(TEST_BUILD_DIR)/spoof-tests
+$(SPOOF_STUB_DIR)/libudev.so.1: tests/stubs/libudev_stub.c
+	@mkdir -p $(SPOOF_STUB_DIR)
+	$(CC) -fPIC -shared -Wl,-soname,libudev.so.1 -o $@ $<
+
+$(SPOOF_TEST_BIN): tests/component/test_udev_spoof.cpp $(TARGET_SPOOF)
+	@mkdir -p $(TEST_BUILD_DIR)
+	$(CXX) $(TEST_CXXFLAGS) -o $@ tests/component/test_udev_spoof.cpp \
+	    -L$(BUILD_DIR) -l:libudev-sony-spoof.so -Wl,-rpath,$(abspath $(BUILD_DIR)) $(GTEST_LDFLAGS) -lpthread
+
+# usb-hid-transport.cpp against a fake libusb (tests/stubs/libusb_stub.cpp)
+# instead of -lusb-1.0. Built three ways: plain, ASan+UBSan and TSan, since the
+# bug class it guards (M3: closing a handle under an in-flight transfer) is a
+# memory/thread-safety one.
+$(USB_TEST_BIN): $(USB_TEST_SRC) $(wildcard src/*.h tests/stubs/*.h)
+	@mkdir -p $(TEST_BUILD_DIR)
+	$(CXX) $(TEST_CXXFLAGS) -o $@ $(USB_TEST_SRC) $(GTEST_LDFLAGS) -lpthread
+$(USB_TEST_BIN)-san: $(USB_TEST_SRC) $(wildcard src/*.h tests/stubs/*.h)
+	@mkdir -p $(TEST_BUILD_DIR)
+	$(CXX) $(TEST_CXXFLAGS) -fsanitize=address,undefined -fno-sanitize-recover=undefined \
+	    -fno-omit-frame-pointer -o $@ $(USB_TEST_SRC) $(GTEST_LDFLAGS) -lpthread
+$(USB_TEST_BIN)-tsan: $(USB_TEST_SRC) $(wildcard src/*.h tests/stubs/*.h)
+	@mkdir -p $(TEST_BUILD_DIR)
+	$(CXX) $(TEST_CXXFLAGS) -fsanitize=thread -o $@ $(USB_TEST_SRC) $(GTEST_LDFLAGS) -lpthread
+
+test-component: $(COMPONENT_TEST_BIN) $(SPOOF_TEST_BIN) $(SPOOF_STUB_DIR)/libudev.so.1 $(USB_TEST_BIN)
+	$(COMPONENT_TEST_BIN) $(GTEST_ARGS)
+	LD_LIBRARY_PATH=$(SPOOF_STUB_DIR) $(SPOOF_TEST_BIN) $(GTEST_ARGS)
+	$(USB_TEST_BIN) $(GTEST_ARGS)
+
+# Performance budgets on the per-report hot paths; prints measured ns/op.
+PERF_TEST_BIN = $(TEST_BUILD_DIR)/perf-tests
+$(PERF_TEST_BIN): tests/perf/bench_protocol.cpp src/ipc-client.cpp src/translate.cpp $(wildcard src/*.h)
+	@mkdir -p $(TEST_BUILD_DIR)
+	$(CXX) $(TEST_CXXFLAGS) -O2 -o $@ tests/perf/bench_protocol.cpp src/ipc-client.cpp src/translate.cpp $(GTEST_LDFLAGS) -lpthread
+
+test-perf: $(PERF_TEST_BIN)
+	$(PERF_TEST_BIN) $(GTEST_ARGS)
+
+# libFuzzer over the text parsers and the uevent reader (needs clang).
+# FUZZ_SECONDS bounds each target; crashing inputs are left in
+# $(TEST_BUILD_DIR)/fuzz-crashes.
+FUZZ_SECONDS ?= 30
+FUZZ_TARGETS = parsers uevent
+FUZZ_LIB_SRC = src/ipc-client.cpp src/hid-unbind-detect.cpp tests/stubs/hid_driver_sysfs_stub.cpp
+$(TEST_BUILD_DIR)/fuzz-%: tests/fuzz/fuzz_%.cpp $(FUZZ_LIB_SRC) $(wildcard src/*.h)
+	@mkdir -p $(TEST_BUILD_DIR)
+	clang++ -g -O1 -std=c++17 -Isrc -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=undefined \
+	    -o $@ $< $(FUZZ_LIB_SRC)
+
+test-fuzz: $(addprefix $(TEST_BUILD_DIR)/fuzz-,$(FUZZ_TARGETS))
+	@mkdir -p $(TEST_BUILD_DIR)/fuzz-crashes
+	@set -e; for t in $(FUZZ_TARGETS); do \
+	    mkdir -p $(TEST_BUILD_DIR)/fuzz-corpus-$$t; \
+	    echo "== fuzzing $$t for $(FUZZ_SECONDS)s"; \
+	    $(TEST_BUILD_DIR)/fuzz-$$t -max_total_time=$(FUZZ_SECONDS) \
+	        -artifact_prefix=$(TEST_BUILD_DIR)/fuzz-crashes/ $(TEST_BUILD_DIR)/fuzz-corpus-$$t; \
+	done
+
+# Unit + component transport suites under ThreadSanitizer: guards the shared
+# client code against data races (the udev shim and daemon are covered by
+# docs/security-findings.md instead).
+TSAN_UNIT_BIN = $(TEST_BUILD_DIR)/unit-tests-tsan
+$(TSAN_UNIT_BIN): $(UNIT_TEST_SRC) tests/component/test_ipc_transport.cpp $(UNIT_LIB_SRC) $(wildcard src/*.h)
+	@mkdir -p $(TEST_BUILD_DIR)
+	$(CXX) $(TEST_CXXFLAGS) -fsanitize=thread -o $@ $(UNIT_TEST_SRC) tests/component/test_ipc_transport.cpp \
+	    $(UNIT_LIB_SRC) $(GTEST_LDFLAGS) -lpthread
+
+test-tsan: $(TSAN_UNIT_BIN) $(USB_TEST_BIN)-tsan
+	$(TSAN_UNIT_BIN) $(GTEST_ARGS)
+	$(USB_TEST_BIN)-tsan $(GTEST_ARGS)
+
+# Hardening flags, systemd unit, udev rules, workflows, shell scripts, secrets.
+test-security-static: all
+	tests/security/static_checks.sh $(BUILD_DIR)
+
+test-smoke: all
+	tests/smoke/smoke.sh $(BUILD_DIR)
+
+# Real daemon + ds4-ctl against a scratch dir (see paths.h); skips itself if a
+# production daemon is running on this machine.
+test-integration: all
+	tests/integration/test_daemon_ctl.sh $(BUILD_DIR)
+	tests/integration/test_daemon_security.sh $(BUILD_DIR)
+
+test: test-unit test-component test-smoke test-integration test-security-static
+
 # Mirrors install: removes the UI too. uninstall-cli leaves it in place.
 uninstall: uninstall-ui uninstall-cli
 
@@ -309,10 +461,12 @@ uninstall-cli:
 	rm -f $(DESTDIR)/usr/share/man/man1/ds4-ctl.1
 	rm -f $(DESTDIR)/usr/share/bash-completion/completions/ds4-ctl
 	rm -f $(DESTDIR)$(MODPROBEDIR)/dummy_hcd.conf
+	rm -f $(DESTDIR)/usr/lib/sysusers.d/ds4-translator.conf
 	rm -f $(DESTDIR)$(HIDBPF_INSTALL_PATH)
 	udevadm control --reload-rules
 	udevadm trigger
 	systemctl daemon-reload
 
 .PHONY: all debug clean install install-cli stage-cli uninstall uninstall-cli \
-        ui install-ui stage-ui uninstall-ui install-ui-user uninstall-ui-user arch-pkg arch-repo
+        ui install-ui stage-ui uninstall-ui install-ui-user uninstall-ui-user arch-pkg arch-repo \
+        test test-unit test-perf test-fuzz test-component test-smoke test-integration test-sanitize test-tsan test-security-static

@@ -1,3 +1,5 @@
+#include <sys/uio.h>
+
 #include "hid-unbind-detect.h"
 #include "hid-driver-sysfs.h"
 
@@ -34,6 +36,28 @@ int hid_uevent_monitor_open() {
     return fd;
 }
 
+// Parses `len` hex digits of `text` at `pos`; false if any is not a hex digit.
+static bool parse_hex_digits(const std::string& text, size_t pos, size_t len, unsigned& out) {
+    if (pos + len > text.size()) return false;
+    unsigned value = 0;
+    for (size_t i = 0; i < len; ++i) {
+        char c = text[pos + i];
+        unsigned digit;
+        if (c >= '0' && c <= '9') digit = (unsigned)(c - '0');
+        else if (c >= 'a' && c <= 'f') digit = (unsigned)(c - 'a') + 10;
+        else if (c >= 'A' && c <= 'F') digit = (unsigned)(c - 'A') + 10;
+        else return false;
+        value = (value << 4) | digit;
+    }
+    out = value;
+    return true;
+}
+
+static bool is_ds4_vid_pid_bus(unsigned bus, unsigned vendor, unsigned product) {
+    return (bus == 0x0003 || bus == 0x0005) && vendor == 0x054C &&
+           (product == 0x05C4 || product == 0x09CC);
+}
+
 // Matches the same physical-controller identity find_usb_ds4_hid_id() in
 // main.cpp checks -- VID 054c, PID 05c4 (DS4 v1) or 09cc (DS4 v2); the
 // daemon only ever scans for a physical DualShock 4, never a physical
@@ -43,21 +67,65 @@ int hid_uevent_monitor_open() {
 // hex digits per component (e.g. "0003:0000054C:000005C4") rather than
 // the 4-digit form used in sysfs directory names. Bus 0003 (USB) and
 // 0005 (Bluetooth) both match -- see hid-unbind-detect.h for why they're
-// handled so differently once matched.
+// handled so differently once matched. The whole field must have exactly
+// that shape: a substring match would let surrounding junk through.
 static bool hid_id_env_matches_ds4(const std::string& val) {
-    if (val.rfind("0003:", 0) != 0 && val.rfind("0005:", 0) != 0) return false;
-    if (val.find("0000054C") == std::string::npos && val.find("0000054c") == std::string::npos) return false;
-    return val.find("000005C4") != std::string::npos || val.find("000005c4") != std::string::npos ||
-           val.find("000009CC") != std::string::npos || val.find("000009cc") != std::string::npos;
+    unsigned bus = 0, vendor = 0, product = 0;
+    if (val.size() != 4 + 1 + 8 + 1 + 8 || val[4] != ':' || val[13] != ':') return false;
+    if (!parse_hex_digits(val, 0, 4, bus) || !parse_hex_digits(val, 5, 8, vendor) ||
+        !parse_hex_digits(val, 14, 8, product)) {
+        return false;
+    }
+    return is_ds4_vid_pid_bus(bus, vendor, product);
+}
+
+// The sysfs form of the same identity, "BBBB:VVVV:PPPP.IIII" -- what the
+// daemon is about to splice into /sys paths, so it must be exactly that.
+static bool hid_id_sysfs_matches_ds4(const std::string& id) {
+    unsigned bus = 0, vendor = 0, product = 0, instance = 0;
+    if (id.size() != 4 + 1 + 4 + 1 + 4 + 1 + 4 || id[4] != ':' || id[9] != ':' || id[14] != '.') {
+        return false;
+    }
+    if (!parse_hex_digits(id, 0, 4, bus) || !parse_hex_digits(id, 5, 4, vendor) ||
+        !parse_hex_digits(id, 10, 4, product) || !parse_hex_digits(id, 15, 4, instance)) {
+        return false;
+    }
+    return is_ds4_vid_pid_bus(bus, vendor, product);
+}
+
+bool hid_uevent_sender_is_kernel(const void* addr, unsigned addr_len) {
+    // Not a netlink peer at all (the test harness feeds the reader through a
+    // socketpair): nothing to verify.
+    if (addr == nullptr || addr_len < sizeof(sa_family_t)) return true;
+    const struct sockaddr_nl* nl = static_cast<const struct sockaddr_nl*>(addr);
+    if (nl->nl_family != AF_NETLINK) return true;
+    // The kernel's own uevents come from netlink port id 0. Any process can
+    // unicast a forged message to this socket, and it arrives with its own
+    // (non-zero) port id -- those must be ignored, or a local user could make
+    // the root daemon unbind arbitrary HID devices.
+    return addr_len >= sizeof(struct sockaddr_nl) && nl->nl_pid == 0;
 }
 
 bool hid_uevent_monitor_read(int fd, std::string& out_hid_id) {
     char buf[4096];
-    ssize_t n = recv(fd, buf, sizeof(buf) - 1, 0);
+    struct sockaddr_nl sender;
+    memset(&sender, 0, sizeof(sender));
+    struct iovec iov = { buf, sizeof(buf) - 1 };
+    struct msghdr msg;
+    memset(&msg, 0, sizeof(msg));
+    msg.msg_name = &sender;
+    msg.msg_namelen = sizeof(sender);
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+    ssize_t n = recvmsg(fd, &msg, 0);
     if (n <= 0) {
         return false;
     }
     buf[n] = '\0';
+    // Consumed above either way, so a forged datagram cannot keep poll() spinning.
+    if (!hid_uevent_sender_is_kernel(&sender, msg.msg_namelen)) {
+        return false;
+    }
 
     // Kernel uevent wire format: "ACTION@DEVPATH\0KEY=VALUE\0KEY=VALUE\0...\0"
     std::string action, devpath, hid_id_env;
@@ -107,8 +175,12 @@ bool hid_uevent_monitor_read(int fd, std::string& out_hid_id) {
     if (is_bus_0003 && devpath.find("/devices/virtual/misc/uhid/") != std::string::npos) return false;
 
     size_t slash = devpath.find_last_of('/');
-    out_hid_id = (slash == std::string::npos) ? devpath : devpath.substr(slash + 1);
-    return !out_hid_id.empty();
+    std::string tail = (slash == std::string::npos) ? devpath : devpath.substr(slash + 1);
+    // The id ends up in /sys paths and a bpf pin path, so only the exact
+    // sysfs shape of a DS4 id is allowed through.
+    if (!hid_id_sysfs_matches_ds4(tail)) return false;
+    out_hid_id = tail;
+    return true;
 }
 
 std::string hid_bus_scan_existing() {

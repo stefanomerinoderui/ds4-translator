@@ -7,9 +7,9 @@ StartLimitBurst=3
 
 [Service]
 Type=simple
-ExecStartPre=-/usr/bin/modprobe dummy_hcd
-ExecStartPre=-/usr/bin/modprobe libcomposite
-ExecStartPre=-/usr/bin/modprobe usb_f_fs
+ExecStartPre=-+/usr/bin/modprobe dummy_hcd
+ExecStartPre=-+/usr/bin/modprobe libcomposite
+ExecStartPre=-+/usr/bin/modprobe usb_f_fs
 ExecStartPre=-/usr/local/bin/rebind-unbound-controllers.sh
 ExecStart=/usr/local/bin/ds4-translator
 # /var/lib/ds4-translator holds the remembered controller MAC used by the
@@ -20,6 +20,31 @@ RuntimeDirectory=ds4-translator
 ExecStopPost=-/usr/local/bin/rebind-unbound-controllers.sh
 Restart=on-failure
 RestartSec=10
+# Sandboxing. The daemon still needs root, /sys, /dev, configfs and BPF, so
+# only what it demonstrably does not use is cut off: other privilege
+# escalation paths, home directories, a shared /tmp, and every socket family
+# except the Unix control socket and netlink (uevents, libusb). ProtectSystem
+# is "yes" (/usr and /boot read-only), not "full": the daemon persists
+# /etc/ds4-translator.conf, and "full" + ReadWritePaths=/etc left /etc
+# read-only on a real system (verified with tests/hardware/verify.sh).
+# SystemCallFilter is @system-service plus what a strace of the daemon showed
+# it needs beyond that: @mount (configfs, FunctionFS) and bpf. The modprobe
+# lines run with "+" (unsandboxed): loading modules is the one thing the
+# filter should keep the long-running daemon from doing. EPERM rather than
+# SIGSYS, so a missed syscall shows up as an error in the journal.
+# CapabilityBoundingSet is CAP_SYS_ADMIN alone (mounts, BPF, sysfs binds):
+# tests/hardware/bisect-capabilities.sh removed each other candidate in turn
+# and the daemon kept working over Bluetooth. Everything else the daemon
+# touches is root-owned, so plain ownership suffices.
+NoNewPrivileges=yes
+ProtectSystem=yes
+ProtectHome=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+LockPersonality=yes
+CapabilityBoundingSet=CAP_SYS_ADMIN
+SystemCallFilter=@system-service @mount bpf
+SystemCallErrorNumber=EPERM
 StandardOutput=journal
 StandardError=journal
 

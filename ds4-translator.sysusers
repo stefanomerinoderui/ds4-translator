@@ -1,0 +1,4 @@
+# Group whose members may change daemon settings (everyone can still view
+# `status` and the live monitor). Add yourself with:
+#   sudo usermod -aG ds4-translator "$USER"
+g ds4-translator - -
