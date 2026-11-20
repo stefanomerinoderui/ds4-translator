@@ -31,7 +31,7 @@ PID="$(unit_prop MainPID)"
 for prop in NoNewPrivileges ProtectHome PrivateTmp LockPersonality; do
     check "sandbox: $prop=yes" "yes" unit_prop "$prop"
 done
-check "sandbox: ProtectSystem=full" "full" unit_prop ProtectSystem
+check "sandbox: ProtectSystem=yes" "yes" unit_prop ProtectSystem
 check "sandbox: RestrictAddressFamilies" "AF_UNIX" unit_prop RestrictAddressFamilies
 require "sandbox is in force on the running process (NoNewPrivs=1)" \
     grep -q '^NoNewPrivs:[[:space:]]*1' "/proc/$PID/status"
@@ -62,14 +62,15 @@ else
 fi
 
 # ----------------------------------------------------------- access control
-if id -nG | tr ' ' '\n' | grep -qx ds4-translator || [ "$(id -u)" -eq 0 ]; then
+if getent group ds4-translator | cut -d: -f4 | tr ',' '\n' | grep -qx "$(id -un)" || [ "$(id -u)" -eq 0 ]; then
+    # The daemon checks the group database, not the shell, so no re-login is needed here.
     pass "you may change settings (root or ds4-translator group)"
     CAN_CHANGE=1
 else
     CAN_CHANGE=0
     check "without the group, changes are refused" "Permission denied" "$CTL" set-mac-squat on
-    echo "note: this shell is not in the ds4-translator group. Log in again (or start a shell with"
-    echo "      'newgrp ds4-translator') and re-run; --exercise and the node checks are skipped until then."
+    echo "note: you are not in the ds4-translator group ('sudo usermod -aG ds4-translator \$USER');"
+    echo "      --exercise and the node checks are skipped until then."
 fi
 check "status works for everyone" "Virtual Emulation" "$CTL" status
 
@@ -86,6 +87,17 @@ find_virtual_hidraw() {
     done
     return 1
 }
+
+# physical_pad_hidraw: hidraw nodes of a real (non-uhid) DualShock 4.
+physical_pad_hidraw() {
+    local uevent
+    for uevent in /sys/class/hidraw/hidraw*/device/uevent; do
+        grep -qE 'HID_ID=[0-9A-F]{4}:0000054C:(000005C4|000009CC)' "$uevent" 2>/dev/null || continue
+        readlink -f "$(dirname "$uevent")" | grep -q '/devices/virtual/misc/uhid/' && continue
+        echo "/dev/$(basename "$(dirname "$(dirname "$uevent")")")"
+    done
+}
+export -f physical_pad_hidraw
 
 check_virtual_node() {
     local node mode
@@ -107,7 +119,7 @@ if [ "$EXERCISE" -eq 1 ] && [ "$CAN_CHANGE" -eq 1 ]; then
     esac
     echo "exercising: switching $PREVIOUS_DISPLAY -> DualSense (uhid), will restore $PREVIOUS"
 
-    # Config writes must work under ProtectSystem=full + ReadWritePaths=/etc.
+    # Config writes must work under ProtectSystem=yes.
     OLD_SQUAT="$(status_field 'MAC Squat' | awk '{print $1}')"
     NEW_SQUAT=$([ "$OLD_SQUAT" = on ] && echo off || echo on)
     check "config write works inside the sandbox" "MAC squat" "$CTL" set-mac-squat "$NEW_SQUAT"
@@ -117,8 +129,8 @@ if [ "$EXERCISE" -eq 1 ] && [ "$CAN_CHANGE" -eq 1 ]; then
     "$CTL" set-type dualsense >/dev/null 2>&1
     sleep 4
     check_virtual_node
-    require "physical pad stays hidden from users" \
-        bash -c "! ls -l /dev/hidraw* 2>/dev/null | awk '\$1 ~ /^crw-rw-rw-/' | grep -q ."
+    require "physical pad has no hidraw node left (hidden from users)" \
+        bash -c "! physical_pad_hidraw | grep -q ."
     "$CTL" set-type "$PREVIOUS" >/dev/null 2>&1
     sleep 2
     check "emulation restored to $PREVIOUS_DISPLAY" "$PREVIOUS_DISPLAY" "$CTL" status
