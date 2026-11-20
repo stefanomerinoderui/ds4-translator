@@ -32,14 +32,17 @@ RestartSec=10
 # lines run with "+" (unsandboxed): loading modules is the one thing the
 # filter should keep the long-running daemon from doing. EPERM rather than
 # SIGSYS, so a missed syscall shows up as an error in the journal.
-# CapabilityBoundingSet= is still unset, pending
-# tests/hardware/bisect-capabilities.sh.
+# CapabilityBoundingSet is CAP_SYS_ADMIN alone (mounts, BPF, sysfs binds):
+# tests/hardware/bisect-capabilities.sh removed each other candidate in turn
+# and the daemon kept working over Bluetooth. Everything else the daemon
+# touches is root-owned, so plain ownership suffices.
 NoNewPrivileges=yes
 ProtectSystem=yes
 ProtectHome=yes
 PrivateTmp=yes
 RestrictAddressFamilies=AF_UNIX AF_NETLINK
 LockPersonality=yes
+CapabilityBoundingSet=CAP_SYS_ADMIN
 SystemCallFilter=@system-service @mount bpf
 SystemCallErrorNumber=EPERM
 StandardOutput=journal

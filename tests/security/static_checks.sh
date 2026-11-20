@@ -53,11 +53,9 @@ fi
 
 # -------------------------------------------------- L5: systemd unit hardening
 unit=ds4-translator.service
-for directive in NoNewPrivileges ProtectSystem ProtectHome PrivateTmp RestrictAddressFamilies LockPersonality SystemCallFilter; do
+for directive in NoNewPrivileges ProtectSystem ProtectHome PrivateTmp RestrictAddressFamilies LockPersonality SystemCallFilter CapabilityBoundingSet; do
     require "$unit sets $directive" grep -q "^$directive=" "$unit"
 done
-# Still open: needs tests/hardware/bisect-capabilities.sh (see the unit file).
-known_issue L5 "$unit lacks CapabilityBoundingSet" bash -c "! grep -q '^CapabilityBoundingSet=' $unit"
 if have systemd-analyze; then
     echo "SYSTEMD exposure: $(systemd-analyze security --offline=true "$unit" 2>/dev/null | tail -1)"
 fi

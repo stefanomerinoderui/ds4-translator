@@ -7,13 +7,16 @@
 # Needs root (it restarts the service) and a connected pad; it briefly
 # interrupts the controller for each candidate (~25 s each). Everything is
 # written to a runtime drop-in under /run/systemd that is removed on exit and
-# disappears on reboot anyway. Run it as:   sudo tests/hardware/bisect-capabilities.sh
+# disappears on reboot anyway. Run it as:   sudo tests/hardware/bisect-capabilities.sh   (or pkexec, with the full path)
 #
 # Covers what verify.sh covers (Bluetooth path, config writes, emulation type
 # switch). USB-only needs are checked afterwards by hand with the final set.
 set -u
-[ "$(id -u)" -eq 0 ] || { echo "run with sudo" >&2; exit 1; }
-USER_NAME="${SUDO_USER:?run through sudo so verify.sh can run as your user}"
+[ "$(id -u)" -eq 0 ] || { echo "run as root (sudo or pkexec)" >&2; exit 1; }
+# verify.sh runs as the invoking user: sudo sets SUDO_USER, pkexec PKEXEC_UID.
+USER_NAME="${SUDO_USER:-}"
+[ -n "$USER_NAME" ] || { [ -n "${PKEXEC_UID:-}" ] && USER_NAME="$(id -nu "$PKEXEC_UID")"; }
+[ -n "$USER_NAME" ] || { echo "run through sudo or pkexec so verify.sh can run as your user" >&2; exit 1; }
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 UNIT=ds4-translator.service
 DROPIN_DIR=/run/systemd/system/$UNIT.d

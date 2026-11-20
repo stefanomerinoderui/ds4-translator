@@ -33,6 +33,9 @@ for prop in NoNewPrivileges ProtectHome PrivateTmp LockPersonality; do
 done
 check "sandbox: ProtectSystem=yes" "yes" unit_prop ProtectSystem
 check "sandbox: RestrictAddressFamilies" "AF_UNIX" unit_prop RestrictAddressFamilies
+check "sandbox: CapabilityBoundingSet is only CAP_SYS_ADMIN" "cap_sys_admin" unit_prop CapabilityBoundingSet
+require "daemon has no capability beyond CAP_SYS_ADMIN" \
+    bash -c "[ \"\$(awk '/^CapEff:/ {print \$2}' /proc/$PID/status)\" = 0000000000200000 ]"
 # systemctl shows the expanded allow-list, not the group names. It must be an
 # allow-list (not just "~"), contain what the daemon needs, and leave out
 # module loading, which only the unsandboxed modprobe lines may do.
