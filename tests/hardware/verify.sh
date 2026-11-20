@@ -33,7 +33,14 @@ for prop in NoNewPrivileges ProtectHome PrivateTmp LockPersonality; do
 done
 check "sandbox: ProtectSystem=yes" "yes" unit_prop ProtectSystem
 check "sandbox: RestrictAddressFamilies" "AF_UNIX" unit_prop RestrictAddressFamilies
-check "sandbox: SystemCallFilter is set" "@system-service" unit_prop SystemCallFilter
+# systemctl shows the expanded allow-list, not the group names. It must be an
+# allow-list (not just "~"), contain what the daemon needs, and leave out
+# module loading, which only the unsandboxed modprobe lines may do.
+SYSCALLS=" $(unit_prop SystemCallFilter) "
+require "sandbox: SystemCallFilter allows bpf and mount" \
+    bash -c "[[ '$SYSCALLS' == *' bpf '* && '$SYSCALLS' == *' mount '* ]]"
+require "sandbox: SystemCallFilter denies module loading" \
+    bash -c "[[ '$SYSCALLS' != *' finit_module '* && '$SYSCALLS' != *' init_module '* ]]"
 require "sandbox is in force on the running process (NoNewPrivs=1)" \
     grep -q '^NoNewPrivs:[[:space:]]*1' "/proc/$PID/status"
 # Namespace links of a root process are unreadable without root: skip then.
