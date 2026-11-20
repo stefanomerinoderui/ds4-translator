@@ -68,7 +68,8 @@ if id -nG | tr ' ' '\n' | grep -qx ds4-translator || [ "$(id -u)" -eq 0 ]; then
 else
     CAN_CHANGE=0
     check "without the group, changes are refused" "Permission denied" "$CTL" set-mac-squat on
-    echo "note: run 'sudo usermod -aG ds4-translator \$USER', log in again, then re-run for the full check"
+    echo "note: this shell is not in the ds4-translator group. Log in again (or start a shell with"
+    echo "      'newgrp ds4-translator') and re-run; --exercise and the node checks are skipped until then."
 fi
 check "status works for everyone" "Virtual Emulation" "$CTL" status
 
