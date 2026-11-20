@@ -334,6 +334,11 @@ $(UNIT_TEST_BIN): $(UNIT_TEST_SRC) $(UNIT_LIB_SRC) $(wildcard src/*.h)
 test-unit: $(UNIT_TEST_BIN)
 	$(UNIT_TEST_BIN) $(GTEST_ARGS)
 
+# Fake-libusb transport tests; see the rules further down.
+USB_TEST_SRC = tests/component/test_usb_transport.cpp tests/stubs/libusb_stub.cpp \
+               src/usb-hid-transport.cpp tests/stubs/hid_driver_sysfs_stub.cpp
+USB_TEST_BIN = $(TEST_BUILD_DIR)/usb-transport-tests
+
 # Same unit suites under ASan+UBSan: memory/UB bugs in the parsers fail the run.
 SAN_TEST_BIN = $(TEST_BUILD_DIR)/unit-tests-san
 $(SAN_TEST_BIN): $(UNIT_TEST_SRC) $(UNIT_LIB_SRC) $(wildcard src/*.h)
@@ -341,8 +346,9 @@ $(SAN_TEST_BIN): $(UNIT_TEST_SRC) $(UNIT_LIB_SRC) $(wildcard src/*.h)
 	$(CXX) $(TEST_CXXFLAGS) -fsanitize=address,undefined -fno-sanitize-recover=undefined \
 	    -fno-omit-frame-pointer -o $@ $(UNIT_TEST_SRC) $(UNIT_LIB_SRC) $(GTEST_LDFLAGS) -lpthread
 
-test-sanitize: $(SAN_TEST_BIN)
+test-sanitize: $(SAN_TEST_BIN) $(USB_TEST_BIN)-san
 	$(SAN_TEST_BIN) $(GTEST_ARGS)
+	$(USB_TEST_BIN)-san $(GTEST_ARGS)
 
 COMPONENT_TEST_BIN = $(TEST_BUILD_DIR)/component-tests
 COMPONENT_TEST_SRC = tests/component/test_ipc_transport.cpp
@@ -363,9 +369,25 @@ $(SPOOF_TEST_BIN): tests/component/test_udev_spoof.cpp $(TARGET_SPOOF)
 	$(CXX) $(TEST_CXXFLAGS) -o $@ tests/component/test_udev_spoof.cpp \
 	    -L$(BUILD_DIR) -l:libudev-sony-spoof.so -Wl,-rpath,$(abspath $(BUILD_DIR)) $(GTEST_LDFLAGS) -lpthread
 
-test-component: $(COMPONENT_TEST_BIN) $(SPOOF_TEST_BIN) $(SPOOF_STUB_DIR)/libudev.so.1
+# usb-hid-transport.cpp against a fake libusb (tests/stubs/libusb_stub.cpp)
+# instead of -lusb-1.0. Built three ways: plain, ASan+UBSan and TSan, since the
+# bug class it guards (M3: closing a handle under an in-flight transfer) is a
+# memory/thread-safety one.
+$(USB_TEST_BIN): $(USB_TEST_SRC) $(wildcard src/*.h tests/stubs/*.h)
+	@mkdir -p $(TEST_BUILD_DIR)
+	$(CXX) $(TEST_CXXFLAGS) -o $@ $(USB_TEST_SRC) $(GTEST_LDFLAGS) -lpthread
+$(USB_TEST_BIN)-san: $(USB_TEST_SRC) $(wildcard src/*.h tests/stubs/*.h)
+	@mkdir -p $(TEST_BUILD_DIR)
+	$(CXX) $(TEST_CXXFLAGS) -fsanitize=address,undefined -fno-sanitize-recover=undefined \
+	    -fno-omit-frame-pointer -o $@ $(USB_TEST_SRC) $(GTEST_LDFLAGS) -lpthread
+$(USB_TEST_BIN)-tsan: $(USB_TEST_SRC) $(wildcard src/*.h tests/stubs/*.h)
+	@mkdir -p $(TEST_BUILD_DIR)
+	$(CXX) $(TEST_CXXFLAGS) -fsanitize=thread -o $@ $(USB_TEST_SRC) $(GTEST_LDFLAGS) -lpthread
+
+test-component: $(COMPONENT_TEST_BIN) $(SPOOF_TEST_BIN) $(SPOOF_STUB_DIR)/libudev.so.1 $(USB_TEST_BIN)
 	$(COMPONENT_TEST_BIN) $(GTEST_ARGS)
 	LD_LIBRARY_PATH=$(SPOOF_STUB_DIR) $(SPOOF_TEST_BIN) $(GTEST_ARGS)
+	$(USB_TEST_BIN) $(GTEST_ARGS)
 
 # Performance budgets on the per-report hot paths; prints measured ns/op.
 PERF_TEST_BIN = $(TEST_BUILD_DIR)/perf-tests
@@ -405,8 +427,9 @@ $(TSAN_UNIT_BIN): $(UNIT_TEST_SRC) tests/component/test_ipc_transport.cpp $(UNIT
 	$(CXX) $(TEST_CXXFLAGS) -fsanitize=thread -o $@ $(UNIT_TEST_SRC) tests/component/test_ipc_transport.cpp \
 	    $(UNIT_LIB_SRC) $(GTEST_LDFLAGS) -lpthread
 
-test-tsan: $(TSAN_UNIT_BIN)
+test-tsan: $(TSAN_UNIT_BIN) $(USB_TEST_BIN)-tsan
 	$(TSAN_UNIT_BIN) $(GTEST_ARGS)
+	$(USB_TEST_BIN)-tsan $(GTEST_ARGS)
 
 # Hardening flags, systemd unit, udev rules, workflows, shell scripts, secrets.
 test-security-static: all
