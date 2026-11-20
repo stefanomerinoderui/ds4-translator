@@ -35,8 +35,13 @@ check "sandbox: ProtectSystem=full" "full" unit_prop ProtectSystem
 check "sandbox: RestrictAddressFamilies" "AF_UNIX" unit_prop RestrictAddressFamilies
 require "sandbox is in force on the running process (NoNewPrivs=1)" \
     grep -q '^NoNewPrivs:[[:space:]]*1' "/proc/$PID/status"
-require "daemon runs with its own /tmp (PrivateTmp)" \
-    bash -c "[ \"\$(readlink /proc/$PID/ns/mnt)\" != \"\$(readlink /proc/1/ns/mnt)\" ]"
+# Namespace links of a root process are unreadable without root: skip then.
+if DAEMON_NS="$(readlink "/proc/$PID/ns/mnt" 2>/dev/null)" && [ -n "$DAEMON_NS" ]; then
+    require "daemon runs with its own /tmp (PrivateTmp)" \
+        test "$DAEMON_NS" != "$(readlink /proc/1/ns/mnt)"
+else
+    skip "daemon mount namespace (needs root to read; PrivateTmp checked via systemctl)"
+fi
 
 # ------------------------------------------------------ daemon works sandboxed
 require "ds4-ctl status answers" "$CTL" status
