@@ -19,9 +19,12 @@ UNIT=ds4-translator.service
 DROPIN_DIR=/run/systemd/system/$UNIT.d
 DROPIN=$DROPIN_DIR/zz-bisect.conf
 
+# Capabilities seen in a bpftrace of cap_capable over the service's cgroup
+# (SYS_ADMIN, DAC_READ_SEARCH, SYS_PTRACE, NET_ADMIN, SYS_RESOURCE, SETFCAP),
+# plus the ones the code plausibly needs but a trace can miss because the
+# kernel only checks a capability once plain ownership has failed.
 CANDIDATES=(CAP_SYS_ADMIN CAP_BPF CAP_PERFMON CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_FOWNER
-            CAP_CHOWN CAP_MKNOD CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_RAWIO CAP_SYS_RESOURCE
-            CAP_SETUID CAP_SETGID CAP_KILL CAP_SYS_PTRACE)
+            CAP_MKNOD CAP_NET_ADMIN CAP_SYS_RESOURCE CAP_SYS_PTRACE CAP_SETFCAP)
 
 cleanup() {
     rm -rf "$DROPIN_DIR"
