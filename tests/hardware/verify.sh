@@ -33,6 +33,7 @@ for prop in NoNewPrivileges ProtectHome PrivateTmp LockPersonality; do
 done
 check "sandbox: ProtectSystem=yes" "yes" unit_prop ProtectSystem
 check "sandbox: RestrictAddressFamilies" "AF_UNIX" unit_prop RestrictAddressFamilies
+check "sandbox: SystemCallFilter is set" "@system-service" unit_prop SystemCallFilter
 require "sandbox is in force on the running process (NoNewPrivs=1)" \
     grep -q '^NoNewPrivs:[[:space:]]*1' "/proc/$PID/status"
 # Namespace links of a root process are unreadable without root: skip then.

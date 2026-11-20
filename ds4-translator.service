@@ -7,9 +7,9 @@ StartLimitBurst=3
 
 [Service]
 Type=simple
-ExecStartPre=-/usr/bin/modprobe dummy_hcd
-ExecStartPre=-/usr/bin/modprobe libcomposite
-ExecStartPre=-/usr/bin/modprobe usb_f_fs
+ExecStartPre=-+/usr/bin/modprobe dummy_hcd
+ExecStartPre=-+/usr/bin/modprobe libcomposite
+ExecStartPre=-+/usr/bin/modprobe usb_f_fs
 ExecStartPre=-/usr/local/bin/rebind-unbound-controllers.sh
 ExecStart=/usr/local/bin/ds4-translator
 # /var/lib/ds4-translator holds the remembered controller MAC used by the
@@ -27,14 +27,21 @@ RestartSec=10
 # is "yes" (/usr and /boot read-only), not "full": the daemon persists
 # /etc/ds4-translator.conf, and "full" + ReadWritePaths=/etc left /etc
 # read-only on a real system (verified with tests/hardware/verify.sh).
-# Not set, pending testing against real hardware: CapabilityBoundingSet= and
-# SystemCallFilter= (the daemon needs a wide, hard-to-enumerate set).
+# SystemCallFilter is @system-service plus what a strace of the daemon showed
+# it needs beyond that: @mount (configfs, FunctionFS) and bpf. The modprobe
+# lines run with "+" (unsandboxed): loading modules is the one thing the
+# filter should keep the long-running daemon from doing. EPERM rather than
+# SIGSYS, so a missed syscall shows up as an error in the journal.
+# CapabilityBoundingSet= is still unset, pending
+# tests/hardware/bisect-capabilities.sh.
 NoNewPrivileges=yes
 ProtectSystem=yes
 ProtectHome=yes
 PrivateTmp=yes
 RestrictAddressFamilies=AF_UNIX AF_NETLINK
 LockPersonality=yes
+SystemCallFilter=@system-service @mount bpf
+SystemCallErrorNumber=EPERM
 StandardOutput=journal
 StandardError=journal
 
