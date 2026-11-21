@@ -15,6 +15,7 @@ from pathlib import Path
 KINDS = ("run", "wait_for", "prompt", "repeat")
 ON_FAIL = ("stop", "continue")
 _VAR = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+_INCLUDE_NAME = re.compile(r"[A-Za-z0-9_-]+")
 
 
 class ScenarioError(Exception):
@@ -179,7 +180,43 @@ def check_variables(scenario: Scenario, builtin: set[str]) -> None:
     visit(scenario.restore, known)
 
 
-def load(path: Path, builtin_vars: dict[str, str]) -> Scenario:
+def _expand_steps(
+    raw: list, path: Path, builtin_vars: dict[str, str], stack: tuple[Path, ...]
+) -> tuple[list[Step], dict[str, str], list[Step]]:
+    """Parse [[step]] tables, replacing `include = "other"` with that scenario's steps.
+
+    Returns the steps plus the variables and restore steps the included
+    scenarios bring along.
+    """
+    steps: list[Step] = []
+    variables: dict[str, str] = {}
+    restore: list[Step] = []
+    for table in raw:
+        if not isinstance(table, dict) or "include" not in table:
+            steps.append(parse_step(table, "step"))
+            continue
+        name = table["include"]
+        if not isinstance(name, str) or not _INCLUDE_NAME.fullmatch(name):
+            raise ScenarioError(
+                f"include {name!r}: must be a scenario name (letters, digits, - and _)"
+            )
+        child_path = path.parent / f"{name}.toml"
+        if child_path.resolve() in stack:
+            raise ScenarioError(
+                f"include {name!r}: scenarios include each other in a loop"
+            )
+        child = load(child_path, builtin_vars, stack)
+        steps.extend(child.steps)
+        restore.extend(child.restore)
+        for key, value in child.variables.items():
+            variables.setdefault(key, value)
+    return steps, variables, restore
+
+
+def load(
+    path: Path, builtin_vars: dict[str, str], _stack: tuple[Path, ...] = ()
+) -> Scenario:
+    stack = (*_stack, path.resolve())
     try:
         with open(path, "rb") as handle:
             data = tomllib.load(handle)
@@ -202,12 +239,18 @@ def load(path: Path, builtin_vars: dict[str, str]) -> Scenario:
     steps_raw = data.get("step", [])
     if not isinstance(steps_raw, list) or not steps_raw:
         raise ScenarioError("a scenario needs at least one [[step]]")
+    steps, inherited_vars, inherited_restore = _expand_steps(
+        steps_raw, path, builtin_vars, stack
+    )
+    own_vars = {k: str(v) for k, v in variables.items()}
     scenario = Scenario(
         name=str(data.get("name", path.stem)),
         description=str(data.get("description", "")),
-        variables={k: str(v) for k, v in variables.items()},
-        steps=[parse_step(t, "step") for t in steps_raw],
-        restore=[parse_step(t, "restore") for t in data.get("restore", [])],
+        # The including scenario wins over what an included one defines.
+        variables={**inherited_vars, **own_vars},
+        steps=steps,
+        restore=[parse_step(t, "restore") for t in data.get("restore", [])]
+        + inherited_restore,
         path=path,
     )
     for step in _walk(scenario.restore):

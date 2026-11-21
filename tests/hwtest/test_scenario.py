@@ -1,7 +1,11 @@
+import tempfile
+import textwrap
 import unittest
+from pathlib import Path
+from typing import ClassVar
 
 from helpers import scenario_from
-from hwtest.scenario import ScenarioError, count_steps, substitute
+from hwtest.scenario import ScenarioError, count_steps, load, substitute
 
 
 class ParsingTest(unittest.TestCase):
@@ -137,6 +141,93 @@ class VariablesTest(unittest.TestCase):
             """
         )
         self.assertEqual(count_steps(s.steps), 7)
+
+
+class IncludeTest(unittest.TestCase):
+    BUILTIN: ClassVar[dict[str, str]] = {"repo": "/repo", "user": "u", "uid": "1"}
+
+    def load_tree(self, files, entry="main"):
+        with tempfile.TemporaryDirectory() as tmp:
+            for name, text in files.items():
+                (Path(tmp) / f"{name}.toml").write_text(textwrap.dedent(text))
+            return load(Path(tmp) / f"{entry}.toml", self.BUILTIN)
+
+    def test_included_steps_are_inlined_in_place(self):
+        s = self.load_tree(
+            {
+                "main": """
+                    [[step]]
+                    name = "before"
+                    run = ["one"]
+                    [[step]]
+                    include = "child"
+                    [[step]]
+                    name = "after"
+                    run = ["three"]
+                """,
+                "child": '[[step]]\nname = "inside"\nrun = ["two"]\n',
+            }
+        )
+        self.assertEqual([st.argv[0] for st in s.steps], ["one", "two", "three"])
+
+    def test_variables_merge_and_the_includer_wins(self):
+        s = self.load_tree(
+            {
+                "main": """
+                    [vars]
+                    shared = "parent"
+                    [[step]]
+                    include = "child"
+                """,
+                "child": """
+                    [vars]
+                    shared = "child"
+                    only_child = "x"
+                    [[step]]
+                    name = "a"
+                    run = ["echo", "${shared}", "${only_child}"]
+                """,
+            }
+        )
+        self.assertEqual(s.variables, {"shared": "parent", "only_child": "x"})
+
+    def test_restore_steps_come_along(self):
+        s = self.load_tree(
+            {
+                "main": '[[step]]\ninclude = "child"\n[[restore]]\nname = "r1"\nrun = ["parent-undo"]\n',
+                "child": '[[step]]\nname = "a"\nrun = ["x"]\n[[restore]]\nname = "r2"\nrun = ["child-undo"]\n',
+            }
+        )
+        self.assertEqual([r.argv[0] for r in s.restore], ["parent-undo", "child-undo"])
+
+    def test_two_scenarios_that_include_each_other_are_rejected(self):
+        with self.assertRaisesRegex(ScenarioError, "loop"):
+            self.load_tree(
+                {
+                    "main": '[[step]]\ninclude = "other"\n',
+                    "other": '[[step]]\ninclude = "main"\n',
+                }
+            )
+
+    def test_an_include_cannot_escape_the_scenario_directory(self):
+        for bad in ("../secret", "/etc/passwd", "a/b", ""):
+            with (
+                self.subTest(name=bad),
+                self.assertRaisesRegex(ScenarioError, "include"),
+            ):
+                self.load_tree({"main": f'[[step]]\ninclude = "{bad}"\n'})
+
+    def test_a_missing_include_is_a_clear_error(self):
+        with self.assertRaisesRegex(ScenarioError, "nope.toml"):
+            self.load_tree({"main": '[[step]]\ninclude = "nope"\n'})
+
+    def test_the_shipped_full_scenario_contains_both_connect_disconnect_cycles(self):
+        from hwtest import cli
+
+        scenario, _ = cli.load_scenario("full")
+        names = [st.name for st in scenario.steps]
+        self.assertIn("Bluetooth connect/disconnect rounds", names)
+        self.assertIn("USB plug/unplug rounds", names)
 
 
 if __name__ == "__main__":

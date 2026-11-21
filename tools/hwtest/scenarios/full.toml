@@ -1,5 +1,5 @@
 name = "full"
-description = "Reload + checks, emulation type and hide-method sweep, identify/rumble (run bluetooth-cycle and usb-replug separately)"
+description = "Everything: reload + checks, Bluetooth and USB connect/disconnect rounds, emulation type and hide-method sweep, identify/rumble"
 
 [vars]
 unit = "ds4-translator.service"
@@ -54,6 +54,12 @@ name = "Hardware checks"
 run = ["${verify}", "--exercise"]
 timeout = 240
 stream = true
+
+[[step]]
+include = "bluetooth-cycle"
+
+[[step]]
+include = "usb-replug"
 
 [[step]]
 name = "Switch to DualSense"

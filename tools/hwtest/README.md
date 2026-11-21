@@ -11,7 +11,7 @@ tools/hwtest/run run reload --dry-run    # show the steps; runs and asks nothing
 tools/hwtest/run run reload              # daemon-reload, restart, hardware checks
 tools/hwtest/run run usb-replug          # plug/unplug the cable 5 times
 tools/hwtest/run run bluetooth-cycle     # turn the pad off/on 3 times
-tools/hwtest/run run full                # reload + type/hide-method sweep + rumble
+tools/hwtest/run run full                # everything: reload, Bluetooth + USB rounds, sweeps, rumble
 tools/hwtest/run run capabilities        # find the minimal CapabilityBoundingSet
 tools/hwtest/run check <scenario>        # validate a scenario file
 ```
@@ -78,6 +78,10 @@ repeat = 5                                  # ${i} is the round, 1-based
 [[step.step]]
 name = "Round ${i}"
 run = ["true"]
+
+[[step]]
+include = "bluetooth-cycle"                 # splice in another scenario's steps, variables
+                                            #   (yours win on a clash) and restore steps
 
 [[restore]]                                 # always runs at the end: success,
 name = "Put things back"                    #   failure or Ctrl-C (run/wait_for only)
