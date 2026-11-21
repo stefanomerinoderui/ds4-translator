@@ -444,7 +444,12 @@ test-integration: all
 	tests/integration/test_daemon_ctl.sh $(BUILD_DIR)
 	tests/integration/test_daemon_security.sh $(BUILD_DIR)
 
-test: test-unit test-component test-smoke test-integration test-security-static
+# The hwtest runner (tools/hwtest) is Python: its tests need neither hardware
+# nor root. Lint it with `ruff check tools/hwtest tests/hwtest`.
+test-hwtest:
+	python3 -m unittest discover -s tests/hwtest
+
+test: test-unit test-component test-smoke test-integration test-security-static test-hwtest
 
 # Mirrors install: removes the UI too. uninstall-cli leaves it in place.
 uninstall: uninstall-ui uninstall-cli
@@ -469,4 +474,4 @@ uninstall-cli:
 
 .PHONY: all debug clean install install-cli stage-cli uninstall uninstall-cli \
         ui install-ui stage-ui uninstall-ui install-ui-user uninstall-ui-user arch-pkg arch-repo \
-        test test-unit test-perf test-fuzz test-component test-smoke test-integration test-sanitize test-tsan test-security-static
+        test test-unit test-perf test-fuzz test-component test-smoke test-integration test-sanitize test-tsan test-security-static test-hwtest

@@ -1,0 +1,118 @@
+name = "full"
+description = "Reload + checks, emulation type and hide-method sweep, identify/rumble (run bluetooth-cycle and usb-replug separately)"
+
+[vars]
+unit = "ds4-translator.service"
+verify = "${repo}/tests/hardware/verify.sh"
+
+[[step]]
+name = "Remember the current emulation type"
+run = ["sh", "-c", "ds4-ctl status | sed -n 's/^Virtual Emulation: //p'"]
+save_as = "display"
+
+[[step]]
+name = "Remember the current hide method"
+run = ["sh", "-c", "ds4-ctl status | sed -n 's/^Hide Method: \\([a-z]*\\).*/\\1/p'"]
+save_as = "hide"
+
+[[step]]
+name = "Make sure the controller is on"
+prompt = "Connect the controller (Bluetooth: press the PS button) and leave it idle."
+until = ["ds4-ctl", "status"]
+expect = "Physical Controller: (?!None)\\S"
+timeout = 90
+
+[[step]]
+name = "Reload systemd units"
+run = ["systemctl", "daemon-reload"]
+root = true
+
+[[step]]
+name = "Reload udev rules"
+run = ["udevadm", "control", "--reload"]
+root = true
+
+[[step]]
+name = "Clear a start-limit failure, if any"
+run = ["systemctl", "reset-failed", "${unit}"]
+root = true
+ok_rc = [0, 1]
+
+[[step]]
+name = "Restart the service"
+run = ["systemctl", "restart", "${unit}"]
+root = true
+
+[[step]]
+name = "Wait for the daemon to grab the controller"
+wait_for = ["ds4-ctl", "status"]
+expect = "Physical Controller: (?!None)\\S"
+timeout = 60
+
+[[step]]
+name = "Hardware checks"
+run = ["${verify}", "--exercise"]
+timeout = 240
+stream = true
+
+[[step]]
+name = "Switch to DualSense"
+run = ["ds4-ctl", "set-type", "dualsense"]
+expect = "OK"
+
+[[step]]
+name = "Switch to Xbox 360"
+run = ["ds4-ctl", "set-type", "xbox360"]
+expect = "OK"
+
+[[step]]
+name = "Switch to Xbox One S"
+run = ["ds4-ctl", "set-type", "xboxone"]
+expect = "OK"
+
+[[step]]
+name = "Switch to Xbox Series X|S"
+run = ["ds4-ctl", "set-type", "xboxseries"]
+expect = "OK"
+
+[[step]]
+name = "Switch to DualShock 4"
+run = ["ds4-ctl", "set-type", "ds4"]
+expect = "OK"
+
+[[step]]
+name = "Hide method: legacy"
+run = ["ds4-ctl", "set-hide-method", "legacy"]
+expect = "(?i)hide method"
+
+[[step]]
+name = "Hide method: unbind"
+run = ["ds4-ctl", "set-hide-method", "unbind"]
+expect = "(?i)hide method"
+
+[[step]]
+name = "Hide method: unlink"
+run = ["ds4-ctl", "set-hide-method", "unlink"]
+expect = "(?i)hide method"
+
+[[step]]
+name = "Flash the light bar (identify)"
+run = ["ds4-ctl", "identify"]
+
+[[step]]
+name = "Identify and rumble"
+prompt = "The light bar should have flashed. Now start a rumble test in any game or\ngamepad tester and check the pad vibrates."
+timeout = 600
+
+[[step]]
+name = "The daemon is still healthy"
+run = ["systemctl", "is-active", "--quiet", "${unit}"]
+
+[[restore]]
+name = "Restore the hide method"
+run = ["sh", "-c", "[ -n \"$1\" ] && ds4-ctl set-hide-method \"$1\"", "sh", "${hide}"]
+ok_rc = [0, 1]
+
+[[restore]]
+name = "Restore the emulation type"
+run = ["sh", "-c", "case \"$1\" in 'DualShock 4') t=ds4;; 'DualSense') t=dualsense;; 'Xbox 360') t=xbox360;; 'Xbox One S') t=xboxone;; 'Xbox Series X|S') t=xboxseries;; *) exit 0;; esac; ds4-ctl set-type \"$t\"", "sh", "${display}"]

@@ -1,0 +1,42 @@
+name = "bluetooth-cycle"
+description = "Turn the controller off and on over Bluetooth, checking the daemon re-grabs it and logs no permission errors"
+
+[vars]
+unit = "ds4-translator.service"
+
+[[step]]
+name = "Note the current service run"
+run = ["systemctl", "show", "${unit}", "-p", "InvocationID", "--value"]
+save_as = "inv"
+
+[[step]]
+name = "Bluetooth connect/disconnect rounds"
+repeat = 3
+
+[[step.step]]
+name = "Turn the controller off"
+prompt = """Turn the controller OFF: hold the PS button for about 10 seconds
+until the light bar goes out."""
+until = ["ds4-ctl", "status"]
+expect = "Physical Controller: None"
+timeout = 60
+
+[[step.step]]
+name = "Turn the controller on"
+prompt = "Turn the controller back ON (press the PS button) and wait; do not touch it."
+until = ["ds4-ctl", "status"]
+expect = "Connection Type: Bluetooth"
+timeout = 60
+
+[[step.step]]
+name = "The daemon re-grabbed it"
+wait_for = ["ds4-ctl", "status"]
+expect = "Physical Controller: (?!None)\\S"
+timeout = 30
+
+[[step]]
+name = "No permission errors in this service run"
+run = ["sh", "-c", "journalctl \"_SYSTEMD_INVOCATION_ID=$1\" --no-pager | grep -iE 'operation not permitted|permission denied|EPERM|read-only file system' | grep -v 'UDC: Permission denied'", "sh", "${inv}"]
+ok_rc = [0, 1]
+expect_not = "\\S"
+timeout = 30

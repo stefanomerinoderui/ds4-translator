@@ -40,6 +40,8 @@ jobs:
       - uses: ./.github/actions/setup-deps
       - name: Run unit and component tests
         run: make test-unit test-component
+      - name: Run the hardware-test runner's own tests
+        run: make test-hwtest
       - name: Upload JUnit XML
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

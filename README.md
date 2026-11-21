@@ -182,7 +182,7 @@ Tests need no root and no controller. They use GoogleTest (`libgtest-dev` on
 Debian/Ubuntu, `gtest` on Arch) plus the same build dependencies as `make`.
 
 ```bash
-make test              # unit + component + smoke + integration
+make test              # unit + component + smoke + integration + hwtest
 make test-unit         # protocol, translation core, parsers   (tests/unit)
 make test-component    # IPC transport against a fake daemon   (tests/component)
 make test-smoke        # built binaries start and reject bad input (tests/smoke)
@@ -192,6 +192,7 @@ make test-perf         # per-report hot-path time budgets (tests/perf)
 make test-fuzz         # libFuzzer over the text parsers and uevent reader, needs clang (FUZZ_SECONDS=30)
 make test-tsan         # unit + transport suites under ThreadSanitizer
 make test-security-static  # hardening flags, systemd unit, udev rules, workflows, shellcheck
+make test-hwtest       # the hardware-test runner's own tests (Python, tools/hwtest)
 make test-unit GTEST_FILTER='*Golden*'   # narrow to matching tests
 ```
 
@@ -201,6 +202,15 @@ test runs a daemon next to a production one. It refuses to start while a real
 daemon is running unless `DS4_TEST_FORCE=1` is set. Every PR and every release
 tag runs these through `.github/workflows/tests.yml`. A bug fix should add a
 test in the `Regression` suite.
+
+### On real hardware
+
+Things a runner cannot check (sandbox on a live system, access control, the
+USB/Bluetooth transports, rumble) are covered by guided scenarios. After
+installing a build, `tools/hwtest/run run reload` reloads systemd/udev,
+restarts the service and runs `tests/hardware/verify.sh`; `usb-replug` and
+`bluetooth-cycle` tell you when to plug, unplug or power the pad. Root steps go
+through polkit with a single prompt. See [`tools/hwtest/README.md`](tools/hwtest/README.md).
 
 ## Known Issues
 

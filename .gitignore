@@ -16,3 +16,7 @@ VERSION
 
 # Release signing key material (private key!). Never commit; move it to safe storage.
 .signing/
+
+# Python bytecode (tools/hwtest and its tests)
+__pycache__/
+*.pyc

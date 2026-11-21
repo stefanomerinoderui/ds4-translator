@@ -28,6 +28,22 @@ jobs:
       - name: Lint (debug build, warnings-as-errors)
         run: make debug
 
+  # tools/hwtest is the only Python in the repository.
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install ruff
+        run: pip install --user ruff==0.17.5
+
+      - name: ruff check
+        run: ~/.local/bin/ruff check tools/hwtest tests/hwtest
+
+      - name: ruff format
+        run: ~/.local/bin/ruff format --check tools/hwtest tests/hwtest
+
   clang-tidy:
     runs-on: ubuntu-latest
     steps:
