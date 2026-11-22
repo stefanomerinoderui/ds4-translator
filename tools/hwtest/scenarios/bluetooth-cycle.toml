@@ -1,0 +1,59 @@
+name = "bluetooth-cycle"
+description = "Disconnect the controller over Bluetooth (automatically), then reconnect it by hand, checking the daemon re-grabs it and logs no permission errors"
+
+[vars]
+unit = "ds4-translator.service"
+
+[[step]]
+name = "Note the current service run"
+run = ["systemctl", "show", "${unit}", "-p", "InvocationID", "--value"]
+save_as = "inv"
+
+[[step]]
+name = "Unplug the USB cable first"
+prompt = "Unplug the USB cable: this test needs the controller on Bluetooth only."
+until = ["sh", "-c", "! ds4-ctl status | grep -q 'Connection Type: USB'"]
+when = ["sh", "-c", "ds4-ctl status | grep -q 'Connection Type: USB'"]
+timeout = 60
+
+[[step]]
+name = "Bluetooth connect/disconnect rounds"
+repeat = 3
+
+[[step.step]]
+name = "Make sure the controller is on over Bluetooth"
+prompt = "Turn the controller ON (press the PS button) and wait; do not touch it."
+until = ["ds4-ctl", "status"]
+expect = "Connection Type: Bluetooth"
+timeout = 60
+when = ["sh", "-c", "! ds4-ctl status | grep -q 'Connection Type: Bluetooth'"]
+
+[[step.step]]
+name = "Disconnect the controller"
+run = ["${repo}/tests/hardware/bt-disconnect.sh"]
+
+[[step.step]]
+name = "The daemon noticed it left"
+wait_for = ["ds4-ctl", "status"]
+expect = "Physical Controller: None"
+timeout = 30
+
+[[step.step]]
+name = "Turn the controller on"
+prompt = "Round ${i} of 3: turn the controller back ON (press the PS button) and wait; do not touch it."
+until = ["ds4-ctl", "status"]
+expect = "Connection Type: Bluetooth"
+timeout = 60
+
+[[step.step]]
+name = "The daemon re-grabbed it"
+wait_for = ["ds4-ctl", "status"]
+expect = "Physical Controller: (?!None)\\S"
+timeout = 30
+
+[[step]]
+name = "No permission errors in this service run"
+run = ["sh", "-c", "journalctl \"_SYSTEMD_INVOCATION_ID=$1\" --no-pager | grep -iE 'operation not permitted|permission denied|EPERM|read-only file system' | grep -v 'UDC: Permission denied'", "sh", "${inv}"]
+ok_rc = [0, 1]
+expect_not = "\\S"
+timeout = 30

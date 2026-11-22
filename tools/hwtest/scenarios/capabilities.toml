@@ -1,0 +1,17 @@
+name = "capabilities"
+description = "Find the minimal CapabilityBoundingSet by removing one capability at a time (restarts the daemon ~12 times)"
+
+[[step]]
+name = "Leave the controller connected"
+prompt = """Keep the controller connected over Bluetooth and do not use it.
+The daemon restarts about a dozen times and the pad drops briefly each time."""
+until = ["ds4-ctl", "status"]
+expect = "Physical Controller: (?!None)\\S"
+timeout = 60
+
+[[step]]
+name = "Bisect capabilities"
+run = ["${repo}/tests/hardware/bisect-capabilities.sh"]
+root = true
+timeout = 1200
+stream = true

@@ -54,6 +54,11 @@ int hid_uevent_monitor_open();
 // anything left unread this pass.
 bool hid_uevent_monitor_read(int fd, std::string& out_hid_id);
 
+// True unless `addr` (a struct sockaddr_nl, as returned by recvmsg) shows the
+// datagram came from a user-space process rather than the kernel. Exposed so
+// the check can be tested without a real netlink socket.
+bool hid_uevent_sender_is_kernel(const void* addr, unsigned addr_len);
+
 // Synchronous scan of /sys/bus/hid/devices for a physical USB or
 // Bluetooth DS4/DualSense hid_device that's currently bound to a driver
 // (i.e. still needs unbinding -- an already-unbound entry is either

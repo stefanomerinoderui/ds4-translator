@@ -6,6 +6,9 @@ post_install() {
     udevadm trigger --subsystem-match=hidraw --subsystem-match=input
     echo ">>> Enable and start the daemon with:"
     echo ">>>   sudo systemctl enable --now ds4-translator.service"
+    echo ">>> Changing settings (ds4-ctl, the settings window) needs the"
+    echo ">>> ds4-translator group; status and the live monitor work for everyone:"
+    echo ">>>   sudo usermod -aG ds4-translator \"\$USER\"   (then log in again)"
 }
 
 post_upgrade() {

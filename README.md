@@ -76,6 +76,15 @@ By default, the service starts emulating a virtual **DualShock 4** controller.
 
 ## Runtime Configuration Utility (`ds4-ctl`)
 
+The control socket is open to every user for read-only use (`ds4-ctl status`,
+`ds4-ctl test`, the UI's live view). Anything that changes settings or drives
+the controller needs root, or membership of the `ds4-translator` group, which
+the package/`make install` creates:
+
+```bash
+sudo usermod -aG ds4-translator "$USER"   # then log out and back in
+```
+
 Users can query the status and change the emulated virtual controller type dynamically at runtime using the `ds4-ctl` tool (which does not require root privileges).
 
 ### Query Daemon Status
@@ -166,6 +175,42 @@ To disable the service and remove all installed files:
 ```bash
 sudo make uninstall
 ```
+
+## Running the tests
+
+Tests need no root and no controller. They use GoogleTest (`libgtest-dev` on
+Debian/Ubuntu, `gtest` on Arch) plus the same build dependencies as `make`.
+
+```bash
+make test              # unit + component + smoke + integration + hwtest
+make test-unit         # protocol, translation core, parsers   (tests/unit)
+make test-component    # IPC transport against a fake daemon   (tests/component)
+make test-smoke        # built binaries start and reject bad input (tests/smoke)
+make test-integration  # real daemon + ds4-ctl on a scratch dir (tests/integration)
+make test-sanitize     # unit suite under ASan + UBSan
+make test-perf         # per-report hot-path time budgets (tests/perf)
+make test-fuzz         # libFuzzer over the text parsers and uevent reader, needs clang (FUZZ_SECONDS=30)
+make test-tsan         # unit + transport suites under ThreadSanitizer
+make test-security-static  # hardening flags, systemd unit, udev rules, workflows, shellcheck
+make test-hwtest       # the hardware-test runner's own tests (Python, tools/hwtest)
+make test-unit GTEST_FILTER='*Golden*'   # narrow to matching tests
+```
+
+`DS4_RUNTIME_DIR`, `DS4_STATE_DIR` and `DS4_CONFIG_PATH` (see `src/paths.h`)
+relocate the daemon's socket, state and config, which is how the integration
+test runs a daemon next to a production one. It refuses to start while a real
+daemon is running unless `DS4_TEST_FORCE=1` is set. Every PR and every release
+tag runs these through `.github/workflows/tests.yml`. A bug fix should add a
+test in the `Regression` suite.
+
+### On real hardware
+
+Things a runner cannot check (sandbox on a live system, access control, the
+USB/Bluetooth transports, rumble) are covered by guided scenarios. After
+installing a build, `tools/hwtest/run run reload` reloads systemd/udev,
+restarts the service and runs `tests/hardware/verify.sh`; `usb-replug` and
+`bluetooth-cycle` tell you when to plug, unplug or power the pad. Root steps go
+through polkit with a single prompt. See [`tools/hwtest/README.md`](tools/hwtest/README.md).
 
 ## Known Issues
 

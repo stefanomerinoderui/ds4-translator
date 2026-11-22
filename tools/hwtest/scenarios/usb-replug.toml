@@ -1,0 +1,62 @@
+name = "usb-replug"
+description = "Plug and unplug the USB cable several times, checking the daemon recovers every time (libusb watchdog, sandbox)"
+
+[vars]
+unit = "ds4-translator.service"
+
+[[step]]
+name = "Note the current service run"
+run = ["systemctl", "show", "${unit}", "-p", "InvocationID", "--value"]
+save_as = "inv"
+
+[[step]]
+name = "Turn Bluetooth off first"
+run = ["${repo}/tests/hardware/bt-disconnect.sh"]
+when = ["sh", "-c", "ds4-ctl status | grep -q 'Connection Type: Bluetooth'"]
+
+[[step]]
+name = "Plug the controller in by USB"
+prompt = "Plug the USB cable into the controller and the PC."
+until = ["ds4-ctl", "status"]
+expect = "Connection Type: USB"
+timeout = 90
+guard = ["ds4-ctl", "status"]
+guard_expect = "Connection Type: Bluetooth"
+guard_run = ["${repo}/tests/hardware/bt-disconnect.sh"]
+
+[[step]]
+name = "USB plug/unplug rounds"
+repeat = 5
+max_redo = 5 # rounds spoiled by the pad switching to Bluetooth
+
+[[step.step]]
+name = "Unplug the cable"
+prompt = """Round ${i} of 5: move the sticks, then UNPLUG the USB cable while you are
+moving them."""
+until = ["ds4-ctl", "status"]
+expect = "Physical Controller: None"
+timeout = 60
+guard = ["ds4-ctl", "status"]
+guard_expect = "Connection Type: Bluetooth"
+guard_run = ["${repo}/tests/hardware/bt-disconnect.sh"]
+
+[[step.step]]
+name = "Plug the cable back in"
+prompt = "Plug the USB cable back in."
+until = ["ds4-ctl", "status"]
+expect = "Connection Type: USB"
+timeout = 60
+guard = ["ds4-ctl", "status"]
+guard_expect = "Connection Type: Bluetooth"
+guard_run = ["${repo}/tests/hardware/bt-disconnect.sh"]
+
+[[step.step]]
+name = "The daemon is still healthy"
+run = ["systemctl", "is-active", "--quiet", "${unit}"]
+
+[[step]]
+name = "No permission errors or hangs in this service run"
+run = ["sh", "-c", "journalctl \"_SYSTEMD_INVOCATION_ID=$1\" --no-pager | grep -iE 'operation not permitted|permission denied|EPERM|read-only file system' | grep -v 'UDC: Permission denied'", "sh", "${inv}"]
+ok_rc = [0, 1]
+expect_not = "\\S"
+timeout = 30

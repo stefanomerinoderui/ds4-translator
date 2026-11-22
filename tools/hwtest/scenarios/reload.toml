@@ -1,0 +1,53 @@
+name = "reload"
+description = "Reload systemd/udev, restart the service and run the hardware checks (start here after installing a package)"
+
+[vars]
+unit = "ds4-translator.service"
+verify = "${repo}/tests/hardware/verify.sh"
+
+[[step]]
+name = "Make sure the controller is on"
+prompt = """Connect the controller (Bluetooth: press the PS button; or plug in the USB cable)
+and leave it idle."""
+until = ["ds4-ctl", "status"]
+expect = "Physical Controller: (?!None)\\S"
+timeout = 90
+
+[[step]]
+name = "Reload systemd units"
+run = ["systemctl", "daemon-reload"]
+root = true
+
+[[step]]
+name = "Reload udev rules"
+run = ["udevadm", "control", "--reload"]
+root = true
+
+[[step]]
+name = "Clear a start-limit failure, if any"
+run = ["systemctl", "reset-failed", "${unit}"]
+root = true
+ok_rc = [0, 1]
+
+[[step]]
+name = "Restart the service"
+run = ["systemctl", "restart", "${unit}"]
+root = true
+timeout = 60
+
+[[step]]
+name = "Wait for the service"
+wait_for = ["systemctl", "is-active", "--quiet", "${unit}"]
+timeout = 30
+
+[[step]]
+name = "Wait for the daemon to grab the controller"
+wait_for = ["ds4-ctl", "status"]
+expect = "Physical Controller: (?!None)\\S"
+timeout = 45
+
+[[step]]
+name = "Hardware checks (sandbox, access control, virtual pad)"
+run = ["${verify}", "--exercise"]
+timeout = 240
+stream = true

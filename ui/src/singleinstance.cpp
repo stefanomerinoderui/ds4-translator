@@ -1,9 +1,12 @@
 #include "singleinstance.h"
 
 #include <QDir>
+#include <QFile>
 #include <QLocalSocket>
 #include <QStandardPaths>
 
+#include <cerrno>
+#include <sys/stat.h>
 #include <unistd.h>
 
 namespace {
@@ -18,6 +21,22 @@ const char *const kSocketName = "ds4-translator-ui.socket";
 constexpr int kConnectTimeoutMs = 300;
 
 const char *const kShowMessage = "show\n";
+
+// Creates `path` for this user alone and verifies it really is that: a
+// directory (not a symlink) owned by us with no group/other access. The
+// fallback location is under the world-writable temp dir, where another user
+// could otherwise pre-create the name and then hijack or block the socket.
+bool ensurePrivateDirectory(const QString &path) {
+    const QByteArray native = QFile::encodeName(path);
+    if (::mkdir(native.constData(), 0700) != 0 && errno != EEXIST) {
+        return false;
+    }
+    struct stat info;
+    if (::lstat(native.constData(), &info) != 0) {
+        return false;
+    }
+    return S_ISDIR(info.st_mode) && info.st_uid == ::geteuid() && (info.st_mode & 077) == 0;
+}
 
 } // namespace
 
@@ -41,14 +60,20 @@ QString SingleInstance::socketPath() {
         // two users' sockets apart.
         dir = QStandardPaths::writableLocation(QStandardPaths::TempLocation) +
               QLatin1String("/ds4-translator-ui-") + QString::number(::geteuid());
-        QDir().mkpath(dir);
+        if (!ensurePrivateDirectory(dir)) {
+            return QString(); // not ours to use; callers treat this as "no guard"
+        }
     }
     return dir + QLatin1Char('/') + QLatin1String(kSocketName);
 }
 
 bool SingleInstance::notifyRunningInstance() {
+    const QString path = socketPath();
+    if (path.isEmpty()) {
+        return false;
+    }
     QLocalSocket socket;
-    socket.connectToServer(socketPath());
+    socket.connectToServer(path);
     if (!socket.waitForConnected(kConnectTimeoutMs)) {
         return false;
     }
@@ -60,6 +85,9 @@ bool SingleInstance::notifyRunningInstance() {
 
 bool SingleInstance::listen() {
     const QString path = socketPath();
+    if (path.isEmpty()) {
+        return false;
+    }
     if (m_server.listen(path)) {
         return true;
     }

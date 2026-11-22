@@ -897,6 +897,12 @@ int main(int argc, char* argv[]) {
         print_daemon_unreachable_help();
         return 1;
     }
+    // The daemon refuses state-changing commands from unprivileged peers; make
+    // that visible to scripts instead of exiting 0.
+    if (response.rfind("Permission denied", 0) == 0) {
+        std::cerr << response << std::endl;
+        return 1;
+    }
     std::cout << response << std::endl;
     return 0;
 }

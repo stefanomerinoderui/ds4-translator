@@ -1,0 +1,175 @@
+name: Tests
+
+# Runs on every PR and push to main, and is reused by release.yml so a tag
+# cannot publish a build that fails them. Everything here runs unprivileged
+# on a runner with no controller: see the "tests" section of the Makefile.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+  workflow_dispatch:
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # Fast gate: is the build usable, and do the narrow sanity checks pass?
+  smoke-sanity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: ./.github/actions/setup-deps
+      - name: Build
+        run: make all
+      - name: Smoke tests
+        run: make test-smoke
+      - name: Sanity tests
+        run: make test-unit test-component GTEST_FILTER='*Sanity*:*Golden*:Regression.*'
+
+  # Unit, component and regression suites (all gtest binaries under tests/).
+  unit:
+    needs: smoke-sanity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: ./.github/actions/setup-deps
+      - name: Run unit and component tests
+        run: make test-unit test-component
+      - name: Run the hardware-test runner's own tests
+        run: make test-hwtest
+      - name: Upload JUnit XML
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: unit-test-results
+          path: build/tests/*.xml
+
+  # Real daemon + ds4-ctl over a scratch socket (no root, no controller).
+  integration:
+    needs: smoke-sanity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: ./.github/actions/setup-deps
+      # Includes the daemon security suite, which uses passwordless sudo
+      # (available on GitHub runners) to talk to the socket as another uid.
+      - name: Daemon + ds4-ctl integration and security tests
+        run: make test-integration
+
+  # Memory-safety / undefined-behaviour check of the same suites.
+  security:
+    needs: smoke-sanity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: ./.github/actions/setup-deps
+      - name: Unit tests under ASan + UBSan
+        run: make test-sanitize
+      - name: Unit + transport tests under ThreadSanitizer
+        run: make test-tsan
+      - name: Fuzz the text parsers
+        run: make test-fuzz FUZZ_SECONDS=60
+      - name: Upload fuzzer crashes
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fuzz-crashes
+          path: build/tests/fuzz-crashes/
+
+  # Toolchain / distro compatibility.
+  compatibility:
+    needs: smoke-sanity
+    strategy:
+      fail-fast: false
+      matrix:
+        # Not 22.04: the HID-BPF object is built against the *runner's* kernel
+        # BTF (vmlinux.h), and its struct_ops (hid_bpf_ops::hid_device_event)
+        # only exist in kernels new enough for HID-BPF, which 22.04 runners lack.
+        os: [ubuntu-24.04]
+        compiler: [g++, clang++]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: ./.github/actions/setup-deps
+      - name: Build and test with ${{ matrix.compiler }}
+        run: make all test CXX=${{ matrix.compiler }}
+
+  # Hardening flags, systemd unit, udev rules, workflows, shell scripts and
+  # secrets (tests/security/static_checks.sh). Known weaknesses are pinned, see
+  # docs/security-findings.md.
+  security-static:
+    needs: smoke-sanity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0 # gitleaks scans history
+      - uses: ./.github/actions/setup-deps
+      - name: Install analysis tools
+        run: |
+          sudo apt-get install -y shellcheck clang-tools
+          # go install verifies modules against the Go checksum database, so
+          # these need no separately downloaded (unchecked) binaries.
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          go install github.com/zricethezav/gitleaks/v8@v8.24.2
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Static security checks
+        run: make test-security-static | tee security-static.txt
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo '### Static security checks'
+            echo '```'
+            grep -E '^(KNOWN|FIXED\?|FAIL|HARDENING|SYSTEMD)' security-static.txt || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Clang static analyzer (report only)
+        continue-on-error: true
+        run: |
+          make clean
+          scan-build -o scan-report --status-bugs make all
+      - name: Upload analyzer report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: scan-build-report
+          path: scan-report/
+          if-no-files-found: ignore
+
+  # Newer toolchain than Ubuntu: matches the Arch packaging target.
+  compatibility-arch:
+    needs: smoke-sanity
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      - name: Install dependencies
+        run: |
+          # multilib provides the 32-bit glibc headers the -m32 build of
+          # libudev-sony-spoof32.so needs (same as the release workflow).
+          printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> /etc/pacman.conf
+          pacman -Syu --noconfirm --needed git clang libusb libbpf bpf gtest pkgconf \
+            lib32-glibc lib32-gcc-libs systemd python
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Build and test
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          make all test
+
+  # Per-report hot-path budgets. Generous so runner noise does not flake, but
+  # an algorithmic regression trips them.
+  performance:
+    needs: unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: ./.github/actions/setup-deps
+      - name: Performance budgets
+        run: |
+          make test-perf | tee perf.txt
+          { echo '### Performance'; echo '```'; grep '^PERF' perf.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,30 @@
+name: Install build dependencies
+description: >
+  Packages the Makefile hard-requires (libusb, libbpf, clang, bpftool) plus
+  GoogleTest, shared by the lint, test and release workflows.
+runs:
+  using: composite
+  steps:
+    - name: Install apt packages
+      shell: bash
+      run: |
+        sudo apt-get update
+        # gcc/g++-multilib: -m32 for libudev-sony-spoof32.so.
+        sudo apt-get install -y build-essential gcc-multilib g++-multilib \
+          libusb-1.0-0-dev libbpf-dev clang pkg-config libgtest-dev binutils
+
+    - name: Install bpftool
+      shell: bash
+      run: |
+        # apt's bpftool wrapper refuses to run unless it matches `uname -r`
+        # exactly, which the runner kernel never does; the static release
+        # binary only needs /sys/kernel/btf/vmlinux.
+        set -e
+        curl -sL -o /tmp/bpftool.tar.gz \
+          https://github.com/libbpf/bpftool/releases/download/v7.7.0/bpftool-v7.7.0-amd64.tar.gz
+        # Pinned digest of the v7.7.0 amd64 release asset: a changed or
+        # tampered download fails here instead of being installed with sudo.
+        echo "09150596f09356b0ff632dd7f9856e0ea86bf96b269e9bc94278d9a9432a268c  /tmp/bpftool.tar.gz" | sha256sum -c -
+        tar -xzf /tmp/bpftool.tar.gz -C /tmp bpftool
+        sudo install -m 755 /tmp/bpftool /usr/local/bin/bpftool
+        bpftool version

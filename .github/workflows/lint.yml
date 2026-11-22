@@ -10,42 +10,17 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          # gcc/g++-multilib provide -m32 support, needed for the
-          # 32-bit libudev-sony-spoof32.so target alongside the 64-bit one.
-          # libusb-1.0-0-dev is required unconditionally by the Makefile
-          # now (the default hide method's USB transport, src/usb-hid-transport.cpp).
-          # libbpf-dev/clang are required unconditionally too (hard
-          # $(error ...) gates in the Makefile) -- the HID-BPF Bluetooth
-          # transport (src/hid-bpf-transport.cpp) needs libbpf headers to
-          # even parse, and clang to compile the BPF object itself.
-          sudo apt-get install -y build-essential gcc-multilib g++-multilib libusb-1.0-0-dev libbpf-dev clang pkg-config
-
-      - name: Install bpftool
-        run: |
-          # apt's bpftool (via linux-tools-generic) is a wrapper that
-          # refuses to run unless its embedded version matches `uname -r`
-          # exactly -- confirmed failing here ("bpftool not found for
-          # kernel 6.17.0-1022", package only ships 6.8.0-137) since GH's
-          # runner image kernel updates faster than the apt package. A
-          # static release binary sidesteps the mismatch entirely; it only
-          # needs to read /sys/kernel/btf/vmlinux, not match the kernel
-          # build.
-          set -e
-          curl -sL -o /tmp/bpftool.tar.gz \
-            https://github.com/libbpf/bpftool/releases/download/v7.7.0/bpftool-v7.7.0-amd64.tar.gz
-          tar -xzf /tmp/bpftool.tar.gz -C /tmp bpftool
-          sudo install -m 755 /tmp/bpftool /usr/local/bin/bpftool
-          bpftool version
+      - uses: ./.github/actions/setup-deps
 
       - name: Lint (release build, warnings-as-errors)
         run: make all
@@ -53,11 +28,27 @@ jobs:
       - name: Lint (debug build, warnings-as-errors)
         run: make debug
 
+  # tools/hwtest is the only Python in the repository.
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install ruff
+        run: pip install --user ruff==0.17.5
+
+      - name: ruff check
+        run: ~/.local/bin/ruff check tools/hwtest tests/hwtest
+
+      - name: ruff format
+        run: ~/.local/bin/ruff format --check tools/hwtest tests/hwtest
+
   clang-tidy:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install clang-tidy
         run: |

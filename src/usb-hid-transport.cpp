@@ -67,11 +67,14 @@ struct TransportState {
     std::thread pump_thread;
     std::thread watchdog_thread;
     std::atomic<bool> stop_flag{false};
-    // Set by watchdog_thread_fn right before it calls libusb_close() to
-    // force-unstick a hung pump thread -- see its doc comment. Tells
-    // usb_hid_transport_close() the handle is already closed so it
-    // doesn't double-close it.
-    std::atomic<bool> force_closed{false};
+    // Set by watchdog_thread_fn when the device is gone or was reclaimed by
+    // the kernel. The pump thread then stops; the handle itself is only ever
+    // closed by usb_hid_transport_close(), after both threads have joined.
+    std::atomic<bool> lost{false};
+    // The transfer the pump thread currently has in flight, so the watchdog
+    // can cancel it. Guarded by xfer_mutex together with `lost`.
+    std::mutex xfer_mutex;
+    libusb_transfer* active_transfer = nullptr;
     std::mutex wd_mutex;
     std::condition_variable wd_cv;
     std::string hid_id;
@@ -145,22 +148,103 @@ bool device_still_present(TransportState* t) {
     return found;
 }
 
+void on_transfer_done(libusb_transfer* transfer) {
+    *static_cast<int*>(transfer->user_data) = 1;
+}
+
+int transfer_status_to_error(libusb_transfer_status status) {
+    switch (status) {
+        case LIBUSB_TRANSFER_COMPLETED: return LIBUSB_SUCCESS;
+        case LIBUSB_TRANSFER_TIMED_OUT: return LIBUSB_ERROR_TIMEOUT;
+        case LIBUSB_TRANSFER_STALL: return LIBUSB_ERROR_PIPE;
+        case LIBUSB_TRANSFER_OVERFLOW: return LIBUSB_ERROR_OVERFLOW;
+        case LIBUSB_TRANSFER_NO_DEVICE: return LIBUSB_ERROR_NO_DEVICE;
+        case LIBUSB_TRANSFER_CANCELLED: return LIBUSB_ERROR_INTERRUPTED;
+        default: return LIBUSB_ERROR_IO;
+    }
+}
+
+// An interrupt transfer that another thread can abort. It replaces the
+// synchronous libusb_interrupt_transfer(), which could not be interrupted
+// except by closing the handle underneath it -- libusb leaves that undefined
+// (finding M3). Returns a libusb error code like the synchronous call.
+int interrupt_transfer(TransportState* t, uint8_t endpoint, uint8_t* data, int length,
+                       unsigned timeout_ms, int* transferred) {
+    libusb_transfer* transfer = libusb_alloc_transfer(0);
+    if (!transfer) return LIBUSB_ERROR_NO_MEM;
+
+    int done = 0;
+    libusb_fill_interrupt_transfer(transfer, t->handle, endpoint, data, length, on_transfer_done, &done,
+                                   timeout_ms);
+    {
+        std::lock_guard<std::mutex> lock(t->xfer_mutex);
+        if (t->lost.load(std::memory_order_relaxed)) {
+            libusb_free_transfer(transfer);
+            return LIBUSB_ERROR_NO_DEVICE;
+        }
+        int rc = libusb_submit_transfer(transfer);
+        if (rc != 0) {
+            libusb_free_transfer(transfer);
+            return rc;
+        }
+        t->active_transfer = transfer;
+    }
+
+    while (!done) {
+        // Short ticks keep this thread responsive; the transfer itself ends
+        // by its own timeout, by an error, or by the watchdog's cancel.
+        timeval tick{0, 100000};
+        int rc = libusb_handle_events_timeout_completed(t->ctx, &tick, &done);
+        if (rc != 0 && rc != LIBUSB_ERROR_TIMEOUT && rc != LIBUSB_ERROR_INTERRUPTED && !done) {
+            // The event loop failed; ask for the transfer to end instead of
+            // spinning on it, and keep waiting for its completion callback
+            // (the transfer memory must not be freed before that).
+            libusb_cancel_transfer(transfer);
+            usleep(1000);
+        }
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(t->xfer_mutex);
+        t->active_transfer = nullptr;
+    }
+    const int rc = transfer_status_to_error(transfer->status);
+    if (rc == LIBUSB_SUCCESS && transferred) *transferred = transfer->actual_length;
+    libusb_free_transfer(transfer);
+    return rc;
+}
+
+// Asks libusb to end the pump thread's in-flight transfer, if any.
+// libusb_cancel_transfer() may be called from any thread; the pump thread then
+// sees the transfer complete as cancelled.
+void cancel_active_transfer(TransportState* t) {
+    std::lock_guard<std::mutex> lock(t->xfer_mutex);
+    if (t->active_transfer) {
+        libusb_cancel_transfer(t->active_transfer);
+    }
+}
+
+// Marks the transport lost and aborts whatever the pump thread is waiting on.
+void abort_transport(TransportState* t) {
+    std::lock_guard<std::mutex> lock(t->xfer_mutex);
+    t->lost.store(true, std::memory_order_relaxed);
+    if (t->active_transfer) {
+        libusb_cancel_transfer(t->active_transfer);
+    }
+}
+
 // Independently detects a physically-gone or kernel-reclaimed device and
-// forces the transport closed -- confirmed live (2026-08-11) that
-// pump_thread_fn's own libusb_interrupt_transfer() call can block far
-// longer than its stated 8ms/200ms timeouts once the device is actually
-// gone (a real disconnect+replug produced zero log output and the pump
-// thread never advanced past that one call for 3+ minutes straight,
-// confirmed via /proc/<tid>/stat starttime -- no new libusb thread was
-// ever spawned for the replug because the stuck thread never returned to
-// let main.cpp's disconnect handling or auto-rescan run). Relying on the
-// pump loop's own cadence to notice staleness doesn't work when the loop
-// itself can stall, so this runs on its own thread and, when it finds a
-// problem, calls libusb_close() on the *same* handle the pump thread is
-// blocked on -- this is libusb's own documented mechanism for unsticking
-// a synchronous transfer from another thread (the same pattern hotplug
-// removal callbacks use) and makes the pump thread's blocked call return
-// LIBUSB_ERROR_NO_DEVICE/IO promptly instead of hanging indefinitely.
+// aborts the transport -- confirmed live (2026-08-11) that the pump thread's
+// own transfer can block far longer than its stated 8ms/200ms timeouts once
+// the device is actually gone (a real disconnect+replug produced zero log
+// output and the pump thread never advanced past that one call for 3+
+// minutes straight, confirmed via /proc/<tid>/stat starttime -- no new
+// libusb thread was ever spawned for the replug because the stuck thread
+// never returned to let main.cpp's disconnect handling or auto-rescan run).
+// Relying on the pump loop's own cadence to notice staleness doesn't work
+// when the loop itself can stall, so this runs on its own thread and, when
+// it finds a problem, cancels the pump's in-flight transfer. It must not
+// close the handle: the pump thread is still using it (finding M3).
 void watchdog_thread_fn(TransportState* t) {
     std::unique_lock<std::mutex> lock(t->wd_mutex);
     while (!t->stop_flag.load(std::memory_order_relaxed)) {
@@ -171,10 +255,9 @@ void watchdog_thread_fn(TransportState* t) {
         if (!device_still_present(t)) {
             std::cerr << "hid-unbind: USB device bus " << (unsigned)t->bus_number
                       << " addr " << (unsigned)t->device_address
-                      << " no longer enumerated -- forcing the transport closed "
+                      << " no longer enumerated -- aborting the transport "
                          "(watchdog)" << std::endl;
-            t->force_closed.store(true, std::memory_order_relaxed);
-            libusb_close(t->handle);
+            abort_transport(t);
             return;
         }
 
@@ -182,9 +265,8 @@ void watchdog_thread_fn(TransportState* t) {
         if (active_rc == 1) {
             std::cerr << "hid-unbind: interface " << t->interface_number
                       << " was reclaimed by the kernel's usbhid driver mid-session "
-                         "-- forcing the transport closed (watchdog)" << std::endl;
-            t->force_closed.store(true, std::memory_order_relaxed);
-            libusb_close(t->handle);
+                         "-- aborting the transport (watchdog)" << std::endl;
+            abort_transport(t);
             return;
         }
     }
@@ -194,7 +276,7 @@ void pump_thread_fn(TransportState* t) {
     uint8_t in_buf[kMaxReportSize];
     uint8_t out_buf[kMaxReportSize];
 
-    while (!t->stop_flag.load(std::memory_order_relaxed)) {
+    while (!t->stop_flag.load(std::memory_order_relaxed) && !t->lost.load(std::memory_order_relaxed)) {
         // Outbound: forward at most one pending report per iteration --
         // LED/rumble writes are infrequent, so a non-blocking peek here
         // costs nothing while keeping this to a single thread.
@@ -206,7 +288,7 @@ void pump_thread_fn(TransportState* t) {
             ssize_t n = read(t->sv[0], out_buf, sizeof(out_buf));
             if (n > 0 && t->ep_out != 0) {
                 int transferred = 0;
-                libusb_interrupt_transfer(t->handle, t->ep_out, out_buf, (int)n, &transferred, 200);
+                interrupt_transfer(t, t->ep_out, out_buf, (int)n, 200, &transferred);
             }
         }
 
@@ -215,7 +297,7 @@ void pump_thread_fn(TransportState* t) {
         // writes are still checked promptly; returns immediately once
         // data actually arrives rather than waiting for the full timeout.
         int transferred = 0;
-        int rc = libusb_interrupt_transfer(t->handle, t->ep_in, in_buf, sizeof(in_buf), &transferred, 8);
+        int rc = interrupt_transfer(t, t->ep_in, in_buf, sizeof(in_buf), 8, &transferred);
         if (rc == LIBUSB_SUCCESS && transferred > 0) {
             if (write(t->sv[0], in_buf, (size_t)transferred) < 0) {
                 // Peer end closed (main thread already tore down its side) --
@@ -228,14 +310,11 @@ void pump_thread_fn(TransportState* t) {
         }
         // LIBUSB_ERROR_TIMEOUT is the expected steady-state case -- loop.
         //
-        // Disconnect/reclaim detection used to live here as periodic
-        // counters, but a real disconnect can leave this thread blocked
-        // inside libusb_interrupt_transfer() far longer than its stated
-        // timeout (confirmed live, 2026-08-11 -- the loop never got back
-        // around to run these checks at all), so that job now belongs to
-        // watchdog_thread_fn, which runs independently and forces this
-        // thread's blocked call to return by closing the handle out from
-        // under it.
+        // Disconnect/reclaim detection lives in watchdog_thread_fn, which
+        // runs independently and cancels this thread's transfer when the
+        // device is gone, since a real disconnect can leave a transfer
+        // pending far longer than its stated timeout (confirmed live,
+        // 2026-08-11).
     }
 
     shutdown(t->sv[0], SHUT_RDWR);
@@ -432,6 +511,9 @@ void usb_hid_transport_close(int fd) {
     t->stop_flag.store(true, std::memory_order_relaxed);
     shutdown(t->sv[0], SHUT_RDWR);
     t->wd_cv.notify_all();
+    // A wedged transfer would otherwise keep the pump thread from noticing
+    // stop_flag, and the join below from returning.
+    cancel_active_transfer(t);
     if (t->pump_thread.joinable()) {
         t->pump_thread.join();
     }
@@ -439,10 +521,11 @@ void usb_hid_transport_close(int fd) {
         t->watchdog_thread.join();
     }
 
-    // If watchdog_thread_fn already force-closed the handle to unstick a
-    // hung pump thread, it's gone -- touching it again here would be a
-    // double-close/use-after-close.
-    if (!t->force_closed.load(std::memory_order_relaxed)) {
+    // Both threads are joined, so nothing uses the handle any more and this
+    // is its only close. A lost device (unplugged, or reclaimed by the
+    // kernel) has nothing to hand back, and libusb_close() releases the
+    // interface itself.
+    if (!t->lost.load(std::memory_order_relaxed)) {
         libusb_release_interface(t->handle, t->interface_number);
         int attach_rc = libusb_attach_kernel_driver(t->handle, t->interface_number);
         if (attach_rc != 0) {
@@ -453,8 +536,8 @@ void usb_hid_transport_close(int fd) {
             // never left driverless.
             write_hid_driver_sysfs("bind", t->hid_id);
         }
-        libusb_close(t->handle);
     }
+    libusb_close(t->handle);
     libusb_exit(t->ctx);
 
     close(t->sv[0]);
