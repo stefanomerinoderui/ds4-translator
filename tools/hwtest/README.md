@@ -70,10 +70,14 @@ prompt = "Plug the USB cable in."          # shown in a box; Enter continues
 until = ["ds4-ctl", "status"]               # optional: continue by itself when this
 expect = "Connection Type: USB"             #   probe matches (Enter still works)
 timeout = 60                                # then: retry / skip / abort
+guard = ["ds4-ctl", "status"]               # optional trio: while waiting, if `guard` output
+guard_expect = "Connection Type: Bluetooth" #   matches, `guard_run` undoes it and, inside a
+guard_run = ["tests/hardware/bt-disconnect.sh"]  # repeat, that round is replayed uncounted
 
 [[step]]
 name = "Rounds"
 repeat = 5                                  # ${i} is the round, 1-based
+max_redo = 3                                # rounds a guard may throw away before failing
 
 [[step.step]]
 name = "Round ${i}"

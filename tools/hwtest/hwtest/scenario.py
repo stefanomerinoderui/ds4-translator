@@ -40,6 +40,13 @@ class Step:
     stream: bool = False
     count: int = 0  # repeat
     steps: list[Step] = field(default_factory=list)  # repeat body
+    max_redo: int = 3  # repeat: rounds that may be thrown away by a guard
+    # prompt only: a condition that must not appear while waiting. When
+    # `guard` output matches `guard_expect`, `guard_run` undoes it and the
+    # enclosing repeat round starts over without counting.
+    guard: list[str] = field(default_factory=list)
+    guard_expect: str | None = None
+    guard_run: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -83,6 +90,17 @@ def _number(table: dict, key: str, default: float, where: str) -> float:
     return float(value)
 
 
+def _parse_guard(step: Step, table: dict, where: str) -> None:
+    present = [k for k in ("guard", "guard_expect", "guard_run") if k in table]
+    if not present:
+        return
+    if len(present) != 3:
+        raise ScenarioError(f"{where}: guard, guard_expect and guard_run go together")
+    step.guard = _argv(table["guard"], f"{where}.guard")
+    step.guard_expect = _regex(table["guard_expect"], f"{where}.guard_expect")
+    step.guard_run = _argv(table["guard_run"], f"{where}.guard_run")
+
+
 def parse_step(table: dict, where: str) -> Step:
     name = table.get("name")
     if not isinstance(name, str) or not name:
@@ -124,11 +142,16 @@ def parse_step(table: dict, where: str) -> Step:
         step.text = table["prompt"]
         if "until" in table:
             step.argv = _argv(table["until"], f"{where}.until")
+        _parse_guard(step, table, where)
     else:
         count = table["repeat"]
         if isinstance(count, bool) or not isinstance(count, int) or count < 1:
             raise ScenarioError(f"{where}.repeat: must be a positive integer")
         step.count = count
+        max_redo = table.get("max_redo", 3)
+        if isinstance(max_redo, bool) or not isinstance(max_redo, int) or max_redo < 0:
+            raise ScenarioError(f"{where}.max_redo: must be an integer >= 0")
+        step.max_redo = max_redo
         body = table.get("step")
         if not isinstance(body, list) or not body:
             raise ScenarioError(
@@ -154,6 +177,8 @@ def check_variables(scenario: Scenario, builtin: set[str]) -> None:
         return [
             *step.argv,
             *step.when,
+            *step.guard,
+            *step.guard_run,
             step.text,
             step.name,
             step.expect or "",

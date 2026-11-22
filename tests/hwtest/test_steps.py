@@ -289,3 +289,81 @@ class PlanTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+GUARDED = """
+    [[step]]
+    name = "rounds"
+    repeat = 2
+    max_redo = {max_redo}
+    [[step.step]]
+    name = "wait for the cable"
+    prompt = "Round ${{i}}: plug it in"
+    until = ["probe-usb"]
+    guard = ["ds4-ctl", "status"]
+    guard_expect = "Bluetooth"
+    guard_run = ["bt-off"]
+"""
+
+
+def status(text):
+    return Result(0, text)
+
+
+class GuardTest(unittest.TestCase):
+    def test_a_guard_hit_undoes_it_and_replays_the_round_without_counting(self):
+        runner = FakeRunner(
+            {"ds4-ctl status": [status("Bluetooth")] * 2 + [status("USB")]}
+        )
+        ok, executor, runner, ui = run_scenario(
+            GUARDED.format(max_redo=3), runner=runner
+        )
+        self.assertTrue(ok)
+        remedies = [c for c in runner.calls if c[0] == ["bt-off"]]
+        self.assertEqual(len(remedies), 1)
+        prompts = [e[1] for e in ui.events if e[0] == "prompt"]
+        # round 1 asked twice (replayed once), round 2 once
+        self.assertEqual(
+            prompts,
+            ["Round 1: plug it in", "Round 1: plug it in", "Round 2: plug it in"],
+        )
+        self.assertTrue(any("does not count" in str(e) for e in ui.events))
+        self.assertEqual([o.status for o in executor.outcomes], ["ok", "ok"])
+
+    def test_a_round_that_keeps_being_spoiled_fails_the_run(self):
+        runner = FakeRunner({"ds4-ctl status": status("Bluetooth")})
+        ok, executor, _, _ = run_scenario(GUARDED.format(max_redo=1), runner=runner)
+        self.assertFalse(ok)
+        self.assertEqual(executor.outcomes[-1].status, "fail")
+
+    def test_outside_a_repeat_the_prompt_just_waits_again(self):
+        runner = FakeRunner(
+            {"ds4-ctl status": [status("Bluetooth")] * 2 + [status("USB")]}
+        )
+        ok, _, runner, ui = run_scenario(
+            """
+            [[step]]
+            name = "plug"
+            prompt = "plug it in"
+            until = ["probe-usb"]
+            guard = ["ds4-ctl", "status"]
+            guard_expect = "Bluetooth"
+            guard_run = ["bt-off"]
+            """,
+            runner=runner,
+        )
+        self.assertTrue(ok)
+        self.assertEqual(len([c for c in runner.calls if c[0] == ["bt-off"]]), 1)
+        self.assertEqual(len([e for e in ui.events if e[0] == "prompt"]), 2)
+
+    def test_guard_fields_come_together(self):
+        with self.assertRaises(Exception) as caught:
+            scenario_from(
+                """
+                [[step]]
+                name = "x"
+                prompt = "p"
+                guard = ["a"]
+                """
+            )
+        self.assertIn("go together", str(caught.exception))

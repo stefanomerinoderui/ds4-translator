@@ -65,6 +65,10 @@ class Outcome:
     detail: str = ""
 
 
+class RoundRestart(Exception):
+    """A guard fired: the current repeat round is thrown away and played again."""
+
+
 class StepFailed(Exception):
     """A step failed and its on_fail policy is `stop`."""
 
@@ -91,6 +95,7 @@ class Executor:
         self.clock = clock
         self.outcomes: list[Outcome] = []
         self._counter = 0
+        self._round_depth = 0
         self._total = count_steps(scenario.steps) + count_steps(scenario.restore)
 
     # ------------------------------------------------------------- public
@@ -204,11 +209,30 @@ class Executor:
         handler(step, name, variables)
 
     def _repeat(self, step: Step, variables: dict[str, str]) -> None:
-        for i in range(1, step.count + 1):
+        redone = 0
+        i = 1
+        while i <= step.count:
             round_vars = {**variables, "i": str(i)}
             self.ui.info(f"{substitute(step.name, round_vars)}: round {i}/{step.count}")
-            for child in step.steps:
-                self._execute(child, round_vars)
+            self._round_depth += 1
+            try:
+                for child in step.steps:
+                    self._execute(child, round_vars)
+            except RoundRestart:
+                redone += 1
+                if redone > step.max_redo:
+                    self.ui.info(
+                        f"'{step.name}': round {i} keeps being interrupted ({redone} times)"
+                    )
+                    self.outcomes.append(
+                        Outcome(step.name, "fail", f"round {i} kept being interrupted")
+                    )
+                    raise StepFailed(step.name) from None
+                self.ui.info(f"round {i} does not count; playing it again")
+                continue
+            finally:
+                self._round_depth -= 1
+            i += 1
 
     def _run(self, step: Step, name: str, variables: dict[str, str]) -> None:
         argv = self._sub(step.argv, variables)
@@ -239,6 +263,27 @@ class Executor:
                 return
             self.sleep(step.interval)
 
+    def _guard_probe(
+        self, step: Step, variables: dict[str, str]
+    ) -> Callable[[], bool] | None:
+        if not step.guard:
+            return None
+        argv = self._sub(step.guard, variables)
+        pattern = substitute(step.guard_expect or "", variables)
+
+        def hit() -> bool:
+            result = self._command(step, argv, PROBE_TIMEOUT, False)
+            return bool(re.search(pattern, result.output, re.MULTILINE))
+
+        return hit
+
+    def _undo_guard(self, step: Step, variables: dict[str, str]) -> None:
+        """Run the guard's remedy; inside a repeat, throw the round away."""
+        self.ui.info(f"unexpected state while waiting ('{step.name}'): undoing it")
+        self._command(step, self._sub(step.guard_run, variables), step.timeout, True)
+        if self._round_depth:
+            raise RoundRestart
+
     def _prompt(self, step: Step, name: str, variables: dict[str, str]) -> None:
         text = substitute(step.text, variables)
         probe = None
@@ -249,8 +294,19 @@ class Executor:
                 result = self._command(step, argv, PROBE_TIMEOUT, False)
                 return self._judge(step, result, variables) is None
 
+        guard_hit = self._guard_probe(step, variables)
+        if guard_hit:
+            wanted = probe
+
+            def probe() -> bool:  # a guard hit also ends the wait, to be handled
+                return guard_hit() or (wanted is not None and wanted())
+
         while True:
             answer = self.ui.prompt(text, probe, step.timeout)
+            if answer == "done" and guard_hit and guard_hit():
+                self._undo_guard(step, variables)
+                self.sleep(2.0)  # let the remedy take effect before probing again
+                continue
             if answer == "done":
                 self.ui.step_end("ok", "")
                 self.outcomes.append(Outcome(name, "ok"))

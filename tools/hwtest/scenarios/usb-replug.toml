@@ -10,15 +10,24 @@ run = ["systemctl", "show", "${unit}", "-p", "InvocationID", "--value"]
 save_as = "inv"
 
 [[step]]
+name = "Turn Bluetooth off first"
+run = ["${repo}/tests/hardware/bt-disconnect.sh"]
+when = ["sh", "-c", "ds4-ctl status | grep -q 'Connection Type: Bluetooth'"]
+
+[[step]]
 name = "Plug the controller in by USB"
 prompt = "Plug the USB cable into the controller and the PC."
 until = ["ds4-ctl", "status"]
 expect = "Connection Type: USB"
 timeout = 90
+guard = ["ds4-ctl", "status"]
+guard_expect = "Connection Type: Bluetooth"
+guard_run = ["${repo}/tests/hardware/bt-disconnect.sh"]
 
 [[step]]
 name = "USB plug/unplug rounds"
 repeat = 5
+max_redo = 5 # rounds spoiled by the pad switching to Bluetooth
 
 [[step.step]]
 name = "Unplug the cable"
@@ -27,6 +36,9 @@ moving them."""
 until = ["ds4-ctl", "status"]
 expect = "Physical Controller: None"
 timeout = 60
+guard = ["ds4-ctl", "status"]
+guard_expect = "Connection Type: Bluetooth"
+guard_run = ["${repo}/tests/hardware/bt-disconnect.sh"]
 
 [[step.step]]
 name = "Plug the cable back in"
@@ -34,6 +46,9 @@ prompt = "Plug the USB cable back in."
 until = ["ds4-ctl", "status"]
 expect = "Connection Type: USB"
 timeout = 60
+guard = ["ds4-ctl", "status"]
+guard_expect = "Connection Type: Bluetooth"
+guard_run = ["${repo}/tests/hardware/bt-disconnect.sh"]
 
 [[step.step]]
 name = "The daemon is still healthy"
