@@ -1,0 +1,25 @@
+# Ignore everything graphify generates, then re-include only what other
+# developers need so they do not have to rebuild the graph.
+*
+
+# the rules themselves
+!.gitignore
+
+# the graph and its report
+!graph.json
+!GRAPH_REPORT.md
+
+# state that lets `graphify --update` work incrementally from a fresh clone:
+# per-file hashes (paths are repo-relative) and community names
+!manifest.json
+!.graphify_labels.json
+
+# cached LLM extraction of docs and images (the costly part to redo)
+!cache/
+cache/*
+!cache/semantic/
+!cache/semantic/**
+
+# not committed: graph.html (rebuild with `graphify export html`), cache/ast
+# (free to recompute), stat-index.json, hook_sessions, last_query_stamp
+# (machine-local), .graphify_python and .graphify_root (absolute local paths)
