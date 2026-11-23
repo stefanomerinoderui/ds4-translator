@@ -31,6 +31,9 @@ status_ok() { timeout 3 "$CTL" status 2>&1 | grep -qF "Virtual Emulation"; }
 ln -s "$WORK/victim" "$WORK/ds4-translator.none"
 start_daemon -t none
 require "L2 daemon does not write through a symlinked sentinel" bash -c "! test -e '$WORK/victim'"
+# The daemon opens its socket before it writes the sentinel, so start_daemon
+# can return first; wait for the replacement instead of racing it.
+for _ in $(seq 1 50); do [ -L "$WORK/ds4-translator.none" ] || break; sleep 0.1; done
 require "L2 the symlink was replaced by a regular sentinel file" test -f "$WORK/ds4-translator.none" -a ! -L "$WORK/ds4-translator.none"
 stop_daemon
 rm -f "$WORK/ds4-translator.none" "$WORK/victim" "$SOCK"
