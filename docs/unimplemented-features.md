@@ -27,105 +27,30 @@ through `hidraw`, so those sections of the wiki are out of scope here.
 - Switching the pad into extended-report mode by reading feature report
   `0x02` (falling back to `0x05`) in `kick_bt_full_report_mode()`.
 - Battery level and cable/charging status from input byte 33.
+- Short input report `0x01` (basic mode): sticks, buttons and triggers are
+  forwarded when the full-report kick fails; motion and touch stay zeroed.
+- The newest three of four Bluetooth touchpad packets reach a USB DS4.
+- Light bar flash: durations from the games' output reports (`0x05` bytes
+  9–10, `0x11` bytes 11–12) are written to the pad.
+- Real motion calibration (feature `0x02` over USB, `0x05` over Bluetooth,
+  converted to the USB layout) and real firmware info (`0xA3`) are read
+  when the pad connects and served to games, and `ds4-ctl status` prints the
+  firmware. A failed read keeps the canned reports.
 
 ## Gaps, in suggested implementation order
 
-### 1. Short input report `0x01` (basic mode)
-
-**Status:** ignored. The parser only accepts `0x01` reports of at least 64
-bytes (the USB format), so the 10-byte Bluetooth basic report is dropped.
-
-**Wiki layout** (after the `0xA1` transaction header, which hidraw strips):
-
-| Byte | Content |
-| --- | --- |
-| 0 | Report ID `0x01` |
-| 1 | Left stick X (0 = left) |
-| 2 | Left stick Y (0 = up) |
-| 3 | Right stick X |
-| 4 | Right stick Y |
-| 5 | Triangle, Circle, Cross, Square (bits 7–4); D-pad hat (bits 3–0, `0x08` = released) |
-| 6 | R3, L3, Options, Share, R2, L2, R1, L1 (bits 7–0) |
-| 7 | Counter (bits 7–2), touchpad click (bit 1), PS (bit 0) |
-| 8 | L2 analog |
-| 9 | R2 analog |
-
-These are the same as the first bytes of the common input block, so a
-fallback can fill `dualshock4_input_report_common` with the buttons, sticks
-and triggers and leave motion and touch zeroed.
-
-**Why it matters:** if the full-report kick fails, the daemon currently
-forwards nothing (logged as "Basic Bluetooth mode -- the full-report kick
-did not take"). With a fallback the controller remains usable, minus
-gyro, accelerometer and touchpad.
-
-**Effort:** small.
-
-### 2. Newest touchpad packet dropped when emulating a USB DS4
-
-**Status:** bug. A Bluetooth report can carry up to four touchpad packets,
-while the USB report has room for three. `emit_input_report()` copies
-packets 0–2, so when four arrive the newest one (index 3) is the one lost.
-
-**Fix:** when `num_touch > 3`, copy the last three packets
-(`touch_reps[num_touch - 3 .. num_touch - 1]`) instead of the first three.
-
-**Effort:** trivial.
-
-### 3. Light bar flash passthrough
-
-**Status:** not forwarded, and actively disabled.
-
-- `write_physical_output_report()` sets the blink valid flag (`0x04` in
-  `valid_flag0`) but always writes flash on/off duration as `0`, which
-  turns flashing off on every write.
-- The UHID and functionfs output paths only read the rumble (`0x01`) and
-  color (`0x02`) flags from games' output reports. The blink flag and its
-  on/off bytes (bytes 9–10 of USB report `0x05`; bytes 11–12 of Bluetooth
-  report `0x11`) are discarded.
-
-**Wiki layout** (Bluetooth output `0x11`, hidraw offsets): byte 11 = flash
-bright duration, byte 12 = flash dark duration.
-
-**Fix:** add the two durations to `BtOutputPacer::State` and the
-`cur_*` state, parse them from the virtual device's output reports when
-`flags & 0x04` is set, and write them to the physical report. The
-`ds4-ctl identify` command could then use the pad's own flash instead of
-toggling colors from a thread.
-
-**Effort:** small.
-
-### 4. Real IMU calibration passthrough
-
-**Status:** the daemon reads feature report `0x02`/`0x05` from the physical
-pad only as a mode switch and discards the payload. The emulated DS4
-answers feature report `0x02` with a fixed calibration blob.
-
-**Why it matters:** gyro and accelerometer scaling seen by games does not
-match the actual controller.
-
-**Fix:** keep the reply from the kick read, convert the Bluetooth `0x05`
-layout to the USB `0x02` layout if needed, and serve it from the
-`UHID_GET_REPORT` and functionfs feature handlers. The wiki leaves `0x02`
-as "TODO"; the layout is documented in the kernel's `hid-playstation.c`
-(`dualshock4_get_calibration_data()`). On USB, ds4-tools reads the same
-data with a `0x02` GET and can rewrite it with feature `0x04` (see
-[Part 2, item 4](#4-imu-calibration-read-and-write)).
-
-**Effort:** medium.
-
-### 5. Volume control (output `0x11` bytes 21–24)
+### 1. Volume control (output `0x11` bytes 21–24)
 
 **Status:** not implemented.
 
 **Wiki layout** (hidraw offsets): headphone left volume, headphone right
 volume, mic volume (speculative), speaker volume.
 
-**Why it matters:** only useful once audio output (item 6) exists.
+**Why it matters:** only useful once audio output (item 2) exists.
 
-**Effort:** small, but blocked on item 6.
+**Effort:** small, but blocked on item 2.
 
-### 6. Audio output reports `0x14`, `0x15`, `0x17`, `0x18`, `0x19`
+### 2. Audio output reports `0x14`, `0x15`, `0x17`, `0x18`, `0x19`
 
 **Status:** not implemented.
 
@@ -158,17 +83,6 @@ audio for up to two controllers and 16 kHz for three or more.
 
 **Effort:** large; a project of its own.
 
-### 7. Real firmware info (feature `0x06` / `0xA3`)
-
-**Status:** the emulated DS4 answers `0xA3` with a fixed build date
-("Mar 25 2016"). The physical pad exposes its real build date through
-`0x06` (with CRC) and `0xA3` (without).
-
-**Fix:** read `0xA3` from the physical pad on connect and forward it.
-
-**Effort:** small, low value. ds4-tools documents the payload layout; see
-[Part 2, item 5](#5-real-firmware-info).
-
 ## Out of scope
 
 - **Authentication (feature `0xF0`, `0xF1`, `0xF2`):** the PS4's RSA
@@ -199,7 +113,7 @@ Bluetooth.
 
 | Report | Direction | Payload | Purpose |
 | --- | --- | --- | --- |
-| `0x02` | GET | 36 bytes after the report ID (ds4-tools requests 41) | IMU calibration (see Part 1, item 4) |
+| `0x02` | GET | 36 bytes after the report ID (ds4-tools requests 41) | IMU calibration (read side served to games, see Part 1) |
 | `0x04` | SET | 36 bytes | Write IMU calibration |
 | `0x08` | SET | `FF, offset_hi, offset_lo` | Select a flash-mirror word to read (`offset < 0x800`) |
 | `0x08` | SET | `10, b0, b1` | Write 2-byte serial number |
@@ -301,38 +215,20 @@ from `hid-playstation` too.
 
 **Effort:** small.
 
-### 4. IMU calibration read and write
+### 4. IMU calibration write
 
-**Status:** see [Part 1, item 4](#4-real-imu-calibration-passthrough) for
-passthrough of the read side. Writing (`0x04`, 36 bytes) is not
-implemented.
+**Status:** the read side is done (see "Already implemented" in Part 1).
+Writing (`0x04`, 36 bytes) is not implemented.
 
-**Fix:** passthrough first. A write command is only useful together with
-a procedure that computes new values, which ds4-tools does not provide.
+**Fix:** a write command is only useful together with a procedure that
+computes new values, which ds4-tools does not provide.
 
-**Effort:** read side medium (Part 1, item 4); write side low priority.
+**Effort:** low priority.
 
 ### 5. Real firmware info
 
-**Status:** see [Part 1, item 7](#7-real-firmware-info-feature-0x06--0xa3).
-ds4-tools documents the `0xA3` payload:
-
-| Bytes | Field |
-| --- | --- |
-| 0–15 | Compile date, ASCII, zero-padded |
-| 16–31 | Compile time, ASCII, zero-padded |
-| 32–33 | Hardware version major (LE) |
-| 34–35 | Hardware version minor (LE) |
-| 36–39 | Software version major (LE) |
-| 40–41 | Software version minor (LE) |
-| 42–43 | Software series (LE) |
-| 44–47 | Code size (LE) |
-
-This matches the fixed layout the daemon already fakes. Besides
-forwarding it to the emulated device, `ds4-ctl status` could print the
-real firmware and hardware version.
-
-**Effort:** small.
+**Status:** done; see "Already implemented" in Part 1. The `0xA3` payload
+is read on connect and shown by `ds4-ctl status`.
 
 ### 6. Cable pairing
 
