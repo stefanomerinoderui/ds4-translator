@@ -1,4 +1,5 @@
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <vector>
 #include <deque>
@@ -775,6 +776,15 @@ static int run_calibrate(const std::string& target, bool permanent) {
     return calibrate_step(target + " store" + (permanent ? " permanent" : "")) ? 0 : 1;
 }
 
+// Prints completion candidates one per line. Zsh and fish split the output on
+// newlines only, so a space-separated list would arrive as a single candidate;
+// bash's compgen splits on either, so one-per-line serves all three shells.
+static void print_completion_words(const std::string& words) {
+    std::istringstream in(words);
+    std::string word;
+    while (in >> word) std::cout << word << "\n";
+}
+
 int main(int argc, char* argv[]) {
     if (argc < 2) {
         print_usage();
@@ -801,7 +811,7 @@ int main(int argc, char* argv[]) {
         if (argc < 3) return 0;
         std::string target = argv[2];
         if (target == "tap") {
-            std::cout << button_names_joined() << std::endl;
+            print_completion_words(button_names_joined());
         } else if (target == "set-backend") {
             // Position-aware (unlike every other command here): argv[3], if
             // present, is the controller word already typed -- offer
@@ -810,20 +820,20 @@ int main(int argc, char* argv[]) {
             // ds4-ctl-completion.bash started forwarding every prior word
             // instead of just the command name.
             if (argc <= 3) {
-                std::cout << "ds4 dualsense" << std::endl;
+                print_completion_words("ds4 dualsense");
             } else if (argc == 4) {
-                std::cout << "uhid functionfs" << std::endl;
+                print_completion_words("uhid functionfs");
             }
         } else if (target == "set-name") {
             // Same shape as set-backend for the first argument; the second
             // is a free-text name, so there's nothing useful to complete.
             if (argc <= 3) {
-                std::cout << "ds4 dualsense" << std::endl;
+                print_completion_words("ds4 dualsense");
             } else if (argc == 4) {
-                std::cout << "--reset" << std::endl;
+                print_completion_words("--reset");
             }
         } else if (const CommandSpec *spec = find_command(target)) {
-            if (spec->arg_completions) std::cout << spec->arg_completions << std::endl;
+            if (spec->arg_completions) print_completion_words(spec->arg_completions);
         }
         return 0;
     }
