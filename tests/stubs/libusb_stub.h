@@ -4,6 +4,8 @@
 #define TESTS_STUBS_LIBUSB_STUB_H
 
 #include <atomic>
+#include <cstdint>
+#include <vector>
 
 namespace fakeusb {
 
@@ -27,6 +29,9 @@ extern Controls controls;
 // Report ID of the most recent feature GET_REPORT, -1 if none. The fake pad
 // answers with that ID followed by 0x5A filler.
 extern std::atomic<int> last_feature_request;
+
+// The most recent feature SET_REPORT payload (report ID first); empty if none.
+std::vector<uint8_t> last_feature_set();
 
 // Contract violations the real libusb would turn into undefined behaviour:
 // using a handle after libusb_close(), closing twice, or closing a handle
