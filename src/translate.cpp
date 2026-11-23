@@ -1,5 +1,6 @@
 #include "translate.h"
 
+#include <stdio.h>
 #include <string.h>
 
 // The Xbox types are vendor-class USB devices bound by xpad rather than HID
@@ -174,6 +175,34 @@ size_t select_usb_touch_reports(uint8_t num_touch, const dualshock4_touch_report
         out[i] = in[first + i];
     }
     return count;
+}
+
+bool is_valid_ds4_firmware_report(const uint8_t* data, size_t len) {
+    return len == DS4_FIRMWARE_REPORT_SIZE && data[0] == DS4_FIRMWARE_REPORT_ID;
+}
+
+namespace {
+uint32_t read_le(const uint8_t* p, int bytes) {
+    uint32_t v = 0;
+    for (int i = bytes - 1; i >= 0; --i) v = (v << 8) | p[i];
+    return v;
+}
+
+// A zero-padded ASCII field of `max` bytes, without the padding.
+std::string ascii_field(const uint8_t* p, size_t max) {
+    size_t n = 0;
+    while (n < max && p[n] != 0) ++n;
+    return std::string(reinterpret_cast<const char*>(p), n);
+}
+} // namespace
+
+std::string describe_ds4_firmware(const uint8_t* data, size_t len) {
+    if (!is_valid_ds4_firmware_report(data, len)) return "";
+    // Offsets are +1 from the documented payload layout: byte 0 is the report ID.
+    char versions[96];
+    snprintf(versions, sizeof(versions), "hw 0x%04x.%04x, fw 0x%08x.%04x",
+             read_le(data + 33, 2), read_le(data + 35, 2), read_le(data + 37, 4), read_le(data + 41, 2));
+    return ascii_field(data + 1, 16) + " " + ascii_field(data + 17, 16) + ", " + versions;
 }
 
 void put_le16(uint8_t* out, uint16_t value) {

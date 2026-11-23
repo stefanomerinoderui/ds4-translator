@@ -897,6 +897,50 @@ static bool kick_bt_full_report_mode(const std::string& hidraw_name) {
     return any_ok;
 }
 
+// The pad's own firmware report (feature 0xA3), read once per connection and
+// served to games in place of a canned one. Only touched from the main thread.
+static uint8_t g_phy_firmware[DS4_FIRMWARE_REPORT_SIZE];
+static bool g_have_phy_firmware = false;
+
+static void store_physical_firmware(const uint8_t* data, size_t len) {
+    if (!is_valid_ds4_firmware_report(data, len)) {
+        std::cerr << "Physical firmware report malformed (" << len << " bytes); keeping the canned one." << std::endl;
+        return;
+    }
+    memcpy(g_phy_firmware, data, sizeof(g_phy_firmware));
+    g_have_phy_firmware = true;
+    functionfs_set_ds4_firmware(g_phy_firmware);
+    std::cout << "Physical controller firmware: " << describe_ds4_firmware(data, len) << std::endl;
+}
+
+static void clear_physical_firmware() {
+    g_have_phy_firmware = false;
+    functionfs_set_ds4_firmware(nullptr);
+}
+
+// Not cleared on disconnect: during a BT->USB hot-swap the new connection
+// captures before the old one is released. Each capture starts by clearing.
+// `fd` is a hidraw node. Best-effort: a pad that won't answer just leaves
+// the canned report in place.
+static void capture_physical_firmware_hidraw(int fd) {
+    clear_physical_firmware(); // never keep another pad's report if this read fails
+    uint8_t buf[DS4_FIRMWARE_REPORT_SIZE] = {DS4_FIRMWARE_REPORT_ID};
+    int ret = ioctl(fd, HIDIOCGFEATURE(sizeof(buf)), buf);
+    if (ret < 0) {
+        std::cerr << "Firmware report read failed: " << strerror(errno) << std::endl;
+        return;
+    }
+    store_physical_firmware(buf, (size_t)ret);
+}
+
+// `fd` is a libusb transport fd (unbind method on USB).
+static void capture_physical_firmware_usb(int fd) {
+    clear_physical_firmware();
+    uint8_t buf[DS4_FIRMWARE_REPORT_SIZE] = {};
+    int ret = usb_hid_transport_get_feature_report(fd, DS4_FIRMWARE_REPORT_ID, buf, sizeof(buf));
+    if (ret >= 0) store_physical_firmware(buf, (size_t)ret);
+}
+
 // Opens dev_name's /dev/hidraw node and (unless for_type == TYPE_NONE)
 // restricts + grabs it and its event/js siblings, exactly like a fresh
 // physical-controller connect. Used both for that initial connect and for
@@ -912,6 +956,7 @@ int open_and_hide_physical(const std::string& dev_name, ControllerType for_type,
     if (fd < 0) {
         return -1;
     }
+    capture_physical_firmware_hidraw(fd);
 
     // TYPE_NONE is a fully hands-off passthrough mode: the physical
     // controller is left completely untouched (no hidraw/event hiding, no
@@ -1059,6 +1104,13 @@ int open_and_hide_physical_unbind(const std::string& hid_id, std::vector<Physica
         if (!g_bt_generic_hid_id.empty()) {
             kick_bt_full_report_mode(hidraw_name);
         }
+        {
+            int raw_fd = open(("/dev/" + hidraw_name).c_str(), O_RDWR | O_NONBLOCK);
+            if (raw_fd >= 0) {
+                capture_physical_firmware_hidraw(raw_fd);
+                close(raw_fd);
+            }
+        }
 
         for (const auto& ev_path : get_event_nodes(hidraw_name)) {
             PhysicalNode node;
@@ -1144,6 +1196,7 @@ int open_and_hide_physical_unbind(const std::string& hid_id, std::vector<Physica
     }
 
     g_phy_is_unbind_transport = true;
+    capture_physical_firmware_usb(fd);
     return fd;
 }
 
@@ -3207,6 +3260,10 @@ int main(int argc, char* argv[]) {
                         response = "Physical Controller: " + phy_display + "\n";
                         response += "Connection Type: " + std::string(
                             phy_fd >= 0 ? (is_bluetooth ? "Bluetooth" : "USB") : "N/A") + "\n";
+                        if (phy_fd >= 0 && g_have_phy_firmware) {
+                            response += "Physical Firmware: " +
+                                describe_ds4_firmware(g_phy_firmware, sizeof(g_phy_firmware)) + "\n";
+                        }
                         response += "Virtual Emulation: " + std::string(controller_type_name(target_type)) + "\n";
                         response += "Active Backend: " + std::string(backend_type_name(backend_type)) + "\n";
                         response += "DS4 Backend: " + std::string(backend_type_name(backend_for_ds4)) + "\n";
@@ -4070,6 +4127,10 @@ int main(int argc, char* argv[]) {
                                 } else if (rnum == 0x31 || rnum == 0xa3) {
                                     reply_ev.u.get_report_reply.size = 49;
                                     reply_ev.u.get_report_reply.data[0] = rnum;
+                                    if (g_have_phy_firmware) {
+                                        memcpy(reply_ev.u.get_report_reply.data, g_phy_firmware, sizeof(g_phy_firmware));
+                                        reply_ev.u.get_report_reply.data[0] = rnum;
+                                    } else {
                                     // DS4 HW/FW version & extended capabilities.
                                     // Layout reverse-engineered from real hardware
                                     // (see senseshock's structs.h): report_id(1) +
@@ -4092,6 +4153,7 @@ int main(int argc, char* argv[]) {
                                     reply_ev.u.get_report_reply.data[40] = 0x00;
                                     reply_ev.u.get_report_reply.data[41] = 0x33; // fw_version_minor (captured)
                                     reply_ev.u.get_report_reply.data[42] = 0x20;
+                                    }
                                 }
                             } else { // DualSense
                                 if (rnum == 0x05) {

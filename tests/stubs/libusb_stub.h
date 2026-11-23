@@ -24,6 +24,10 @@ struct Controls {
 
 extern Controls controls;
 
+// Report ID of the most recent feature GET_REPORT, -1 if none. The fake pad
+// answers with that ID followed by 0x5A filler.
+extern std::atomic<int> last_feature_request;
+
 // Contract violations the real libusb would turn into undefined behaviour:
 // using a handle after libusb_close(), closing twice, or closing a handle
 // that still has a transfer in flight.

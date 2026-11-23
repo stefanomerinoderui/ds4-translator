@@ -168,3 +168,28 @@ TEST_F(UsbTransportTest, CloseRacingTheWatchdogIsSafe) {
 }
 
 } // namespace
+
+TEST_F(UsbTransportTest, ReadsAFeatureReportThroughTheClaimedInterface) {
+    const int fd = open_and_start();
+    ASSERT_GE(fd, 0);
+
+    uint8_t buf[49] = {};
+    EXPECT_EQ(usb_hid_transport_get_feature_report(fd, 0xA3, buf, sizeof(buf)), 49);
+    EXPECT_EQ(fakeusb::last_feature_request.load(), 0xA3);
+    EXPECT_EQ(buf[0], 0xA3);
+    EXPECT_EQ(buf[48], 0x5A);
+
+    usb_hid_transport_close(fd);
+    EXPECT_EQ(fakeusb::violations.load(), 0);
+}
+
+TEST_F(UsbTransportTest, FeatureReadFailsForUnknownFdAndUnpluggedPad) {
+    uint8_t buf[49];
+    EXPECT_EQ(usb_hid_transport_get_feature_report(-1, 0xA3, buf, sizeof(buf)), -1);
+
+    const int fd = open_and_start();
+    ASSERT_GE(fd, 0);
+    fakeusb::controls.gone = true;
+    EXPECT_EQ(usb_hid_transport_get_feature_report(fd, 0xA3, buf, sizeof(buf)), -1);
+    usb_hid_transport_close(fd);
+}

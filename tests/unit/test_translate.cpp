@@ -317,3 +317,41 @@ TEST(SelectUsbTouchReports, OversizedCountIsClampedToFour) {
     ASSERT_EQ(select_usb_touch_reports(200, in, out), 3u);
     EXPECT_EQ(out[2].timestamp, 4);
 }
+
+// -------------------------------------------------------------- firmware info
+
+namespace {
+// What a real pad answers feature 0xA3 with: ID, date, time, hw, fw, series, size.
+void make_firmware_report(uint8_t out[DS4_FIRMWARE_REPORT_SIZE]) {
+    std::memset(out, 0, DS4_FIRMWARE_REPORT_SIZE);
+    out[0] = DS4_FIRMWARE_REPORT_ID;
+    std::memcpy(out + 1, "Sep  2 2020", 11);
+    std::memcpy(out + 17, "14:45:10", 8);
+    out[33] = 0x00; out[34] = 0x01;                         // hw major 0x0100
+    out[35] = 0x38; out[36] = 0x54;                         // hw minor 0x5438
+    out[37] = 0x04; out[38] = 0x00; out[39] = 0x00; out[40] = 0x00; // fw major 4
+    out[41] = 0x33; out[42] = 0x20;                         // fw minor 0x2033
+}
+} // namespace
+
+TEST(Firmware, ValidReportIsRecognised) {
+    uint8_t report[DS4_FIRMWARE_REPORT_SIZE];
+    make_firmware_report(report);
+    EXPECT_TRUE(is_valid_ds4_firmware_report(report, sizeof(report)));
+}
+
+TEST(Firmware, WrongIdOrLengthIsRejected) {
+    uint8_t report[DS4_FIRMWARE_REPORT_SIZE];
+    make_firmware_report(report);
+    EXPECT_FALSE(is_valid_ds4_firmware_report(report, sizeof(report) - 1));
+    report[0] = 0x31;
+    EXPECT_FALSE(is_valid_ds4_firmware_report(report, sizeof(report)));
+    EXPECT_EQ(describe_ds4_firmware(report, sizeof(report)), "");
+}
+
+TEST(Firmware, DescribesDateTimeAndVersions) {
+    uint8_t report[DS4_FIRMWARE_REPORT_SIZE];
+    make_firmware_report(report);
+    EXPECT_EQ(describe_ds4_firmware(report, sizeof(report)),
+              "Sep  2 2020 14:45:10, hw 0x0100.5438, fw 0x00000004.2033");
+}

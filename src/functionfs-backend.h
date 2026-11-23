@@ -72,6 +72,11 @@ struct FunctionFSDevice {
 // used, exactly as before this existed.
 void functionfs_set_mac(const uint8_t mac_le[6], const char *mac_str);
 
+// Real DS4 firmware report (feature 0xA3, 49 bytes with the report ID) to
+// answer GET_REPORT with instead of the built-in canned one. NULL restores
+// the canned report. Safe to call while a device is running.
+void functionfs_set_ds4_firmware(const uint8_t report[49]);
+
 // product_name: custom USB product string override, or NULL/empty to use the
 // built-in per-type default ("Wireless Controller" / "DualSense Wireless
 // Controller"). Ignored for the Xbox targets: xpad names the device itself.

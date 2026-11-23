@@ -5,6 +5,7 @@
 #include <cerrno>
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <iostream>
@@ -490,6 +491,31 @@ void usb_hid_transport_start(int fd) {
         t->pump_thread = std::thread(pump_thread_fn, t);
         t->watchdog_thread = std::thread(watchdog_thread_fn, t);
     }
+}
+
+int usb_hid_transport_get_feature_report(int fd, uint8_t report_id, uint8_t* buf, size_t len) {
+    TransportState* t = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_registry_mutex);
+        auto it = g_registry.find(fd);
+        if (it != g_registry.end()) t = it->second;
+    }
+    if (!t || t->lost.load(std::memory_order_relaxed) || len == 0 || len > UINT16_MAX) return -1;
+
+    // HID class GET_REPORT: wValue = (report type << 8) | report ID, type 3 = feature.
+    constexpr uint8_t kGetReport = 0x01;
+    constexpr uint16_t kFeatureReportType = 3;
+    constexpr unsigned kTimeoutMs = 500;
+    const int rc = libusb_control_transfer(
+        t->handle, LIBUSB_ENDPOINT_IN | LIBUSB_REQUEST_TYPE_CLASS | LIBUSB_RECIPIENT_INTERFACE,
+        kGetReport, (uint16_t)((kFeatureReportType << 8) | report_id), (uint16_t)t->interface_number,
+        buf, (uint16_t)len, kTimeoutMs);
+    if (rc < 0) {
+        std::cerr << "hid-unbind: GET_REPORT feature 0x" << std::hex << (int)report_id << std::dec
+                  << " failed: " << libusb_error_name(rc) << std::endl;
+        return -1;
+    }
+    return rc;
 }
 
 void usb_hid_transport_close(int fd) {

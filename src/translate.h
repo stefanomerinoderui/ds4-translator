@@ -128,6 +128,16 @@ bool parse_bt_basic_input_report(const uint8_t* data, size_t len,
 size_t select_usb_touch_reports(uint8_t num_touch, const dualshock4_touch_report in[4],
                                 dualshock4_touch_report out[3]);
 
+// Feature report 0xA3: build date/time, hardware and firmware versions. Same
+// 49-byte layout (report ID first) over USB and Bluetooth.
+constexpr uint8_t DS4_FIRMWARE_REPORT_ID = 0xA3;
+constexpr size_t DS4_FIRMWARE_REPORT_SIZE = 49;
+bool is_valid_ds4_firmware_report(const uint8_t* data, size_t len);
+
+// Prints the "<build date> <build time>, hw 0xHHHH.MMMM, fw 0xHHHHHHHH.MMMM"
+// summary of a valid firmware report; empty string for an invalid one.
+std::string describe_ds4_firmware(const uint8_t* data, size_t len);
+
 enum BatteryState { BATTERY_DISCHARGING, BATTERY_CHARGING, BATTERY_FULL };
 
 void decode_ds4_battery(uint8_t ds4_status0, int& percent, BatteryState& state);
