@@ -115,6 +115,19 @@ static_assert(sizeof(dualshock4_input_report_usb) == 64, "DS4 USB report (0x01) 
 static_assert(sizeof(dualshock4_input_report_bt) == 78, "DS4 Bluetooth report (0x11) is 78 bytes");
 static_assert(sizeof(dualsense_input_report) == 63, "DualSense input report is 63 bytes");
 
+// The short Bluetooth input report (id 0x01, 10 bytes) a pad sends until it is
+// switched to extended mode. Its sticks, buttons and triggers sit in the same
+// bytes as the start of the common block; motion, touch and status stay zero.
+constexpr size_t BT_BASIC_REPORT_SIZE = 10;
+bool parse_bt_basic_input_report(const uint8_t* data, size_t len,
+                                 dualshock4_input_report_common& out);
+
+// The USB report holds three touchpad packets, a Bluetooth one up to four.
+// Copies the newest min(num_touch, 3) of the first min(num_touch, 4) packets
+// to `out` (oldest first) and returns how many were copied.
+size_t select_usb_touch_reports(uint8_t num_touch, const dualshock4_touch_report in[4],
+                                dualshock4_touch_report out[3]);
+
 enum BatteryState { BATTERY_DISCHARGING, BATTERY_CHARGING, BATTERY_FULL };
 
 void decode_ds4_battery(uint8_t ds4_status0, int& percent, BatteryState& state);

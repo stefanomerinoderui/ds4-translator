@@ -253,3 +253,67 @@ TEST(GipReport, UnusedBytesAreZeroed) {
     const size_t size = build_gip_input_report(neutral(), false, 0, out);
     for (size_t i = 18; i < size; ++i) EXPECT_EQ(out[i], 0);
 }
+
+// ------------------------------------------------------ Bluetooth basic report
+
+TEST(BtBasicReport, MapsSticksButtonsAndTriggers) {
+    const uint8_t report[BT_BASIC_REPORT_SIZE] = {0x01, 10, 20, 30, 40, 0x58, 0xA1, 0x03, 200, 100};
+    dualshock4_input_report_common c;
+    ASSERT_TRUE(parse_bt_basic_input_report(report, sizeof(report), c));
+    EXPECT_EQ(c.x, 10);
+    EXPECT_EQ(c.y, 20);
+    EXPECT_EQ(c.rx, 30);
+    EXPECT_EQ(c.ry, 40);
+    EXPECT_EQ(c.buttons[0], 0x58);
+    EXPECT_EQ(c.buttons[1], 0xA1);
+    EXPECT_EQ(c.buttons[2], 0x03);
+    EXPECT_EQ(c.z, 200);
+    EXPECT_EQ(c.rz, 100);
+    EXPECT_EQ(c.gyro[0], 0);
+    EXPECT_EQ(c.status[0], 0);
+}
+
+TEST(BtBasicReport, RejectsWrongIdOrLength) {
+    uint8_t report[BT_BASIC_REPORT_SIZE] = {0x01};
+    dualshock4_input_report_common c;
+    EXPECT_FALSE(parse_bt_basic_input_report(report, BT_BASIC_REPORT_SIZE - 1, c));
+    EXPECT_FALSE(parse_bt_basic_input_report(report, BT_BASIC_REPORT_SIZE + 1, c));
+    report[0] = 0x11;
+    EXPECT_FALSE(parse_bt_basic_input_report(report, BT_BASIC_REPORT_SIZE, c));
+}
+
+// --------------------------------------------------------------- touch packets
+
+namespace {
+void fill_touch(dualshock4_touch_report in[4]) {
+    std::memset(in, 0, 4 * sizeof(in[0]));
+    for (int i = 0; i < 4; ++i) {
+        in[i].timestamp = static_cast<uint8_t>(i + 1);
+    }
+}
+} // namespace
+
+TEST(SelectUsbTouchReports, FourPacketsKeepsNewestThree) {
+    dualshock4_touch_report in[4], out[3];
+    fill_touch(in);
+    ASSERT_EQ(select_usb_touch_reports(4, in, out), 3u);
+    EXPECT_EQ(out[0].timestamp, 2);
+    EXPECT_EQ(out[1].timestamp, 3);
+    EXPECT_EQ(out[2].timestamp, 4);
+}
+
+TEST(SelectUsbTouchReports, FewerThanThreeAreCopiedInOrder) {
+    dualshock4_touch_report in[4], out[3];
+    fill_touch(in);
+    ASSERT_EQ(select_usb_touch_reports(2, in, out), 2u);
+    EXPECT_EQ(out[0].timestamp, 1);
+    EXPECT_EQ(out[1].timestamp, 2);
+    EXPECT_EQ(select_usb_touch_reports(0, in, out), 0u);
+}
+
+TEST(SelectUsbTouchReports, OversizedCountIsClampedToFour) {
+    dualshock4_touch_report in[4], out[3];
+    fill_touch(in);
+    ASSERT_EQ(select_usb_touch_reports(200, in, out), 3u);
+    EXPECT_EQ(out[2].timestamp, 4);
+}

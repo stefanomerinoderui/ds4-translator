@@ -154,6 +154,28 @@ uint8_t xbox_dpad_bits(uint8_t hat) {
     return (hat < 8) ? hat_to_dpad[hat] : 0;
 }
 
+bool parse_bt_basic_input_report(const uint8_t* data, size_t len,
+                                 dualshock4_input_report_common& out) {
+    if (len != BT_BASIC_REPORT_SIZE || data[0] != 0x01) {
+        return false;
+    }
+    memset(&out, 0, sizeof(out));
+    // x, y, rx, ry, buttons[3], z, rz: bytes 1-9, as in the common block.
+    memcpy(&out, data + 1, BT_BASIC_REPORT_SIZE - 1);
+    return true;
+}
+
+size_t select_usb_touch_reports(uint8_t num_touch, const dualshock4_touch_report in[4],
+                                dualshock4_touch_report out[3]) {
+    const size_t available = num_touch > 4 ? 4 : num_touch;
+    const size_t count = available > 3 ? 3 : available;
+    const size_t first = available - count;
+    for (size_t i = 0; i < count; ++i) {
+        out[i] = in[first + i];
+    }
+    return count;
+}
+
 void put_le16(uint8_t* out, uint16_t value) {
     out[0] = (uint8_t)(value & 0xFF);
     out[1] = (uint8_t)(value >> 8);

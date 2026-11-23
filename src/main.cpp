@@ -2213,10 +2213,9 @@ void emit_input_report(ControllerType type, const struct dualshock4_input_report
         }
         // else: common.status[0]/[1] already came straight from the real
         // controller's own report via `out_ds->common = common` above.
-        out_ds->num_touch_reports = (num_touch > 3) ? 3 : num_touch;
-        for (int i = 0; i < out_ds->num_touch_reports; ++i) {
-            out_ds->touch_reports[i] = touch_reps[i];
-        }
+        // A Bluetooth report can carry a fourth packet the USB layout has no
+        // room for; keep the three newest rather than dropping the latest.
+        out_ds->num_touch_reports = (uint8_t)select_usb_touch_reports(num_touch, touch_reps, out_ds->touch_reports);
         // Any remaining slots (all 3, when num_touch is 0 — every
         // synthetic/standalone report) must have both points marked "not
         // touching" (contact bit7 set). Real hardware always fills every
@@ -3889,7 +3888,7 @@ int main(int argc, char* argv[]) {
                               << (int)in_buf[0] << std::dec << ", " << bytes_read << " bytes."
                               << ((in_buf[0] == 0x01 && bytes_read < 64)
                                       ? " Basic Bluetooth mode -- the full-report kick did not take,"
-                                        " so nothing will be forwarded."
+                                        " so only sticks, buttons and triggers will be forwarded."
                                       : "")
                               << std::endl;
                 }
@@ -3899,6 +3898,9 @@ int main(int argc, char* argv[]) {
                 // physical reports at all.
                 struct dualshock4_input_report_common common;
                 bool got_report = false;
+                // The basic report has no battery byte, so the emulated pad
+                // shows its fixed "full, wired" state instead of 0%.
+                bool has_real_battery = true;
                 uint8_t num_touch = 0;
                 struct dualshock4_touch_report touch_reps[4];
                 memset(&common, 0, sizeof(common));
@@ -3931,6 +3933,9 @@ int main(int argc, char* argv[]) {
                         }
                         got_report = true;
                     }
+                } else if (in_buf[0] == 0x01) {
+                    got_report = parse_bt_basic_input_report(in_buf, (size_t)bytes_read, common);
+                    has_real_battery = false;
                 }
 
                 if (got_report) {
@@ -3969,7 +3974,7 @@ int main(int argc, char* argv[]) {
                         last_phy_valid = true;
                     }
                     if (vdev_ready_for_io()) {
-                        emit_input_report(target_type, common, num_touch, touch_reps, true);
+                        emit_input_report(target_type, common, num_touch, touch_reps, has_real_battery);
                         if (g_has_test_subscribers) {
                             // Translation cost only: the write to the emulated
                             // device has returned, what the game does with it
