@@ -35,11 +35,14 @@
 #include "hid-unbind-detect.h"
 #include "usb-hid-transport.h"
 #include "hid-bpf-transport.h"
+#include <sys/random.h>
+
 #include "ipc-client.h"
 #include "fs-util.h"
 #include "paths.h"
 #include "translate.h"
 #include "calibration.h"
+#include "pairing.h"
 
 #ifndef DS4_VERSION
 #define DS4_VERSION "unknown"
@@ -2526,6 +2529,19 @@ static std::string run_calibrate_command(const std::string& args) {
     return calibration_run_step(io, target, step, position, side, permanent);
 }
 
+// Cable-pairs the physical pad (see pairing.h) with a fresh random link key.
+// `adapter` is the optional adapter MAC argument of ds4-ctl pair.
+static std::string run_pair_command(const std::string& adapter) {
+    uint8_t key[BT_LINK_KEY_SIZE];
+    if (getrandom(key, sizeof(key), 0) != (ssize_t)sizeof(key)) {
+        return "Error: Could not generate a link key.";
+    }
+    PhysicalFeatureIo io(phy_fd, g_phy_is_unbind_transport);
+    const std::string reply = cable_pair(io, BLUEZ_STATE_DIR, adapter, key);
+    memset(key, 0, sizeof(key));
+    return reply;
+}
+
 int main(int argc, char* argv[]) {
     ControllerType target_type = TYPE_DS4;
     bool type_explicitly_set = false;
@@ -3693,6 +3709,11 @@ int main(int argc, char* argv[]) {
                         if (response.empty()) {
                             PhysicalFeatureIo io(phy_fd, g_phy_is_unbind_transport);
                             response = controller_reset(io);
+                        }
+                    } else if (cmd == "pair" || cmd.rfind("pair ", 0) == 0) {
+                        response = physical_feature_io_unavailable();
+                        if (response.empty()) {
+                            response = run_pair_command(cmd.size() > 5 ? cmd.substr(5) : "");
                         }
                     } else if (cmd.rfind("calibrate ", 0) == 0) {
                         response = physical_feature_io_unavailable();

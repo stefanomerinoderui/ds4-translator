@@ -62,6 +62,9 @@ void print_usage() {
     std::cout << "                                   actually holding" << std::endl;
     std::cout << "  reset-controller                 Reboot the physical controller (USB only); it disconnects" << std::endl;
     std::cout << "                                   and reconnects by itself" << std::endl;
+    std::cout << "  pair [adapter MAC]               Pair the physical controller (USB only) with this PC's" << std::endl;
+    std::cout << "                                   Bluetooth adapter by cable, for when BlueZ cannot see it" << std::endl;
+    std::cout << "                                   (needs a restart of bluetoothd afterwards)" << std::endl;
     std::cout << "  calibrate <target> [--permanent] Recalibrate the physical controller (USB only), prompting" << std::endl;
     std::cout << "    <stick-center|stick-range|     between steps. Results are lost on reset or standby" << std::endl;
     std::cout << "     triggers>                     unless --permanent is given. Can damage the controller;" << std::endl;
@@ -210,6 +213,7 @@ static const CommandSpec kCommands[] = {
     {"test",             nullptr},
     {"identify",         nullptr},
     {"reset-controller", nullptr},
+    {"pair",             nullptr},
     {"calibrate",        "stick-center stick-range triggers --permanent"},
     {"led",              "--reset"},
     {"set-hide-method",  "legacy unbind unlink"},
@@ -950,6 +954,12 @@ int main(int argc, char* argv[]) {
             full_cmd = ds4ipc::build_led(values[0], values[1], values[2], values[3], values[4],
                                           &build_error);
         }
+    } else if (cmd == "pair") {
+        if (argc > 3) {
+            std::cerr << "Error: pair takes at most one argument, the adapter MAC" << std::endl;
+            return 1;
+        }
+        if (argc == 3) full_cmd += std::string(" ") + argv[2];
     } else if (cmd == "calibrate") {
         std::string target;
         bool permanent = false;

@@ -156,6 +156,13 @@ fail or report success without the physical pad being touched.
   step. Refused over Bluetooth. The triggers target is beta upstream and is
   not checked against `0x91`/`0x92`. Not yet run against real hardware.
 - `ds4-ctl reset-controller` (`0xA0 = 04 01 00`), USB only.
+- `ds4-ctl pair [adapter MAC]`: cable pairing done by the daemon (feature
+  `0x13` plus a BlueZ `info` file with the same link key), because BlueZ's
+  sixaxis plugin logs the pad but never finishes pairing it while the
+  daemon has it detached (seen with emulation on; with emulation off it
+  created the device entry). Run `sudo systemctl restart bluetooth`
+  afterwards. Not yet run against real hardware: whether the pad then
+  connects over Bluetooth is unverified.
 - The pad's MAC is read from feature `0x12` when it connects over USB and
   remembered for the MAC squat.
 
@@ -175,22 +182,6 @@ computes new values, which ds4-tools does not provide.
 
 **Status:** done; see "Already implemented" in Part 1. The `0xA3` payload
 is read on connect and shown by `ds4-ctl status`.
-
-### 6. Cable pairing
-
-**Status:** probably broken under `unbind`/`unlink` (not verified).
-BlueZ's sixaxis plugin pairs a DS4 plugged in over USB by reading its MAC
-and writing the host adapter's MAC and a link key with feature `0x13`. It
-finds the pad through its `hidraw` node, which `unbind` never creates, so
-a pad that has never been paired over Bluetooth cannot be paired by
-plugging it in while the daemon runs.
-
-**Fix:** either let the sixaxis plugin see the pad briefly on first USB
-connect, or perform the `0x13` write from the daemon. The second option
-also has to create the matching BlueZ device entry under
-`/var/lib/bluetooth/<adapter>/<pad MAC>/info` with the same link key.
-
-**Effort:** medium; verify the breakage first.
 
 ## Out of scope
 
