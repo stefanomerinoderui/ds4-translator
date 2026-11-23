@@ -1,6 +1,5 @@
 {
   "1": "Qt UI model (DS4 settings)",
-  "2": "Daemon system headers & udev/hidraw",
   "3": "Translation unit tests",
   "5": "Release workflow (CI)",
   "11": "Hardware verify.sh",

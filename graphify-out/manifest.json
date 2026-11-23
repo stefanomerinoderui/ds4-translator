@@ -42,9 +42,9 @@
     "semantic_hash": "c3cfd18ae05a94fe79277ca079d5dbfc"
   },
   "src/ctl.cpp": {
-    "mtime": 1795461608.134576,
-    "seen": 1795461641.4610982,
-    "ast_hash": "754dda3a3264bacb3acff3ed339e182e",
+    "mtime": 1795468628.0997307,
+    "seen": 1795477686.2122183,
+    "ast_hash": "816672835d6c25e43a13bdcb9721ad20",
     "semantic_hash": ""
   },
   "src/descriptors.h": {
@@ -144,9 +144,9 @@
     "semantic_hash": "015b45491d31f39a22d30657dcec8fd8"
   },
   "src/main.cpp": {
-    "mtime": 1795461573.8838344,
-    "seen": 1795461641.4611433,
-    "ast_hash": "0c7d55fc47ab6136427c7c3f8c82c54d",
+    "mtime": 1795468628.0981715,
+    "seen": 1795477686.2122927,
+    "ast_hash": "44bf29f328b5abae72a1f375500c0056",
     "semantic_hash": ""
   },
   "src/paths.h": {
@@ -576,9 +576,9 @@
     "semantic_hash": "928dd7a7cac4fad7e68590be3a66c4d3"
   },
   "docs/unimplemented-features.md": {
-    "mtime": 1795461632.2800312,
-    "seen": 1795461641.4614267,
-    "ast_hash": "34670b01f65ae2a99e5327822ece8d0c",
+    "mtime": 1795476797.188919,
+    "seen": 1795477686.2126265,
+    "ast_hash": "52123440f383e779edbb340ff2410d1a",
     "semantic_hash": ""
   },
   "packaging/arch/README.md": {
@@ -645,6 +645,24 @@
     "mtime": 1795461527.9031687,
     "seen": 1795461641.461307,
     "ast_hash": "57073c58e4dcbce7a65b5952d5259132",
+    "semantic_hash": ""
+  },
+  "src/pairing.cpp": {
+    "mtime": 1795476215.6277196,
+    "seen": 1795477686.2122965,
+    "ast_hash": "313e78dc4905653a27b5508cd1cfd4bc",
+    "semantic_hash": ""
+  },
+  "src/pairing.h": {
+    "mtime": 1795468594.2345488,
+    "seen": 1795477686.2123,
+    "ast_hash": "114ffc680d32664cf527276f3e37814a",
+    "semantic_hash": ""
+  },
+  "tests/unit/test_pairing.cpp": {
+    "mtime": 1795468720.042964,
+    "seen": 1795477686.2124577,
+    "ast_hash": "7d4433714207c386025913a8a8801c41",
     "semantic_hash": ""
   }
 }
