@@ -918,27 +918,95 @@ static void clear_physical_firmware() {
     functionfs_set_ds4_firmware(nullptr);
 }
 
-// Not cleared on disconnect: during a BT->USB hot-swap the new connection
-// captures before the old one is released. Each capture starts by clearing.
-// `fd` is a hidraw node. Best-effort: a pad that won't answer just leaves
-// the canned report in place.
-static void capture_physical_firmware_hidraw(int fd) {
-    clear_physical_firmware(); // never keep another pad's report if this read fails
-    uint8_t buf[DS4_FIRMWARE_REPORT_SIZE] = {DS4_FIRMWARE_REPORT_ID};
-    int ret = ioctl(fd, HIDIOCGFEATURE(sizeof(buf)), buf);
+// The pad's motion calibration in USB layout (feature 0x02), same lifecycle
+// as the firmware report above.
+static uint8_t g_phy_imu_cal[DS4_IMU_CAL_USB_SIZE];
+static bool g_have_phy_imu_cal = false;
+
+static void store_physical_imu_cal(const uint8_t usb_layout[DS4_IMU_CAL_USB_SIZE]) {
+    memcpy(g_phy_imu_cal, usb_layout, sizeof(g_phy_imu_cal));
+    g_have_phy_imu_cal = true;
+    functionfs_set_ds4_imu_calibration(g_phy_imu_cal);
+    std::cout << "Physical controller motion calibration captured." << std::endl;
+}
+
+static void clear_physical_imu_cal() {
+    g_have_phy_imu_cal = false;
+    functionfs_set_ds4_imu_calibration(nullptr);
+}
+
+// Neither is cleared on disconnect: during a BT->USB hot-swap the new
+// connection captures before the old one is released.
+// Reads one feature report from a hidraw node; returns its length or -1.
+static int hidraw_get_feature(int fd, uint8_t id, uint8_t* buf, size_t len) {
+    memset(buf, 0, len);
+    buf[0] = id; // report number, as HIDIOCGFEATURE expects
+    int ret = ioctl(fd, HIDIOCGFEATURE(len), buf);
     if (ret < 0) {
-        std::cerr << "Firmware report read failed: " << strerror(errno) << std::endl;
-        return;
+        std::cerr << "Feature report 0x" << std::hex << (int)id << std::dec << " read failed: "
+                  << strerror(errno) << std::endl;
     }
-    store_physical_firmware(buf, (size_t)ret);
+    return ret;
+}
+
+// Over Bluetooth the calibration comes as report 0x05 (with CRC), over USB as
+// 0x02; either way the emulated device serves the USB layout.
+static void store_physical_imu_cal_bt(const uint8_t* buf, size_t len) {
+    uint8_t usb_layout[DS4_IMU_CAL_USB_SIZE];
+    if (convert_ds4_imu_calibration_bt(buf, len, usb_layout)) {
+        store_physical_imu_cal(usb_layout);
+    } else {
+        std::cerr << "Bluetooth motion calibration malformed or failed its CRC; keeping the canned one." << std::endl;
+    }
+}
+
+static void store_physical_imu_cal_usb(const uint8_t* buf, size_t len) {
+    if (is_valid_ds4_imu_calibration_usb(buf, len)) {
+        store_physical_imu_cal(buf);
+    } else {
+        std::cerr << "USB motion calibration malformed; keeping the canned one." << std::endl;
+    }
+}
+
+// Each capture starts by clearing, so a failed read never leaves another
+// pad's data behind. Best-effort: a pad that won't answer just keeps the
+// canned reports.
+//
+// `fd` is a hidraw node.
+static void capture_physical_features_hidraw(int fd) {
+    clear_physical_firmware();
+    clear_physical_imu_cal();
+
+    struct hidraw_devinfo info;
+    const bool bluetooth = ioctl(fd, HIDIOCGRAWINFO, &info) == 0 && info.bustype == BUS_BLUETOOTH;
+
+    uint8_t fw[DS4_FIRMWARE_REPORT_SIZE];
+    int ret = hidraw_get_feature(fd, DS4_FIRMWARE_REPORT_ID, fw, sizeof(fw));
+    if (ret >= 0) store_physical_firmware(fw, (size_t)ret);
+
+    if (bluetooth) {
+        uint8_t cal[DS4_IMU_CAL_BT_SIZE];
+        ret = hidraw_get_feature(fd, DS4_IMU_CAL_BT_ID, cal, sizeof(cal));
+        if (ret >= 0) store_physical_imu_cal_bt(cal, (size_t)ret);
+    } else {
+        uint8_t cal[DS4_IMU_CAL_USB_SIZE];
+        ret = hidraw_get_feature(fd, DS4_IMU_CAL_USB_ID, cal, sizeof(cal));
+        if (ret >= 0) store_physical_imu_cal_usb(cal, (size_t)ret);
+    }
 }
 
 // `fd` is a libusb transport fd (unbind method on USB).
-static void capture_physical_firmware_usb(int fd) {
+static void capture_physical_features_usb(int fd) {
     clear_physical_firmware();
-    uint8_t buf[DS4_FIRMWARE_REPORT_SIZE] = {};
-    int ret = usb_hid_transport_get_feature_report(fd, DS4_FIRMWARE_REPORT_ID, buf, sizeof(buf));
-    if (ret >= 0) store_physical_firmware(buf, (size_t)ret);
+    clear_physical_imu_cal();
+
+    uint8_t fw[DS4_FIRMWARE_REPORT_SIZE] = {};
+    int ret = usb_hid_transport_get_feature_report(fd, DS4_FIRMWARE_REPORT_ID, fw, sizeof(fw));
+    if (ret >= 0) store_physical_firmware(fw, (size_t)ret);
+
+    uint8_t cal[DS4_IMU_CAL_USB_SIZE] = {};
+    ret = usb_hid_transport_get_feature_report(fd, DS4_IMU_CAL_USB_ID, cal, sizeof(cal));
+    if (ret >= 0) store_physical_imu_cal_usb(cal, (size_t)ret);
 }
 
 // Opens dev_name's /dev/hidraw node and (unless for_type == TYPE_NONE)
@@ -956,7 +1024,7 @@ int open_and_hide_physical(const std::string& dev_name, ControllerType for_type,
     if (fd < 0) {
         return -1;
     }
-    capture_physical_firmware_hidraw(fd);
+    capture_physical_features_hidraw(fd);
 
     // TYPE_NONE is a fully hands-off passthrough mode: the physical
     // controller is left completely untouched (no hidraw/event hiding, no
@@ -1107,7 +1175,7 @@ int open_and_hide_physical_unbind(const std::string& hid_id, std::vector<Physica
         {
             int raw_fd = open(("/dev/" + hidraw_name).c_str(), O_RDWR | O_NONBLOCK);
             if (raw_fd >= 0) {
-                capture_physical_firmware_hidraw(raw_fd);
+                capture_physical_features_hidraw(raw_fd);
                 close(raw_fd);
             }
         }
@@ -1196,7 +1264,7 @@ int open_and_hide_physical_unbind(const std::string& hid_id, std::vector<Physica
     }
 
     g_phy_is_unbind_transport = true;
-    capture_physical_firmware_usb(fd);
+    capture_physical_features_usb(fd);
     return fd;
 }
 
@@ -4095,6 +4163,10 @@ int main(int argc, char* argv[]) {
                                         0x00, 0x20, 0x00, 0xe0, 0x00, 0x00
                                     };
                                     memcpy(&reply_ev.u.get_report_reply.data[1], ds4_cal, 36);
+                                    if (g_have_phy_imu_cal) {
+                                        memcpy(reply_ev.u.get_report_reply.data, g_phy_imu_cal, sizeof(g_phy_imu_cal));
+                                        reply_ev.u.get_report_reply.data[0] = rnum;
+                                    }
                                 } else if (rnum == 0x10 || rnum == 0x12) {
                                     reply_ev.u.get_report_reply.size = 16;
                                     reply_ev.u.get_report_reply.data[0] = rnum;

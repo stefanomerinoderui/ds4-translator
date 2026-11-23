@@ -156,6 +156,18 @@ bool is_valid_ds4_firmware_report(const uint8_t* data, size_t len);
 // summary of a valid firmware report; empty string for an invalid one.
 std::string describe_ds4_firmware(const uint8_t* data, size_t len);
 
+// Motion-sensor calibration (gyro biases/gains, accelerometer ranges). The
+// USB report 0x02 is 37 bytes; over Bluetooth the pad answers 0x05 with the
+// same fields in a different gyro order plus a CRC32 (seed 0xA3) over the
+// first 37 bytes. Games read it in the USB layout from the emulated device.
+constexpr uint8_t DS4_IMU_CAL_USB_ID = 0x02;
+constexpr uint8_t DS4_IMU_CAL_BT_ID = 0x05;
+constexpr size_t DS4_IMU_CAL_USB_SIZE = 37;
+constexpr size_t DS4_IMU_CAL_BT_SIZE = 41;
+bool is_valid_ds4_imu_calibration_usb(const uint8_t* data, size_t len);
+// Checks `bt` (41 bytes, id 0x05, CRC) and rewrites it into USB layout.
+bool convert_ds4_imu_calibration_bt(const uint8_t* bt, size_t len, uint8_t usb[DS4_IMU_CAL_USB_SIZE]);
+
 enum BatteryState { BATTERY_DISCHARGING, BATTERY_CHARGING, BATTERY_FULL };
 
 void decode_ds4_battery(uint8_t ds4_status0, int& percent, BatteryState& state);

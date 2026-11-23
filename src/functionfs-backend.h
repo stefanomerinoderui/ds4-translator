@@ -77,6 +77,11 @@ void functionfs_set_mac(const uint8_t mac_le[6], const char *mac_str);
 // the canned report. Safe to call while a device is running.
 void functionfs_set_ds4_firmware(const uint8_t report[49]);
 
+// Real DS4 motion calibration (feature 0x02, 37 bytes with the report ID, USB
+// layout) to answer GET_REPORT with instead of the canned one. NULL restores
+// the canned report. Safe to call while a device is running.
+void functionfs_set_ds4_imu_calibration(const uint8_t report[37]);
+
 // product_name: custom USB product string override, or NULL/empty to use the
 // built-in per-type default ("Wireless Controller" / "DualSense Wireless
 // Controller"). Ignored for the Xbox targets: xpad names the device itself.

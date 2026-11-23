@@ -67,7 +67,7 @@ void functionfs_set_mac(const uint8_t mac_le[6], const char *mac_str) {
     (void)snprintf(virtual_mac_str, sizeof(virtual_mac_str), "%s", mac_str);
 }
 
-static pthread_mutex_t firmware_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t firmware_mutex /* guards the real firmware and IMU reports */ = PTHREAD_MUTEX_INITIALIZER;
 static uint8_t real_firmware[49];
 static bool have_real_firmware = false;
 
@@ -75,6 +75,16 @@ void functionfs_set_ds4_firmware(const uint8_t report[49]) {
     pthread_mutex_lock(&firmware_mutex);
     have_real_firmware = (report != NULL);
     if (report) memcpy(real_firmware, report, sizeof(real_firmware));
+    pthread_mutex_unlock(&firmware_mutex);
+}
+
+static uint8_t real_imu_calibration[37];
+static bool have_real_imu_calibration = false;
+
+void functionfs_set_ds4_imu_calibration(const uint8_t report[37]) {
+    pthread_mutex_lock(&firmware_mutex);
+    have_real_imu_calibration = (report != NULL);
+    if (report) memcpy(real_imu_calibration, report, sizeof(real_imu_calibration));
     pthread_mutex_unlock(&firmware_mutex);
 }
 
@@ -87,6 +97,14 @@ static size_t build_feature_report(int target_type, uint8_t rnum, uint8_t *out) 
     bool is_ds4 = (target_type == FFS_TARGET_DS4);
     if (is_ds4) {
         if (rnum == 0x02 || rnum == 0x25) {
+            pthread_mutex_lock(&firmware_mutex);
+            if (have_real_imu_calibration) {
+                memcpy(out, real_imu_calibration, sizeof(real_imu_calibration));
+                out[0] = rnum;
+                pthread_mutex_unlock(&firmware_mutex);
+                return sizeof(real_imu_calibration);
+            }
+            pthread_mutex_unlock(&firmware_mutex);
             out[0] = rnum;
             static const uint8_t ds4_cal[36] = {
                 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,

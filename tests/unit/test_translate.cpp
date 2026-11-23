@@ -408,3 +408,61 @@ TEST(Ds4OutputReport, DefaultIsSteadyLight) {
     EXPECT_EQ(buf[11], 0);
     EXPECT_EQ(buf[12], 0);
 }
+
+// ------------------------------------------------------ IMU calibration (BT)
+
+namespace {
+// A Bluetooth 0x05 report whose every 16-bit field holds a distinct value
+// (field index + 1), CRC filled in.
+void make_bt_calibration(uint8_t out[DS4_IMU_CAL_BT_SIZE]) {
+    std::memset(out, 0, DS4_IMU_CAL_BT_SIZE);
+    out[0] = DS4_IMU_CAL_BT_ID;
+    for (int field = 0; field < 17; ++field) { // fields at bytes 1,3,...,33
+        out[1 + field * 2] = static_cast<uint8_t>(field + 1);
+    }
+    const uint32_t crc = calculate_crc32(0xA3, out, DS4_IMU_CAL_USB_SIZE);
+    for (int i = 0; i < 4; ++i) out[DS4_IMU_CAL_USB_SIZE + i] = static_cast<uint8_t>(crc >> (8 * i));
+}
+uint8_t field_at(const uint8_t* report, size_t byte) { return report[byte]; }
+} // namespace
+
+TEST(ImuCalibration, BluetoothGyroGainsAreReorderedToUsbLayout) {
+    uint8_t bt[DS4_IMU_CAL_BT_SIZE], usb[DS4_IMU_CAL_USB_SIZE];
+    make_bt_calibration(bt);
+    ASSERT_TRUE(convert_ds4_imu_calibration_bt(bt, sizeof(bt), usb));
+    EXPECT_EQ(usb[0], DS4_IMU_CAL_USB_ID);
+    // BT order: pitch+ yaw+ roll+ pitch- yaw- roll- (bytes 7..17); USB: pitch+ pitch- yaw+ yaw- roll+ roll-.
+    EXPECT_EQ(field_at(usb, 7), field_at(bt, 7));
+    EXPECT_EQ(field_at(usb, 9), field_at(bt, 13));
+    EXPECT_EQ(field_at(usb, 11), field_at(bt, 9));
+    EXPECT_EQ(field_at(usb, 13), field_at(bt, 15));
+    EXPECT_EQ(field_at(usb, 15), field_at(bt, 11));
+    EXPECT_EQ(field_at(usb, 17), field_at(bt, 17));
+}
+
+TEST(ImuCalibration, BiasesSpeedAndAccelFieldsKeepTheirOffsets) {
+    uint8_t bt[DS4_IMU_CAL_BT_SIZE], usb[DS4_IMU_CAL_USB_SIZE];
+    make_bt_calibration(bt);
+    ASSERT_TRUE(convert_ds4_imu_calibration_bt(bt, sizeof(bt), usb));
+    EXPECT_EQ(0, std::memcmp(usb + 1, bt + 1, 6));   // gyro biases
+    EXPECT_EQ(0, std::memcmp(usb + 19, bt + 19, 18)); // speed, accelerometer, trailer
+}
+
+TEST(ImuCalibration, CorruptedOrMislabelledReportIsRejected) {
+    uint8_t bt[DS4_IMU_CAL_BT_SIZE], usb[DS4_IMU_CAL_USB_SIZE];
+    make_bt_calibration(bt);
+    bt[20] ^= 0xFF; // payload no longer matches the CRC
+    EXPECT_FALSE(convert_ds4_imu_calibration_bt(bt, sizeof(bt), usb));
+    make_bt_calibration(bt);
+    EXPECT_FALSE(convert_ds4_imu_calibration_bt(bt, sizeof(bt) - 1, usb));
+    bt[0] = DS4_IMU_CAL_USB_ID;
+    EXPECT_FALSE(convert_ds4_imu_calibration_bt(bt, sizeof(bt), usb));
+}
+
+TEST(ImuCalibration, UsbReportValidation) {
+    uint8_t usb[DS4_IMU_CAL_USB_SIZE] = {DS4_IMU_CAL_USB_ID};
+    EXPECT_TRUE(is_valid_ds4_imu_calibration_usb(usb, sizeof(usb)));
+    EXPECT_FALSE(is_valid_ds4_imu_calibration_usb(usb, sizeof(usb) - 1));
+    usb[0] = 0x05;
+    EXPECT_FALSE(is_valid_ds4_imu_calibration_usb(usb, sizeof(usb)));
+}

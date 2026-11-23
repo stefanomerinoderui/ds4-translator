@@ -177,6 +177,12 @@ size_t select_usb_touch_reports(uint8_t num_touch, const dualshock4_touch_report
     return count;
 }
 
+namespace {
+uint32_t read_le_u32(const uint8_t* p) {
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+} // namespace
+
 size_t build_ds4_output_report(bool bluetooth, const Ds4Output& o, uint8_t out[DS4_BT_OUTPUT_SIZE]) {
     memset(out, 0, DS4_BT_OUTPUT_SIZE);
     if (bluetooth) {
@@ -207,6 +213,31 @@ size_t build_ds4_output_report(bool bluetooth, const Ds4Output& o, uint8_t out[D
     out[9] = o.flash_on;
     out[10] = o.flash_off;
     return DS4_USB_OUTPUT_SIZE;
+}
+
+bool is_valid_ds4_imu_calibration_usb(const uint8_t* data, size_t len) {
+    return len == DS4_IMU_CAL_USB_SIZE && data[0] == DS4_IMU_CAL_USB_ID;
+}
+
+bool convert_ds4_imu_calibration_bt(const uint8_t* bt, size_t len, uint8_t usb[DS4_IMU_CAL_USB_SIZE]) {
+    if (len != DS4_IMU_CAL_BT_SIZE || bt[0] != DS4_IMU_CAL_BT_ID) return false;
+    const uint32_t received = read_le_u32(bt + DS4_IMU_CAL_USB_SIZE);
+    if (received != calculate_crc32(0xA3, bt, DS4_IMU_CAL_USB_SIZE)) return false;
+
+    memcpy(usb, bt, DS4_IMU_CAL_USB_SIZE);
+    usb[0] = DS4_IMU_CAL_USB_ID;
+    // Gyro pitch/yaw/roll gains: Bluetooth lists the three plus values then
+    // the three minus values, USB interleaves plus/minus per axis. Every
+    // other field sits at the same offset in both.
+    const size_t pitch_plus = 7, yaw_plus = 9, roll_plus = 11;
+    const size_t pitch_minus = 13, yaw_minus = 15, roll_minus = 17;
+    memcpy(usb + 7, bt + pitch_plus, 2);
+    memcpy(usb + 9, bt + pitch_minus, 2);
+    memcpy(usb + 11, bt + yaw_plus, 2);
+    memcpy(usb + 13, bt + yaw_minus, 2);
+    memcpy(usb + 15, bt + roll_plus, 2);
+    memcpy(usb + 17, bt + roll_minus, 2);
+    return true;
 }
 
 bool is_valid_ds4_firmware_report(const uint8_t* data, size_t len) {
