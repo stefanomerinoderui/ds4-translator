@@ -96,16 +96,18 @@ std::string choose_adapter(const std::string& bluez_dir, const std::string& requ
 } // namespace
 
 std::string bluez_ds4_device_info(const uint8_t key[BT_LINK_KEY_SIZE]) {
-    // Name, class and UUIDs are what BlueZ records for a DualShock 4 it has
-    // paired itself; Source=2 is the USB vendor-ID namespace. Trusted lets the
-    // pad reconnect without an authorisation prompt.
+    // Name and class are what BlueZ records for a DualShock 4 it has paired
+    // itself; Source=2 is the USB vendor-ID namespace. Trusted lets the pad
+    // reconnect without an authorisation prompt. There is deliberately no
+    // Services line: with one, BlueZ treats the services as resolved, never
+    // browses the pad's SDP and then has no HID record to build the input
+    // device from. Without it, it browses on the first connection.
     return "[General]\n"
            "Name=Wireless Controller\n"
            "Class=0x002508\n"
            "SupportedTechnologies=BR/EDR;\n"
            "Trusted=true\n"
            "Blocked=false\n"
-           "Services=00001124-0000-1000-8000-00805f9b34fb;00001200-0000-1000-8000-00805f9b34fb;\n"
            "\n"
            "[DeviceID]\n"
            "Source=2\n"

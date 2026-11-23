@@ -161,8 +161,9 @@ fail or report success without the physical pad being touched.
   sixaxis plugin logs the pad but never finishes pairing it while the
   daemon has it detached (seen with emulation on; with emulation off it
   created the device entry). Run `sudo systemctl restart bluetooth`
-  afterwards. Not yet run against real hardware: whether the pad then
-  connects over Bluetooth is unverified.
+  afterwards. Verified on a real pad: it connects over Bluetooth and the
+  light bar turns blue. The BlueZ entry must not list `Services`: BlueZ
+  then skips the SDP browse and fails with "Could not parse HID SDP record".
 - The pad's MAC is read from feature `0x12` when it connects over USB and
   remembered for the MAC squat.
 
