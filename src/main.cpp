@@ -39,6 +39,7 @@
 #include "fs-util.h"
 #include "paths.h"
 #include "translate.h"
+#include "calibration.h"
 
 #ifndef DS4_VERSION
 #define DS4_VERSION "unknown"
@@ -1757,6 +1758,37 @@ extern "C" void send_physical_output_report(int fd, bool is_bluetooth, uint8_t m
     g_bt_output_pacer.submit(fd, state);
 }
 
+// The physical pad's vendor feature reports (calibration, reset), over USB
+// only: neither report set has been verified over Bluetooth, and a bad write
+// can brick the pad. Reaches the pad through the libusb transport (unbind
+// method) or its hidraw node (legacy method).
+class PhysicalFeatureIo : public FeatureIo {
+public:
+    PhysicalFeatureIo(int fd, bool via_usb_transport) : fd_(fd), via_usb_transport_(via_usb_transport) {}
+
+    int get(uint8_t id, uint8_t* buf, size_t len) override {
+        if (via_usb_transport_) return usb_hid_transport_get_feature_report(fd_, id, buf, len);
+        return hidraw_get_feature(fd_, id, buf, len);
+    }
+
+    bool set(const uint8_t* buf, size_t len) override {
+        if (via_usb_transport_) return usb_hid_transport_set_feature_report(fd_, buf, len);
+        uint8_t copy[64];
+        if (len > sizeof(copy)) return false;
+        memcpy(copy, buf, len);
+        if (ioctl(fd_, HIDIOCSFEATURE(len), copy) < 0) {
+            std::cerr << "Feature report 0x" << std::hex << (int)buf[0] << std::dec << " write failed: "
+                      << strerror(errno) << std::endl;
+            return false;
+        }
+        return true;
+    }
+
+private:
+    int fd_;
+    bool via_usb_transport_;
+};
+
 // UHID Helper to write events
 int uhid_write(int fd, const struct uhid_event& ev) {
     // linux/uhid.h documents that short writes are zero-extended by the
@@ -2453,6 +2485,45 @@ void emit_neutral_report(ControllerType type) {
     struct dualshock4_touch_report empty_touch[4];
     memset(empty_touch, 0, sizeof(empty_touch));
     emit_input_report(type, neutral, 0, empty_touch, false);
+}
+
+// Why the vendor feature reports can't be used right now, or "" if they can.
+static std::string physical_feature_io_unavailable() {
+    if (phy_fd < 0) return "Error: No physical controller connected.";
+    if (is_bluetooth) {
+        return "Error: Only supported over USB: these reports have not been verified over Bluetooth.";
+    }
+    return "";
+}
+
+// Parses "<target> <step> [position side | permanent]" (see ds4-ctl
+// calibrate) and runs it on the physical pad. The caller has checked that the
+// pad is connected over USB.
+static std::string run_calibrate_command(const std::string& args) {
+    std::istringstream in(args);
+    std::string target_name, step_name, extra1, extra2;
+    in >> target_name >> step_name >> extra1 >> extra2;
+    CalibrationTarget target;
+    if (!parse_calibration_target(target_name, target)) {
+        return "Error: Invalid calibration target '" + target_name + "'. Supported: stick-center stick-range triggers";
+    }
+    CalibrationStep step;
+    if (step_name == "start") step = CAL_STEP_START;
+    else if (step_name == "sample") step = CAL_STEP_SAMPLE;
+    else if (step_name == "store") step = CAL_STEP_STORE;
+    else return "Error: Invalid calibration step '" + step_name + "'. Supported: start sample store";
+
+    uint8_t position = 0, side = 0;
+    bool permanent = false;
+    if (step == CAL_STEP_SAMPLE && target == CAL_TRIGGERS) {
+        position = (uint8_t)atoi(extra1.c_str());
+        side = (uint8_t)atoi(extra2.c_str());
+    } else if (step == CAL_STEP_STORE && !extra1.empty()) {
+        if (extra1 != "permanent") return "Error: store takes only the optional argument 'permanent'.";
+        permanent = true;
+    }
+    PhysicalFeatureIo io(phy_fd, g_phy_is_unbind_transport);
+    return calibration_run_step(io, target, step, position, side, permanent);
 }
 
 int main(int argc, char* argv[]) {
@@ -3616,6 +3687,17 @@ int main(int argc, char* argv[]) {
                             fs::remove(kPhysicalMacStatePath, fm_ec);
                             response = "OK: forgot controller MAC " + forgotten +
                                        ". It is learned again on the next Bluetooth connection.";
+                        }
+                    } else if (cmd == "reset-controller") {
+                        response = physical_feature_io_unavailable();
+                        if (response.empty()) {
+                            PhysicalFeatureIo io(phy_fd, g_phy_is_unbind_transport);
+                            response = controller_reset(io);
+                        }
+                    } else if (cmd.rfind("calibrate ", 0) == 0) {
+                        response = physical_feature_io_unavailable();
+                        if (response.empty()) {
+                            response = run_calibrate_command(cmd.substr(strlen("calibrate ")));
                         }
                     } else if (cmd == "identify") {
                         if (phy_fd < 0) {

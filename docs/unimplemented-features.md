@@ -123,7 +123,7 @@ Bluetooth.
 | `0x80` | SET | MAC (6) | Overwrite the pad's own Bluetooth MAC |
 | `0x81` | GET | MAC (6) | Read the pad's Bluetooth MAC |
 | `0x85` / `0x86` | SET / GET | 6 bytes | PCBA manufacturer ID |
-| `0x90` | SET | `cmd, device, target[, ...]` | Calibration control (see item 1) |
+| `0x90` | SET | `cmd, device, target[, ...]` | Calibration control (`ds4-ctl calibrate`) |
 | `0x91` | GET | `device, target, state` | Calibration state: `1` running, `2` stored |
 | `0x92` | GET | `device, target, result` | Calibration result: `0xFF` pending, `1` success |
 | `0x93` | GET | 13 bytes | Calibration debug samples, chunked |
@@ -147,73 +147,19 @@ the controller without stopping the service. Tools that open the
 `SET_REPORT` and invents or omits every `GET_REPORT` reply, so they either
 fail or report success without the physical pad being touched.
 
+## Already implemented (for reference)
+
+- `ds4-ctl calibrate <stick-center|stick-range|triggers> [--permanent]`:
+  drives reports `0x90`–`0x92` on the physical pad over USB with prompts
+  between steps. It first forces the temporary flash-mirror mode and checks
+  it, and `--permanent` switches to permanent mode only around the store
+  step. Refused over Bluetooth. The triggers target is beta upstream and is
+  not checked against `0x91`/`0x92`. Not yet run against real hardware.
+- `ds4-ctl reset-controller` (`0xA0 = 04 01 00`), USB only.
+- The pad's MAC is read from feature `0x12` when it connects over USB and
+  remembered for the MAC squat.
+
 ## Gaps, in suggested implementation order
-
-### 1. Stick and trigger calibration
-
-**Status:** not implemented.
-
-**Protocol** (from `ds4-calibration-tool.py`). `0x90` takes
-`cmd, device, target`, where `cmd` is `1` = start, `2` = store, `3` =
-take a sample.
-
-- **Stick center** (`device 1`, `target 1`): send start, then for each
-  sample hold both sticks centered and send `3`; send `2` to store. Before
-  storing, `0x91` should read `01 01 01` and `0x92` `01 01 FF`; after,
-  `01 01 02` and `01 01 01`.
-- **Stick range** (`device 1`, `target 2`): send start, move both sticks
-  around their full range, send `2` to store. Same `0x91`/`0x92` checks.
-- **Triggers** (`device 3`, marked beta upstream): start with
-  `01 03 00 03`; for each of L2 and R2 and each of released/mid/full,
-  send `03 03 <pos> <side>` twice (`pos` 1/2/3, `side` 1 = L2, 2 = R2);
-  store with `02 03 00 03`.
-
-Results only survive a reset or standby if the flash mirror is set to
-permanent first (item 2).
-
-**Fix:** add `ds4-ctl calibrate <stick-center|stick-range|triggers>` that
-asks the daemon to run the sequence on the physical pad over USB,
-prompting the user between steps, and a matching page in the UI. The live
-input view of `ds4-ctl test` already shows the sticks, which makes it easy
-to check the result.
-
-An alternative is to pass reports `0x90`–`0x93` (and the flash-mirror
-reports) from the emulated device through to the physical one, so the
-existing website works unmodified on the virtual controller. That is less
-code but lets any program with access to the virtual device write to the
-pad's flash.
-
-**Risk:** ds4-tools warns these commands can brick a controller, and was
-tested on two units. Default to temporary mode, and refuse to run over
-Bluetooth until that path has been verified.
-
-**Effort:** medium.
-
-### 2. Flash-mirror mode (temporary / permanent)
-
-**Status:** not implemented.
-
-**Protocol:** read with `0x08 = FF 00 0C` then `0x11` (first byte: `1`
-temporary, `0` permanent). Set with `0xA0` as in the table above.
-
-**Fix:** expose as part of the calibration flow (switch to permanent only
-for the store step, then back to temporary), rather than as a standalone
-setting.
-
-**Effort:** small, once item 1 exists.
-
-### 3. Learn the pad's MAC over USB
-
-**Status:** the MAC used by the MAC squat
-(`/var/lib/ds4-translator/last-physical-mac`) is only learned from
-`HID_UNIQ` on the first Bluetooth connection.
-
-**Fix:** when the pad is connected over USB, read its MAC with feature
-`0x81` (or bytes 0–5 of `0x12`) and store it the same way. A pad that was
-first seen on a cable then gets its first Bluetooth connection blocked
-from `hid-playstation` too.
-
-**Effort:** small.
 
 ### 4. IMU calibration write
 
@@ -245,17 +191,6 @@ also has to create the matching BlueZ device entry under
 `/var/lib/bluetooth/<adapter>/<pad MAC>/info` with the same link key.
 
 **Effort:** medium; verify the breakage first.
-
-### 7. Controller reset
-
-**Status:** not implemented. `0xA0 = 04 01 00` reboots the controller (the
-USB device disconnects and re-enumerates).
-
-**Fix:** a `ds4-ctl reset-controller` command for recovering a pad in a bad
-state without unplugging it. The daemon's existing hot-swap handling has
-to treat the re-enumeration as a normal reconnect.
-
-**Effort:** small, low value.
 
 ## Out of scope
 
