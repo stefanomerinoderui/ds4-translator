@@ -250,6 +250,7 @@ stage-cli: all
 	install -D -m 644 72-ds4-translator-hide.rules $(DESTDIR)$(UDEVRULESDIR)/72-ds4-translator-hide.rules
 	install -D -m 644 ds4-ctl.1 $(DESTDIR)/usr/share/man/man1/ds4-ctl.1
 	install -D -m 644 ds4-ctl-completion.bash $(DESTDIR)/usr/share/bash-completion/completions/ds4-ctl
+	install -D -m 644 ds4-ctl.fish $(DESTDIR)/usr/share/fish/vendor_completions.d/ds4-ctl.fish
 	install -D -m 644 dummy_hcd.conf $(DESTDIR)$(MODPROBEDIR)/dummy_hcd.conf
 	install -D -m 644 ds4-translator.sysusers $(DESTDIR)/usr/lib/sysusers.d/ds4-translator.conf
 	install -D -m 644 $(HIDBPF_BPF_OBJ) $(DESTDIR)$(HIDBPF_INSTALL_PATH)
@@ -465,6 +466,7 @@ uninstall-cli:
 	rm -f $(DESTDIR)$(UDEVRULESDIR)/72-ds4-translator-hide.rules
 	rm -f $(DESTDIR)/usr/share/man/man1/ds4-ctl.1
 	rm -f $(DESTDIR)/usr/share/bash-completion/completions/ds4-ctl
+	rm -f $(DESTDIR)/usr/share/fish/vendor_completions.d/ds4-ctl.fish
 	rm -f $(DESTDIR)$(MODPROBEDIR)/dummy_hcd.conf
 	rm -f $(DESTDIR)/usr/lib/sysusers.d/ds4-translator.conf
 	rm -f $(DESTDIR)$(HIDBPF_INSTALL_PATH)
