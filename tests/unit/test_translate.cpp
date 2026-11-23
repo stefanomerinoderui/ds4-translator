@@ -355,3 +355,56 @@ TEST(Firmware, DescribesDateTimeAndVersions) {
     EXPECT_EQ(describe_ds4_firmware(report, sizeof(report)),
               "Sep  2 2020 14:45:10, hw 0x0100.5438, fw 0x00000004.2033");
 }
+
+// ------------------------------------------------------------- output reports
+
+namespace {
+Ds4Output sample_output() {
+    Ds4Output o;
+    o.motor_left = 11;
+    o.motor_right = 22;
+    o.r = 1;
+    o.g = 2;
+    o.b = 3;
+    o.flash_on = 40;
+    o.flash_off = 50;
+    return o;
+}
+} // namespace
+
+TEST(Ds4OutputReport, UsbLayoutCarriesMotorsColourAndFlash) {
+    uint8_t buf[DS4_BT_OUTPUT_SIZE];
+    ASSERT_EQ(build_ds4_output_report(false, sample_output(), buf), DS4_USB_OUTPUT_SIZE);
+    EXPECT_EQ(buf[0], 0x05);
+    EXPECT_EQ(buf[1], 0x07);
+    EXPECT_EQ(buf[4], 22); // right
+    EXPECT_EQ(buf[5], 11); // left
+    EXPECT_EQ(buf[6], 1);
+    EXPECT_EQ(buf[7], 2);
+    EXPECT_EQ(buf[8], 3);
+    EXPECT_EQ(buf[9], 40);
+    EXPECT_EQ(buf[10], 50);
+}
+
+TEST(Ds4OutputReport, BluetoothLayoutCarriesFlashAndValidCrc) {
+    uint8_t buf[DS4_BT_OUTPUT_SIZE];
+    ASSERT_EQ(build_ds4_output_report(true, sample_output(), buf), DS4_BT_OUTPUT_SIZE);
+    EXPECT_EQ(buf[0], 0x11);
+    EXPECT_EQ(buf[1], 0xC0);
+    EXPECT_EQ(buf[3], 0x07);
+    EXPECT_EQ(buf[6], 22);
+    EXPECT_EQ(buf[7], 11);
+    EXPECT_EQ(buf[8], 1);
+    EXPECT_EQ(buf[10], 3);
+    EXPECT_EQ(buf[11], 40);
+    EXPECT_EQ(buf[12], 50);
+    const uint32_t crc = buf[74] | (buf[75] << 8) | (buf[76] << 16) | (static_cast<uint32_t>(buf[77]) << 24);
+    EXPECT_EQ(crc, calculate_crc32(0xA2, buf, 74));
+}
+
+TEST(Ds4OutputReport, DefaultIsSteadyLight) {
+    uint8_t buf[DS4_BT_OUTPUT_SIZE];
+    build_ds4_output_report(true, Ds4Output{}, buf);
+    EXPECT_EQ(buf[11], 0);
+    EXPECT_EQ(buf[12], 0);
+}

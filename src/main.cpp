@@ -1487,47 +1487,22 @@ void log_physical_write_error(const char* what) {
 // Performs the actual output report write. Bluetooth reports go through
 // BtOutputPacer below; USB ones are written straight from
 // send_physical_output_report().
-void write_physical_output_report(int fd, bool is_bluetooth, uint8_t motor_left, uint8_t motor_right, uint8_t r, uint8_t g, uint8_t b) {
-    if (is_bluetooth) {
-        uint8_t buf[78];
-        memset(buf, 0, sizeof(buf));
-        buf[0] = 0x11; // Report ID
-        buf[1] = 0xC0; // hw_control: HID | CRC32
-        buf[2] = 0x00; // audio_control
-        buf[3] = 0x07; // valid_flag0: motor | led | led_blink
-        buf[4] = 0x00; // valid_flag1
-        buf[5] = 0x00; // reserved
-        buf[6] = motor_right;
-        buf[7] = motor_left;
-        buf[8] = r;
-        buf[9] = g;
-        buf[10] = b;
-        
-        uint32_t crc = calculate_crc32(0xA2, buf, 74);
-        buf[74] = crc & 0xFF;
-        buf[75] = (crc >> 8) & 0xFF;
-        buf[76] = (crc >> 16) & 0xFF;
-        buf[77] = (crc >> 24) & 0xFF;
-        
-        if (write(fd, buf, 78) < 0) {
-            log_physical_write_error("Failed to write Bluetooth output report to physical controller");
-        }
-    } else {
-        uint8_t buf[32];
-        memset(buf, 0, sizeof(buf));
-        buf[0] = 0x05; // Report ID
-        buf[1] = 0x07; // valid_flag0: motor | led | led_blink
-        buf[2] = 0x00; // valid_flag1
-        buf[3] = 0x00; // reserved
-        buf[4] = motor_right;
-        buf[5] = motor_left;
-        buf[6] = r;
-        buf[7] = g;
-        buf[8] = b;
-        
-        if (write(fd, buf, 32) < 0) {
-            log_physical_write_error("Failed to write USB output report to physical controller");
-        }
+void write_physical_output_report(int fd, bool is_bluetooth, uint8_t motor_left, uint8_t motor_right, uint8_t r, uint8_t g, uint8_t b,
+                                   uint8_t flash_on, uint8_t flash_off) {
+    Ds4Output output;
+    output.motor_left = motor_left;
+    output.motor_right = motor_right;
+    output.r = r;
+    output.g = g;
+    output.b = b;
+    output.flash_on = flash_on;
+    output.flash_off = flash_off;
+
+    uint8_t buf[DS4_BT_OUTPUT_SIZE];
+    const size_t size = build_ds4_output_report(is_bluetooth, output, buf);
+    if (write(fd, buf, size) < 0) {
+        log_physical_write_error(is_bluetooth ? "Failed to write Bluetooth output report to physical controller"
+                                              : "Failed to write USB output report to physical controller");
     }
 }
 
@@ -1565,6 +1540,8 @@ public:
         uint8_t r = 0;
         uint8_t g = 0;
         uint8_t b = 0;
+        uint8_t flash_on = 0;
+        uint8_t flash_off = 0;
     };
 
     // 40 Hz: fast enough that neither rumble nor lightbar changes feel
@@ -1625,7 +1602,7 @@ public:
 
 private:
     void write_locked(int fd, const State& s) {
-        write_physical_output_report(fd, true, s.motor_left, s.motor_right, s.r, s.g, s.b);
+        write_physical_output_report(fd, true, s.motor_left, s.motor_right, s.r, s.g, s.b, s.flash_on, s.flash_off);
     }
 
     // Started on the first throttled report rather than at daemon startup,
@@ -1683,9 +1660,10 @@ void stop_bt_output_pacer() {
 }
 
 // Send output report to physical controller
-extern "C" void send_physical_output_report(int fd, bool is_bluetooth, uint8_t motor_left, uint8_t motor_right, uint8_t r, uint8_t g, uint8_t b) {
+extern "C" void send_physical_output_report(int fd, bool is_bluetooth, uint8_t motor_left, uint8_t motor_right, uint8_t r, uint8_t g, uint8_t b,
+                                            uint8_t flash_on, uint8_t flash_off) {
     if (!is_bluetooth) {
-        write_physical_output_report(fd, false, motor_left, motor_right, r, g, b);
+        write_physical_output_report(fd, false, motor_left, motor_right, r, g, b, flash_on, flash_off);
         return;
     }
     BtOutputPacer::State state;
@@ -1694,6 +1672,8 @@ extern "C" void send_physical_output_report(int fd, bool is_bluetooth, uint8_t m
     state.r = r;
     state.g = g;
     state.b = b;
+    state.flash_on = flash_on;
+    state.flash_off = flash_off;
     g_bt_output_pacer.submit(fd, state);
 }
 
@@ -1911,6 +1891,8 @@ int phy_fd = -1;
 int uhid_fd = -1;
 bool is_bluetooth = false;
 uint8_t cur_motor_left = 0, cur_motor_right = 0;
+// Light bar flash durations the emulated device last asked for; 0/0 = steady.
+uint8_t cur_flash_on = 0, cur_flash_off = 0;
 uint8_t cur_r = 0, cur_g = 0, cur_b = 255;
 // hid-playstation assigns a default LED color to every hid_device it
 // probes, based on a global ida player-slot counter (see
@@ -3033,7 +3015,7 @@ int main(int argc, char* argv[]) {
                             int dup_fd = dup(phy_fd);
                             if (dup_fd >= 0) {
                                 std::thread([fd = dup_fd, bt = is_bluetooth, r = cur_r, g = cur_g, b = cur_b]() {
-                                    send_physical_output_report(fd, bt, 0, 0, r, g, b);
+                                    send_physical_output_report(fd, bt, 0, 0, r, g, b, cur_flash_on, cur_flash_off);
                                     close(fd);
                                 }).detach();
                             }
@@ -3580,14 +3562,14 @@ int main(int argc, char* argv[]) {
                                         // motor: on a controller across the
                                         // room the light alone is easy to miss.
                                         send_physical_output_report(fd, bt, i == 0 ? 160 : 0, 0,
-                                                                     255, 255, 255);
+                                                                     255, 255, 255, 0, 0);
                                         usleep(180000);
-                                        send_physical_output_report(fd, bt, 0, 0, 0, 0, 0);
+                                        send_physical_output_report(fd, bt, 0, 0, 0, 0, 0, 0, 0);
                                         usleep(180000);
                                     }
                                     send_physical_output_report(fd, bt, cur_motor_left,
                                                                  cur_motor_right, cur_r, cur_g,
-                                                                 cur_b);
+                                                                 cur_b, cur_flash_on, cur_flash_off);
                                     // The pacer may still hold this fd as its
                                     // pending target; settle it before the fd
                                     // number can be reused.
@@ -3606,7 +3588,8 @@ int main(int argc, char* argv[]) {
                             // for; the next output report from a game replaces
                             // it anyway.
                             send_physical_output_report(phy_fd, is_bluetooth, cur_motor_left,
-                                                         cur_motor_right, cur_r, cur_g, cur_b);
+                                                         cur_motor_right, cur_r, cur_g, cur_b,
+                                                         cur_flash_on, cur_flash_off);
                             response = "OK: Light bar and motors handed back to the emulated device.";
                         }
                     } else if (cmd.rfind("led ", 0) == 0) {
@@ -3632,7 +3615,7 @@ int main(int argc, char* argv[]) {
                             // takes the controller straight back.
                             send_physical_output_report(phy_fd, is_bluetooth, (uint8_t)left,
                                                          (uint8_t)right, (uint8_t)red,
-                                                         (uint8_t)green, (uint8_t)blue);
+                                                         (uint8_t)green, (uint8_t)blue, 0, 0);
                             response = "OK: Sent to the physical controller.";
                         }
                     } else if (cmd == "test" || cmd == "test all") {
@@ -4213,6 +4196,7 @@ int main(int argc, char* argv[]) {
                         uint8_t motor_left = cur_motor_left;
                         uint8_t motor_right = cur_motor_right;
                         uint8_t r = cur_r, g = cur_g, b = cur_b;
+                        uint8_t flash_on = cur_flash_on, flash_off = cur_flash_off;
                         bool update = false;
                         
                         if (target_type == TYPE_DS4) {
@@ -4233,6 +4217,11 @@ int main(int argc, char* argv[]) {
                                         update = true;
                                     }
                                 }
+                                if ((flags & 0x04) && size >= 11) {
+                                    flash_on = data[9];
+                                    flash_off = data[10];
+                                    update = true;
+                                }
                             } else if (data[0] == 0x11 && size >= 11) { // BT format output report
                                 uint8_t flags = data[3];
                                 if (flags & 0x01) {
@@ -4249,6 +4238,11 @@ int main(int argc, char* argv[]) {
                                         b = data[10];
                                         update = true;
                                     }
+                                }
+                                if ((flags & 0x04) && size >= 13) {
+                                    flash_on = data[11];
+                                    flash_off = data[12];
+                                    update = true;
                                 }
                             }
                         } else { // DualSense
@@ -4280,7 +4274,8 @@ int main(int argc, char* argv[]) {
                         }
 
                         if (update) {
-                            if (motor_left != cur_motor_left || motor_right != cur_motor_right || r != cur_r || g != cur_g || b != cur_b) {
+                            if (motor_left != cur_motor_left || motor_right != cur_motor_right || r != cur_r || g != cur_g || b != cur_b ||
+                                flash_on != cur_flash_on || flash_off != cur_flash_off) {
                                 if (r != cur_r || g != cur_g || b != cur_b) {
                                     char buf[64];
                                     (void)snprintf(buf, sizeof(buf), "LED r=%u g=%u b=%u", r, g, b);
@@ -4296,8 +4291,11 @@ int main(int argc, char* argv[]) {
                                 cur_r = r;
                                 cur_g = g;
                                 cur_b = b;
+                                cur_flash_on = flash_on;
+                                cur_flash_off = flash_off;
                                 if (phy_fd >= 0) {
-                                    send_physical_output_report(phy_fd, is_bluetooth, cur_motor_left, cur_motor_right, cur_r, cur_g, cur_b);
+                                    send_physical_output_report(phy_fd, is_bluetooth, cur_motor_left, cur_motor_right, cur_r, cur_g, cur_b,
+                                                                cur_flash_on, cur_flash_off);
                                 }
                             }
                         }

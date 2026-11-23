@@ -177,6 +177,38 @@ size_t select_usb_touch_reports(uint8_t num_touch, const dualshock4_touch_report
     return count;
 }
 
+size_t build_ds4_output_report(bool bluetooth, const Ds4Output& o, uint8_t out[DS4_BT_OUTPUT_SIZE]) {
+    memset(out, 0, DS4_BT_OUTPUT_SIZE);
+    if (bluetooth) {
+        out[0] = 0x11; // report ID
+        out[1] = 0xC0; // hw_control: HID | CRC32
+        out[3] = 0x07; // valid_flag0: motor | led | led_blink
+        out[6] = o.motor_right;
+        out[7] = o.motor_left;
+        out[8] = o.r;
+        out[9] = o.g;
+        out[10] = o.b;
+        out[11] = o.flash_on;
+        out[12] = o.flash_off;
+        const uint32_t crc = calculate_crc32(0xA2, out, 74);
+        out[74] = crc & 0xFF;
+        out[75] = (crc >> 8) & 0xFF;
+        out[76] = (crc >> 16) & 0xFF;
+        out[77] = (crc >> 24) & 0xFF;
+        return DS4_BT_OUTPUT_SIZE;
+    }
+    out[0] = 0x05; // report ID
+    out[1] = 0x07; // valid_flag0: motor | led | led_blink
+    out[4] = o.motor_right;
+    out[5] = o.motor_left;
+    out[6] = o.r;
+    out[7] = o.g;
+    out[8] = o.b;
+    out[9] = o.flash_on;
+    out[10] = o.flash_off;
+    return DS4_USB_OUTPUT_SIZE;
+}
+
 bool is_valid_ds4_firmware_report(const uint8_t* data, size_t len) {
     return len == DS4_FIRMWARE_REPORT_SIZE && data[0] == DS4_FIRMWARE_REPORT_ID;
 }

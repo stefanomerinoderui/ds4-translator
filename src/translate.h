@@ -128,6 +128,24 @@ bool parse_bt_basic_input_report(const uint8_t* data, size_t len,
 size_t select_usb_touch_reports(uint8_t num_touch, const dualshock4_touch_report in[4],
                                 dualshock4_touch_report out[3]);
 
+// What the daemon asks the physical pad to do: rumble motors, light bar colour
+// and light bar flash (bright/dark durations, 0/0 = steady).
+struct Ds4Output {
+    uint8_t motor_left = 0;
+    uint8_t motor_right = 0;
+    uint8_t r = 0, g = 0, b = 0;
+    uint8_t flash_on = 0;
+    uint8_t flash_off = 0;
+};
+
+constexpr size_t DS4_USB_OUTPUT_SIZE = 32;
+constexpr size_t DS4_BT_OUTPUT_SIZE = 78;
+// Fills `out` (DS4_BT_OUTPUT_SIZE with CRC32 seed 0xA2 for Bluetooth,
+// DS4_USB_OUTPUT_SIZE otherwise) with the output report for `o` and returns
+// its size. The valid flags always claim motor, light bar and flash, so
+// every report is the full state.
+size_t build_ds4_output_report(bool bluetooth, const Ds4Output& o, uint8_t out[DS4_BT_OUTPUT_SIZE]);
+
 // Feature report 0xA3: build date/time, hardware and firmware versions. Same
 // 49-byte layout (report ID first) over USB and Bluetooth.
 constexpr uint8_t DS4_FIRMWARE_REPORT_ID = 0xA3;
