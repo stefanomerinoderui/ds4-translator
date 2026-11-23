@@ -240,6 +240,18 @@ bool convert_ds4_imu_calibration_bt(const uint8_t* bt, size_t len, uint8_t usb[D
     return true;
 }
 
+std::string ds4_pairing_info_mac(const uint8_t* data, size_t len) {
+    if (len != DS4_PAIRING_INFO_SIZE || data[0] != DS4_PAIRING_INFO_ID) return "";
+    bool any = false;
+    char out[18];
+    for (int i = 0; i < 6; ++i) {
+        const uint8_t byte = data[6 - i]; // stored least significant byte first
+        any = any || byte != 0;
+        snprintf(out + i * 3, 4, i < 5 ? "%02x:" : "%02x", byte);
+    }
+    return any ? std::string(out) : "";
+}
+
 bool is_valid_ds4_firmware_report(const uint8_t* data, size_t len) {
     return len == DS4_FIRMWARE_REPORT_SIZE && data[0] == DS4_FIRMWARE_REPORT_ID;
 }

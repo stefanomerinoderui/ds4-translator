@@ -466,3 +466,19 @@ TEST(ImuCalibration, UsbReportValidation) {
     usb[0] = 0x05;
     EXPECT_FALSE(is_valid_ds4_imu_calibration_usb(usb, sizeof(usb)));
 }
+
+// ---------------------------------------------------------------- pairing info
+
+TEST(PairingInfo, MacIsReadByteReversed) {
+    uint8_t report[DS4_PAIRING_INFO_SIZE] = {DS4_PAIRING_INFO_ID, 0xE8, 0x47, 0x3A, 0xD6, 0xE7, 0x74};
+    EXPECT_EQ(ds4_pairing_info_mac(report, sizeof(report)), "74:e7:d6:3a:47:e8");
+}
+
+TEST(PairingInfo, MalformedOrEmptyMacYieldsNothing) {
+    uint8_t report[DS4_PAIRING_INFO_SIZE] = {DS4_PAIRING_INFO_ID};
+    EXPECT_EQ(ds4_pairing_info_mac(report, sizeof(report)), "");           // all-zero MAC
+    report[1] = 1;
+    EXPECT_EQ(ds4_pairing_info_mac(report, sizeof(report) - 1), "");        // short
+    report[0] = 0x81;
+    EXPECT_EQ(ds4_pairing_info_mac(report, sizeof(report)), "");           // wrong id
+}

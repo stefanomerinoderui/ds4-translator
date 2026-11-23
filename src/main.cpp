@@ -984,6 +984,12 @@ static void capture_physical_features_hidraw(int fd) {
     int ret = hidraw_get_feature(fd, DS4_FIRMWARE_REPORT_ID, fw, sizeof(fw));
     if (ret >= 0) store_physical_firmware(fw, (size_t)ret);
 
+    if (!bluetooth) {
+        uint8_t pairing[DS4_PAIRING_INFO_SIZE];
+        ret = hidraw_get_feature(fd, DS4_PAIRING_INFO_ID, pairing, sizeof(pairing));
+        if (ret >= 0) remember_physical_mac(ds4_pairing_info_mac(pairing, (size_t)ret));
+    }
+
     if (bluetooth) {
         uint8_t cal[DS4_IMU_CAL_BT_SIZE];
         ret = hidraw_get_feature(fd, DS4_IMU_CAL_BT_ID, cal, sizeof(cal));
@@ -1007,6 +1013,12 @@ static void capture_physical_features_usb(int fd) {
     uint8_t cal[DS4_IMU_CAL_USB_SIZE] = {};
     ret = usb_hid_transport_get_feature_report(fd, DS4_IMU_CAL_USB_ID, cal, sizeof(cal));
     if (ret >= 0) store_physical_imu_cal_usb(cal, (size_t)ret);
+
+    // A pad first seen on a cable still needs its MAC remembered, or its
+    // first Bluetooth connection would not be squatted.
+    uint8_t pairing[DS4_PAIRING_INFO_SIZE] = {};
+    ret = usb_hid_transport_get_feature_report(fd, DS4_PAIRING_INFO_ID, pairing, sizeof(pairing));
+    if (ret >= 0) remember_physical_mac(ds4_pairing_info_mac(pairing, (size_t)ret));
 }
 
 // Opens dev_name's /dev/hidraw node and (unless for_type == TYPE_NONE)

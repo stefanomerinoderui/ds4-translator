@@ -168,6 +168,14 @@ bool is_valid_ds4_imu_calibration_usb(const uint8_t* data, size_t len);
 // Checks `bt` (41 bytes, id 0x05, CRC) and rewrites it into USB layout.
 bool convert_ds4_imu_calibration_bt(const uint8_t* bt, size_t len, uint8_t usb[DS4_IMU_CAL_USB_SIZE]);
 
+// Feature report 0x12 (pairing info, 16 bytes with the ID): the pad's own
+// Bluetooth MAC byte-reversed in bytes 1-6, then the host identity.
+constexpr uint8_t DS4_PAIRING_INFO_ID = 0x12;
+constexpr size_t DS4_PAIRING_INFO_SIZE = 16;
+// The MAC as "aa:bb:cc:dd:ee:ff" (lower case), or "" if the report is
+// malformed or carries an all-zero MAC.
+std::string ds4_pairing_info_mac(const uint8_t* data, size_t len);
+
 enum BatteryState { BATTERY_DISCHARGING, BATTERY_CHARGING, BATTERY_FULL };
 
 void decode_ds4_battery(uint8_t ds4_status0, int& percent, BatteryState& state);
