@@ -1,0 +1,29 @@
+#compdef ds4-ctl
+# Generic wrapper: asks the ds4-ctl binary itself for its command list and
+# per-command argument completions (via hidden --commands/--complete-args
+# queries) instead of hardcoding them here. Mirrors ds4-ctl-completion.bash;
+# nothing in this file ever needs editing when commands are added.
+
+_ds4_ctl_commands() {
+    local -a commands
+    commands=( ${(f)"$(ds4-ctl --commands 2>/dev/null)"} )
+    compadd -a commands
+}
+
+# Pass the command plus every word already typed after it (not just the
+# command name) so completion can depend on position, like the bash version.
+_ds4_ctl_args() {
+    local -a args
+    args=( ${(f)"$(ds4-ctl --complete-args "${(@)words[2,CURRENT-1]}" 2>/dev/null)"} )
+    compadd -a args
+}
+
+_ds4_ctl() {
+    if (( CURRENT == 2 )); then
+        _ds4_ctl_commands
+    else
+        _ds4_ctl_args
+    fi
+}
+
+_ds4_ctl "$@"
