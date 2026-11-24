@@ -172,11 +172,17 @@ $(BUILD_DIR)/vmlinux.h: | $(BUILD_DIR)
 # clang (not $(CC)/$(CXX)) targeting the BPF backend directly -- this is
 # not a native object file. -D__TARGET_ARCH_x86 hardcodes this project's
 # only tested/supported arch, same as the rest of the build.
+# Warnings are errors for the BPF object too. vmlinux.h is generated from the
+# running kernel's BTF and differs on every kernel, so it is a system header
+# (-isystem, whose warnings Clang suppresses): its forward declarations that
+# declare nothing are not ours to fix, while src/hid-bpf/ is held to the rules.
+BPF_WARNINGS = -Wall -Wextra -Werror
+
 $(HIDBPF_BPF_OBJ): src/hid-bpf/hid-bpf-transport.bpf.c src/hid-bpf/hid_bpf.h \
                    src/hid-bpf/hid_bpf_helpers.h src/hid-bpf/hid_report_descriptor_helpers.h \
                    $(BUILD_DIR)/vmlinux.h | $(BUILD_DIR)
-	clang -O2 -g -target bpf -D__TARGET_ARCH_x86 \
-	    -I $(BUILD_DIR) -I src/hid-bpf -c $< -o $@
+	clang -O2 -g -target bpf -D__TARGET_ARCH_x86 $(BPF_WARNINGS) \
+	    -isystem $(BUILD_DIR) -I src/hid-bpf -c $< -o $@
 
 clean:
 	rm -rf $(BUILD_DIR)
