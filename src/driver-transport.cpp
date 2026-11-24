@@ -97,6 +97,22 @@ bool driver_transport_set_ignore_mac(int control_fd, const std::string& mac) {
     return true;
 }
 
+bool driver_transport_get_calibration(int pad_fd, std::vector<uint8_t>& report) {
+    struct ds4t_feature feat;
+    memset(&feat, 0, sizeof(feat));
+    if (ioctl(pad_fd, DS4T_IOC_GET_CALIBRATION, &feat) != 0) {
+        if (errno != ENODATA) {
+            std::cerr << "driver: cannot read the calibration report: " << strerror(errno) << std::endl;
+        }
+        return false;
+    }
+    if (feat.len == 0 || feat.len > sizeof(feat.data)) {
+        return false;
+    }
+    report.assign(feat.data, feat.data + feat.len);
+    return true;
+}
+
 bool driver_transport_available() {
     struct stat st;
     return stat(ds4paths::driver_module_dir().c_str(), &st) == 0;

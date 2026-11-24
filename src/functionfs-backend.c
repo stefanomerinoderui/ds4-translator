@@ -65,6 +65,17 @@ void functionfs_set_mac(const uint8_t mac_le[6], const char *mac_str) {
     (void)snprintf(virtual_mac_str, sizeof(virtual_mac_str), "%s", mac_str);
 }
 
+static pthread_mutex_t calibration_mutex = PTHREAD_MUTEX_INITIALIZER;
+static uint8_t physical_calibration[36];
+static bool physical_calibration_valid;
+
+void functionfs_set_calibration(const uint8_t cal[36]) {
+    pthread_mutex_lock(&calibration_mutex);
+    physical_calibration_valid = (cal != NULL);
+    if (cal) memcpy(physical_calibration, cal, sizeof(physical_calibration));
+    pthread_mutex_unlock(&calibration_mutex);
+}
+
 // Same data tables raw-gadget-backend.c's/hidg-backend.c's/main.cpp's
 // GET_REPORT cases answer with -- see hidg-backend.c's build_feature_report()
 // doc comment for why this isn't shared via a header.
@@ -83,7 +94,13 @@ static size_t build_feature_report(int target_type, uint8_t rnum, uint8_t *out) 
                 0x00, 0xe0, 0x00, 0x20, 0x00, 0xe0,
                 0x00, 0x20, 0x00, 0xe0, 0x00, 0x00
             };
-            memcpy(&out[1], ds4_cal, 36);
+            pthread_mutex_lock(&calibration_mutex);
+            if (physical_calibration_valid) {
+                memcpy(&out[1], physical_calibration, 36);
+            } else {
+                memcpy(&out[1], ds4_cal, 36);
+            }
+            pthread_mutex_unlock(&calibration_mutex);
             return 37;
         } else if (rnum == 0x10 || rnum == 0x12) {
             out[0] = rnum;

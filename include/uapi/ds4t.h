@@ -10,6 +10,7 @@
  *            Bluetooth); blocks unless O_NONBLOCK, -ENODEV once the pad is gone
  *   write()  one output report, report ID in the first byte
  *   poll()   POLLIN when a report is queued, POLLHUP|POLLERR after removal
+ *   ioctl()  pad info, raw feature reports, the calibration read at probe
  *
  * Only one process may have a pad open at a time (-EBUSY otherwise).
  *
@@ -28,7 +29,7 @@
 #include <linux/types.h>
 
 /* Bumped on any incompatible change to this header. */
-#define DS4T_ABI_VERSION	2
+#define DS4T_ABI_VERSION	3
 
 /* Largest report the node transfers (the largest real one is 78 bytes). */
 #define DS4T_MAX_REPORT		128
@@ -47,6 +48,16 @@ struct ds4t_info {
 	char hid_id[DS4T_HID_ID_LEN];	/* sysfs name, NUL-terminated */
 };
 
+/*
+ * A feature report as it crosses the HID layer: data[0] is the report ID,
+ * len counts every byte including it.
+ */
+struct ds4t_feature {
+	__u16 len;
+	__u16 reserved;
+	__u8 data[DS4T_MAX_REPORT];
+};
+
 /* ioctl argument of DS4T_IOC_CTL_SET_IGNORE_MAC. */
 struct ds4t_mac {
 	char str[DS4T_MAC_LEN];		/* NUL-terminated; empty clears it */
@@ -57,6 +68,25 @@ struct ds4t_mac {
 /* Pad nodes. */
 
 #define DS4T_IOC_GET_INFO	_IOR(DS4T_IOC_MAGIC, 0x01, struct ds4t_info)
+
+/*
+ * Reads a feature report from the pad: set data[0] to the report ID and len
+ * to the size wanted; on return len is the size received. Blocks for as long
+ * as the transport does (USB control transfer, or a round trip through
+ * bluetoothd for a Bluetooth pad), and fails with -ENODEV once the pad is
+ * gone.
+ */
+#define DS4T_IOC_GET_FEATURE	_IOWR(DS4T_IOC_MAGIC, 0x02, struct ds4t_feature)
+
+/* Sends data[0..len) as a feature report. Same blocking as GET_FEATURE. */
+#define DS4T_IOC_SET_FEATURE	_IOW(DS4T_IOC_MAGIC, 0x03, struct ds4t_feature)
+
+/*
+ * The calibration report the module read when it claimed the pad: report 0x02
+ * (37 bytes) over USB, 0x05 (41 bytes, CRC included) over Bluetooth. -ENODATA
+ * if that read failed.
+ */
+#define DS4T_IOC_GET_CALIBRATION _IOR(DS4T_IOC_MAGIC, 0x04, struct ds4t_feature)
 
 /* Control node. */
 

@@ -42,6 +42,33 @@
 #define FEATURE_FIRMWARE 0xA3
 #define FEATURE_FIRMWARE_SIZE 49
 
+// CRC32 as hid-playstation computes it for Bluetooth feature reports: the seed
+// byte first, then the report including its ID.
+static uint32_t crc32_seeded(uint8_t seed, const uint8_t *data, size_t len)
+{
+	uint32_t crc = 0xFFFFFFFF;
+
+	for (size_t i = 0; i <= len; i++) {
+		crc ^= i == 0 ? seed : data[i - 1];
+		for (int bit = 0; bit < 8; bit++)
+			crc = (crc >> 1) ^ (0xEDB88320U & -(crc & 1));
+	}
+	return ~crc;
+}
+
+// The 36 calibration bytes (little-endian s16): three gyro biases, gyro
+// pitch+, pitch-, yaw+, yaw-, roll+, roll- (the Bluetooth order), speed +/-,
+// then accelerometer x+, x-, y+, y-, z+, z-. Read in the USB order instead
+// (pitch+, yaw+, roll+, pitch-, yaw-, roll-) the three gyro denominators come
+// out zero, which is exactly what makes this payload a layout oracle.
+static const uint8_t g_bt_calibration[36] = {
+	0, 0, 0, 0, 0, 0,
+	100, 0, 200, 0, 44, 1, 100, 0, 200, 0, 44, 1,
+	0x1c, 0x02, 0x1c, 0x02,
+	0x00, 0x20, 0x00, 0xe0, 0x00, 0x20, 0x00, 0xe0, 0x00, 0x20, 0x00, 0xe0,
+	0, 0,
+};
+
 static volatile sig_atomic_t g_stop;
 static uint8_t g_mac[6];	// as sent in the pairing report: least significant byte first
 
@@ -108,6 +135,21 @@ static int answer_get_report(int fd, const struct uhid_get_report_req *req)
 		ev.u.get_report_reply.data[0] = req->rnum;
 		if (req->rnum == FEATURE_PAIRING)
 			memcpy(&ev.u.get_report_reply.data[1], g_mac, sizeof(g_mac));
+		if (req->rnum == FEATURE_CAL_BT) {
+			// A Bluetooth calibration report with a valid CRC whose gyro
+			// words only make sense in the Bluetooth order (see below);
+			// hid-playstation rejects it for a wrong order, so a pad
+			// that binds proves both the CRC seed and the layout.
+			uint32_t crc;
+
+			memset(ev.u.get_report_reply.data, 0, size);
+			ev.u.get_report_reply.data[0] = req->rnum;
+			memcpy(&ev.u.get_report_reply.data[1], g_bt_calibration,
+			       sizeof(g_bt_calibration));
+			crc = crc32_seeded(0xA3, ev.u.get_report_reply.data, size - 4);
+			for (int i = 0; i < 4; i++)
+				ev.u.get_report_reply.data[size - 4 + i] = crc >> (8 * i);
+		}
 	} else {
 		ev.u.get_report_reply.err = EIO;
 	}
@@ -143,6 +185,9 @@ static int handle_events(int fd)
 		} else if (ev.type == UHID_SET_REPORT) {
 			struct uhid_event reply;
 
+			printf("set_report rnum=%02x len=%u\n",
+			       ev.u.set_report.rnum, ev.u.set_report.size);
+			fflush(stdout);
 			memset(&reply, 0, sizeof(reply));
 			reply.type = UHID_SET_REPORT_REPLY;
 			reply.u.set_report_reply.id = ev.u.set_report.id;

@@ -599,6 +599,34 @@ std::string g_virtual_mac_str = kDefaultVirtualMac;
 // back to its regular driver.
 int g_driver_control_fd = -1;
 
+// IMU calibration of the physical pad, in the USB layout an emulated DS4
+// serves as feature report 0x02, when the driver method could read it from the
+// module. The other methods do not fetch it, and the emulated pad then serves
+// its fixed built-in values.
+uint8_t g_phy_calibration[DS4_CALIBRATION_SIZE];
+bool g_phy_calibration_valid = false;
+
+static void set_physical_calibration(const uint8_t* cal) {
+    g_phy_calibration_valid = (cal != nullptr);
+    if (cal != nullptr) {
+        memcpy(g_phy_calibration, cal, sizeof(g_phy_calibration));
+    }
+    functionfs_set_calibration(cal);
+}
+
+// Called once a pad is open through the driver method.
+static void load_physical_calibration(int pad_fd) {
+    std::vector<uint8_t> report;
+    uint8_t cal[DS4_CALIBRATION_SIZE];
+    if (driver_transport_get_calibration(pad_fd, report) &&
+        ds4_calibration_to_usb_layout(report.data(), report.size(), cal)) {
+        set_physical_calibration(cal);
+        std::cout << "driver: serving the physical pad's IMU calibration to the emulated DS4." << std::endl;
+    } else {
+        set_physical_calibration(nullptr);
+    }
+}
+
 // Tells the module which MAC the emulated controller advertises, so it never
 // claims its own emulated pad. No-op while detached; attaching pushes it
 // before claiming.
@@ -1108,6 +1136,7 @@ int open_and_hide_physical_unbind(const std::string& hid_id, std::vector<Physica
         if (g_driver_control_fd >= 0) {
             const int fd = driver_transport_open(hid_id);
             if (fd >= 0) {
+                load_physical_calibration(fd);
                 return fd;
             }
             std::cerr << "driver: falling back to the unbind method for " << hid_id << "." << std::endl;
@@ -1248,6 +1277,9 @@ void stop_bt_output_pacer();
 // already-empty hidden_nodes (no-op in that case beyond the mode restore).
 void release_physical_connection(int fd, const std::string& path, mode_t orig_mode,
                                   std::vector<PhysicalNode>& hidden_nodes) {
+    // The next pad has its own calibration (or none, on another method).
+    set_physical_calibration(nullptr);
+
     // Before fd is closed: a Bluetooth rumble/LED report may still be
     // queued for it, and the pacer's flush thread must not write to a
     // closed (possibly already reused) descriptor.
@@ -4137,7 +4169,8 @@ int main(int argc, char* argv[]) {
                                         0x00, 0xe0, 0x00, 0x20, 0x00, 0xe0,
                                         0x00, 0x20, 0x00, 0xe0, 0x00, 0x00
                                     };
-                                    memcpy(&reply_ev.u.get_report_reply.data[1], ds4_cal, 36);
+                                    memcpy(&reply_ev.u.get_report_reply.data[1],
+                                           g_phy_calibration_valid ? g_phy_calibration : ds4_cal, 36);
                                 } else if (rnum == 0x10 || rnum == 0x12) {
                                     reply_ev.u.get_report_reply.size = 16;
                                     reply_ev.u.get_report_reply.data[0] = rnum;

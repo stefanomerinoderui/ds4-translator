@@ -233,7 +233,8 @@ so SDL, Steam, browsers and Wine never enumerate it.
 | `write()` | One output report, sent with `hid_hw_output_report()`, falling back to `hid_hw_raw_request(HID_REQ_SET_REPORT)` |
 | `poll()` | `POLLIN` when a report is queued; `POLLHUP` after the pad is removed |
 | `ioctl(DS4T_GET_INFO)` | Bus, VID, PID, MAC (`hdev->uniq`), HID ID string |
-| `ioctl(DS4T_GET_FEATURE)` / `ioctl(DS4T_SET_FEATURE)` | Feature reports via `hid_hw_raw_request()`, for calibration and pairing (Part 2 of [unimplemented-features.md](unimplemented-features.md)) |
+| `ioctl(DS4T_IOC_GET_FEATURE)` / `ioctl(DS4T_IOC_SET_FEATURE)` | Feature reports via `hid_hw_raw_request()`, for calibration and pairing (Part 2 of [unimplemented-features.md](unimplemented-features.md)). They block as long as the transport does (about five seconds at most for `usbhid` and `uhid`), and `remove()` waits for them, as it does for `hidraw` |
+| `ioctl(DS4T_IOC_GET_CALIBRATION)` | The calibration report read at probe: `0x02`/37 bytes over USB, `0x05`/41 bytes over Bluetooth |
 
 A misc control device, `/dev/ds4-translator/control`, carries the
 module-wide state: attach (which turns the module on) and detach (the close),
@@ -243,7 +244,19 @@ implemented: the HID-bus uevents already carry everything the daemon needs.
 
 Exposing feature reports through the module also unlocks the calibration
 work: the daemon becomes the one process that can talk to the pad, so
-`ds4-ctl calibrate` goes through it.
+`ds4-ctl calibrate` can go through it. `SET_FEATURE` can write the pad's
+flash (calibration, serial number, even its Bluetooth MAC), which is why
+the nodes are `0600 root`; nothing in the daemon uses it yet.
+
+**IMU calibration passthrough** is the one consumer so far. The daemon reads
+the cached report, checks its CRC for Bluetooth (seed `0xA3`), converts the
+Bluetooth gyro-word order (pitch+, pitch-, yaw+, yaw-, roll+, roll-) to the
+USB one (pitch+, yaw+, roll+, pitch-, yaw-, roll-) that the emulated DS4
+serves (`ds4_calibration_to_usb_layout()` in `src/translate.cpp`), and falls
+back to the fixed blob if anything does not check out. Both assumptions are
+tested against the real `hid-playstation` in `tests/kernel`: a Bluetooth pad
+with a correct CRC binds, and its payload, whose gyro words only validate in
+the Bluetooth order, is accepted again after the daemon's conversion.
 
 ### 3.4 Output pacing over Bluetooth
 

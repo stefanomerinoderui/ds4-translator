@@ -13,6 +13,7 @@
 // returned as is and closed with a plain close().
 #include <chrono>
 #include <string>
+#include <vector>
 
 // The module is inert until a daemon attaches through its control node: it
 // takes over the pads other drivers hold only once told to, and closing the
@@ -36,6 +37,11 @@ bool driver_transport_claim(int control_fd);
 
 // Hands every pad back to its regular driver.
 void driver_transport_detach(int control_fd);
+
+// Reads the calibration report the module cached when it claimed the pad
+// (0x02, 37 bytes, over USB; 0x05, 41 bytes with CRC, over Bluetooth). False
+// if the module has none or the fd is not a pad node.
+bool driver_transport_get_calibration(int pad_fd, std::vector<uint8_t>& report);
 
 // True while the kernel module is loaded. Callers use it to fall back to the
 // unbind method without paying driver_transport_open()'s wait for a node

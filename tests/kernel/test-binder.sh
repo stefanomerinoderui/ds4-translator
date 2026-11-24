@@ -125,6 +125,15 @@ mount | grep -q debugfs || mount -t debugfs none /sys/kernel/debug
 modprobe uhid || { echo "uhid unavailable"; exit 1; }
 modprobe hid_playstation || { echo "hid_playstation unavailable"; exit 1; }
 
+echo "# 0a. oracle: hid-playstation accepts the fake Bluetooth pad's calibration"
+# A valid CRC proves the seed (0xA3) used by src/translate.cpp; the payload's
+# gyro words only validate in the Bluetooth order, which proves that layout.
+start_pad bt "$MAC_B"
+check "Bluetooth pad binds to $FALLBACK" wait_driver "$MAC_B" "$FALLBACK"
+bt_name=$(basename "$(hid_dev_by_mac "$MAC_B")")
+check "no calibration rejected for it" bash -c "! dmesg | grep -q 'playstation $bt_name: Invalid'"
+stop_pads
+
 echo "# 0. module loaded, nobody attached: pads stay with the regular driver"
 insmod "$KO" || { echo "insmod failed"; exit 1; }
 check "control node is 0600 root" \
@@ -134,7 +143,7 @@ check "pad stays on $FALLBACK" wait_driver "$MAC_A" "$FALLBACK"
 
 echo "# 1. attach: the pad is taken over and its nodes disappear"
 attach
-check "control open succeeded with ABI 2" grep -q 'attached abi=2' /tmp/attach.log
+check "control open succeeded with ABI 3" grep -q 'attached abi=3' /tmp/attach.log
 check "pad taken over by $DRIVER" wait_driver "$MAC_A" "$DRIVER"
 dev=$(hid_dev_by_mac "$MAC_A")
 check "no hidraw node" bash -c "! ls '$dev'/hidraw/* >/dev/null 2>&1"
@@ -209,7 +218,7 @@ check "node exists" bash -c "for _ in \$(seq 50); do [ -c '$node' ] && exit 0; s
 check "node is 0600 root" bash -c "[ \"\$(stat -c '%a %U' '$node')\" = '600 root' ]"
 info=$("$CLIENT" "$node" info)
 check "GET_INFO reports abi, ids and MAC" \
-    bash -c "grep -qi 'abi=2 bus=3 vendor=054c product=05c4 uniq=$MAC_B' <<<'$info' && grep -q 'hid_id=$hid_id' <<<'$info'"
+    bash -c "grep -qi 'abi=3 bus=3 vendor=054c product=05c4 uniq=$MAC_B' <<<'$info' && grep -q 'hid_id=$hid_id' <<<'$info'"
 reports=$("$CLIENT" "$node" read 5)
 check "read returns 5 USB input reports" \
     bash -c "[ \$(grep -c '^report id=01 len=64 ' <<<'$reports') = 5 ]"
@@ -221,6 +230,20 @@ check "second open is refused with EBUSY" bash -c "
 "$CLIENT" "$node" write "05ff000000000000000000ff0000" >/dev/null
 check "output report reaches the pad" \
     bash -c "sleep 0.5; grep -q '^output rnum=05' /tmp/fake-pad.$MAC_B.log"
+
+# Feature reports: the fake answers 0x02 with 0x02 followed by 0xA5 bytes.
+cal=$("$CLIENT" "$node" calibration)
+check "GET_CALIBRATION returns the report read at probe" \
+    bash -c "grep -q '^len=37 02a5a5a5' <<<'$cal'"
+feat=$("$CLIENT" "$node" feature-get 02 37)
+check "GET_FEATURE returns the pad's report" bash -c "grep -q '^len=37 02a5a5a5' <<<'$feat'"
+check "GET_FEATURE of a report the pad refuses fails" \
+    bash -c "'$CLIENT' '$node' feature-get 77 8 | grep -q 'Input/output error'"
+check "GET_FEATURE rejects a length beyond the buffer" \
+    bash -c "'$CLIENT' '$node' feature-get 02 200 | grep -q 'Invalid argument'"
+"$CLIENT" "$node" feature-set 04010203 >/dev/null
+check "SET_FEATURE reaches the pad" \
+    bash -c "sleep 0.5; grep -q '^set_report rnum=04' /tmp/fake-pad.$MAC_B.log"
 
 # The daemon is blocked in poll()/read() when the pad disappears.
 "$CLIENT" "$node" hold >/tmp/pad-client.hold.log 2>&1 &
@@ -269,6 +292,21 @@ check "daemon read reports from the pad through the node" \
     bash -c "for _ in \$(seq 100); do grep -q 'First report from physical controller' /tmp/daemon.log && exit 0; sleep 0.1; done; exit 1"
 check "daemon never fell back to another method" bash -c "! grep -q 'falling back\|using the unbind method' /tmp/daemon.log"
 check "the emulated pad exists and was not claimed" wait_driver "$EMULATED_MAC" "$FALLBACK"
+# The fake BT pad's calibration is the oracle payload of fake-pad.c; the
+# emulated DS4 must serve it in the USB layout, gyro words reordered.
+emulated=$(hid_dev_by_mac "$EMULATED_MAC")
+hidraw=$(basename "$(find "$emulated/hidraw" -mindepth 1 -maxdepth 1 | head -1)")
+want=$(python3 -I -c '
+import struct
+bt = [0, 0, 0, 100, 200, 300, 100, 200, 300, 540, 540, 8192, -8192, 8192, -8192, 8192, -8192, 0]
+# the fake sends exactly these words little-endian; reorder the gyro block
+w = bt[3:9]
+usb = bt[:3] + [w[0], w[2], w[4], w[1], w[3], w[5]] + bt[9:]
+print("len=37 02" + struct.pack("<18h", *usb).hex())')
+got=$("$CLIENT" "/dev/$hidraw" hidraw-feature 02 37)
+check "emulated DS4 serves the physical pad's calibration" test "$got" = "$want"
+check "hid-playstation accepts the calibration served for the emulated pad" \
+    bash -c "! dmesg | grep -q 'playstation $(basename "$emulated"): Invalid'"
 
 "$DS4CTL" release-physical >/tmp/ctl.log 2>&1
 check "release-physical hands the pad back" wait_not_driver "$MAC_A" "$DRIVER"

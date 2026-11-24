@@ -72,6 +72,12 @@ struct FunctionFSDevice {
 // used, exactly as before this existed.
 void functionfs_set_mac(const uint8_t mac_le[6], const char *mac_str);
 
+// Sets the IMU calibration (36 bytes, the payload of DS4 feature report 0x02)
+// that the emulated DS4 serves, taken from the physical pad; NULL goes back to
+// the built-in fixed values. Safe to call while the device is running: the
+// ep0 thread reads it under a lock.
+void functionfs_set_calibration(const uint8_t cal[36]);
+
 // product_name: custom USB product string override, or NULL/empty to use the
 // built-in per-type default ("Wireless Controller" / "DualSense Wireless
 // Controller"). Ignored for the Xbox targets: xpad names the device itself.

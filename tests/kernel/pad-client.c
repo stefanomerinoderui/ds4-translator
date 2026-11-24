@@ -7,6 +7,11 @@
 //   pad-client NODE read N        read N input reports, print id/len/seq
 //   pad-client NODE write HEX     write one output report (e.g. 05ff00...)
 //   pad-client NODE hold          read until the pad goes away, print how
+//   pad-client NODE feature-get ID LEN   GET_FEATURE; prints "len=N hex"
+//   pad-client NODE feature-set HEX      SET_FEATURE (first byte is the ID)
+//   pad-client NODE calibration          GET_CALIBRATION; prints "len=N hex"
+//   pad-client HIDRAW hidraw-feature ID LEN
+//                                 HIDIOCGFEATURE on an ordinary hidraw node
 //   pad-client CONTROL control [MAC]
 //                                 attach through the control node (optionally
 //                                 naming the emulated pad's MAC), then stay
@@ -18,6 +23,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <linux/hidraw.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
 
@@ -100,6 +106,74 @@ static int do_hold(int fd)
 	}
 }
 
+static void print_feature(const struct ds4t_feature *feat)
+{
+	printf("len=%u ", feat->len);
+	for (unsigned int i = 0; i < feat->len && i < sizeof(feat->data); i++)
+		printf("%02x", feat->data[i]);
+	putchar('\n');
+}
+
+static int do_feature_get(int fd, const char *id, const char *len)
+{
+	struct ds4t_feature feat = { .len = (__u16)atoi(len) };
+
+	feat.data[0] = (__u8)strtoul(id, NULL, 16);
+	if (ioctl(fd, DS4T_IOC_GET_FEATURE, &feat)) {
+		printf("GET_FEATURE: %s\n", strerror(errno));
+		return 1;
+	}
+	print_feature(&feat);
+	return 0;
+}
+
+static int do_feature_set(int fd, const char *hex)
+{
+	struct ds4t_feature feat = { .len = (__u16)(strlen(hex) / 2) };
+
+	for (unsigned int i = 0; i < feat.len && i < sizeof(feat.data); i++) {
+		unsigned int byte;
+
+		if (sscanf(hex + 2 * i, "%2x", &byte) != 1)
+			return 2;
+		feat.data[i] = byte;
+	}
+	if (ioctl(fd, DS4T_IOC_SET_FEATURE, &feat)) {
+		printf("SET_FEATURE: %s\n", strerror(errno));
+		return 1;
+	}
+	puts("set ok");
+	return 0;
+}
+
+static int do_calibration(int fd)
+{
+	struct ds4t_feature feat;
+
+	if (ioctl(fd, DS4T_IOC_GET_CALIBRATION, &feat)) {
+		printf("GET_CALIBRATION: %s\n", strerror(errno));
+		return 1;
+	}
+	print_feature(&feat);
+	return 0;
+}
+
+static int do_hidraw_feature(int fd, const char *id, const char *len)
+{
+	unsigned char buf[DS4T_MAX_REPORT] = { (unsigned char)strtoul(id, NULL, 16) };
+	int n = ioctl(fd, HIDIOCGFEATURE(atoi(len)), buf);
+
+	if (n < 0) {
+		printf("HIDIOCGFEATURE: %s\n", strerror(errno));
+		return 1;
+	}
+	printf("len=%d ", n);
+	for (int i = 0; i < n; i++)
+		printf("%02x", buf[i]);
+	putchar('\n');
+	return 0;
+}
+
 static int do_control(int fd, const char *mac)
 {
 	struct ds4t_mac arg = { { 0 } };
@@ -131,7 +205,8 @@ int main(int argc, char **argv)
 	int fd, ret;
 
 	if (argc < 3) {
-		fprintf(stderr, "usage: pad-client NODE info|read N|write HEX|hold|control [MAC]\n");
+		fprintf(stderr, "usage: pad-client NODE info|read N|write HEX|hold|feature-get ID LEN|"
+			"feature-set HEX|calibration|hidraw-feature ID LEN|control [MAC]\n");
 		return 2;
 	}
 	fd = open(argv[1], O_RDWR | O_CLOEXEC);
@@ -148,6 +223,14 @@ int main(int argc, char **argv)
 		ret = do_write(fd, argv[3]);
 	else if (!strcmp(argv[2], "hold"))
 		ret = do_hold(fd);
+	else if (!strcmp(argv[2], "feature-get") && argc == 5)
+		ret = do_feature_get(fd, argv[3], argv[4]);
+	else if (!strcmp(argv[2], "feature-set") && argc == 4)
+		ret = do_feature_set(fd, argv[3]);
+	else if (!strcmp(argv[2], "hidraw-feature") && argc == 5)
+		ret = do_hidraw_feature(fd, argv[3], argv[4]);
+	else if (!strcmp(argv[2], "calibration"))
+		ret = do_calibration(fd);
 	else if (!strcmp(argv[2], "control") && argc <= 4)
 		ret = do_control(fd, argc == 4 ? argv[3] : NULL);
 	else

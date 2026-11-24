@@ -4,13 +4,14 @@ HID driver that claims a physical DualShock 4 before `hid-playstation`, so
 no other driver creates a hidraw, input, battery or LED device for it. See
 [docs/kernel-driver.md](../docs/kernel-driver.md) for the design.
 
-**Status: prototype (M3).** The module is inert until a daemon attaches
+**Status: prototype (M4).** The module is inert until a daemon attaches
 through `/dev/ds4-translator/control`; closing that node, however it happens,
 hands every pad back to `hid-playstation`. While attached it claims the pad,
 dumps incoming reports to debugfs, and exposes each pad as
 `/dev/ds4-translator/<hid_id>` for the daemon's `driver` hide method
-(`ds4-ctl set-hide-method driver`). Not yet: feature-report ioctls and
-calibration passthrough.
+(`ds4-ctl set-hide-method driver`), with raw feature-report ioctls and the
+calibration cached at probe (the daemon serves it to the emulated DS4). Not
+yet: DKMS packaging and CI.
 
 ## Build
 

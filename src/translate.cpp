@@ -72,6 +72,37 @@ bool parse_emulated_type(const std::string& val, ControllerType& out) {
     return true;
 }
 
+bool ds4_calibration_to_usb_layout(const uint8_t* report, size_t len,
+                                   uint8_t out[DS4_CALIBRATION_SIZE]) {
+    constexpr uint8_t kUsbReportId = 0x02;
+    constexpr size_t kUsbReportSize = 1 + DS4_CALIBRATION_SIZE;
+    constexpr uint8_t kBtReportId = 0x05;
+    constexpr size_t kBtReportSize = kUsbReportSize + 4; // plus CRC32
+    constexpr uint8_t kBtFeatureCrcSeed = 0xA3;
+    constexpr size_t kGyroWordsOffset = 6; // after the three gyro biases
+    constexpr size_t kWord = 2;
+
+    if (report == nullptr) return false;
+    if (len == kUsbReportSize && report[0] == kUsbReportId) {
+        memcpy(out, report + 1, DS4_CALIBRATION_SIZE);
+        return true;
+    }
+    if (len != kBtReportSize || report[0] != kBtReportId) return false;
+
+    const uint32_t want = (uint32_t)report[len - 4] | ((uint32_t)report[len - 3] << 8) |
+                          ((uint32_t)report[len - 2] << 16) | ((uint32_t)report[len - 1] << 24);
+    if (calculate_crc32(kBtFeatureCrcSeed, report, len - 4) != want) return false;
+
+    memcpy(out, report + 1, DS4_CALIBRATION_SIZE);
+    // Word i of the Bluetooth gyro block lands where USB keeps it.
+    static const size_t kBtWordForUsbWord[6] = {0, 2, 4, 1, 3, 5};
+    for (size_t usb_word = 0; usb_word < 6; ++usb_word) {
+        memcpy(out + kGyroWordsOffset + usb_word * kWord,
+               report + 1 + kGyroWordsOffset + kBtWordForUsbWord[usb_word] * kWord, kWord);
+    }
+    return true;
+}
+
 // CRC32 calculation matching Linux kernel (IEEE 802.3 Ethernet polynomial 0xEDB88320)
 uint32_t calculate_crc32(uint8_t seed, const uint8_t* data, size_t len) {
     static uint32_t table[256];

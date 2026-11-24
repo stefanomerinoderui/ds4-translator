@@ -115,6 +115,18 @@ static_assert(sizeof(dualshock4_input_report_usb) == 64, "DS4 USB report (0x01) 
 static_assert(sizeof(dualshock4_input_report_bt) == 78, "DS4 Bluetooth report (0x11) is 78 bytes");
 static_assert(sizeof(dualsense_input_report) == 63, "DualSense input report is 63 bytes");
 
+// The IMU calibration an emulated DS4 serves as feature report 0x02 (USB
+// layout, 36 bytes after the report ID), taken from a physical pad's own
+// calibration report: 0x02, 37 bytes, over USB (copied as is), or 0x05, 41
+// bytes with a trailing CRC32, over Bluetooth. Bluetooth orders the six gyro
+// plus/minus words as pitch+, pitch-, yaw+, yaw-, roll+, roll- where USB has
+// pitch+, yaw+, roll+, pitch-, yaw-, roll-; everything else is identical.
+// False (out untouched) for a wrong report ID or size, or a Bluetooth report
+// whose CRC does not match.
+constexpr size_t DS4_CALIBRATION_SIZE = 36;
+bool ds4_calibration_to_usb_layout(const uint8_t* report, size_t len,
+                                   uint8_t out[DS4_CALIBRATION_SIZE]);
+
 enum BatteryState { BATTERY_DISCHARGING, BATTERY_CHARGING, BATTERY_FULL };
 
 void decode_ds4_battery(uint8_t ds4_status0, int& percent, BatteryState& state);

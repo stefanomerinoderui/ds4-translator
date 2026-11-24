@@ -212,14 +212,74 @@ static __poll_t ds4t_poll(struct file *file, poll_table *wait)
 	return mask;
 }
 
+/*
+ * Feature reports go straight to the HID layer. The lower drivers bound the
+ * wait (usbhid and uhid both give up after about five seconds), and remove()
+ * waits for the call to return before it tears the device down.
+ */
+static long ds4t_feature_request(struct ds4t_pad *pad, void __user *arg,
+				 enum hid_class_request reqtype)
+{
+	struct ds4t_feature *feat;
+	long ret;
+
+	feat = memdup_user(arg, sizeof(*feat));
+	if (IS_ERR(feat))
+		return PTR_ERR(feat);
+
+	if (!feat->len || feat->len > sizeof(feat->data)) {
+		ret = -EINVAL;
+		goto out;
+	}
+
+	down_read(&pad->exist_lock);
+	if (!pad->exist)
+		ret = -ENODEV;
+	else
+		ret = hid_hw_raw_request(pad->hdev, feat->data[0], feat->data,
+					 feat->len, HID_FEATURE_REPORT,
+					 reqtype);
+	up_read(&pad->exist_lock);
+	if (ret < 0)
+		goto out;
+
+	if (reqtype == HID_REQ_GET_REPORT) {
+		feat->len = ret;
+		ret = copy_to_user(arg, feat, sizeof(*feat)) ? -EFAULT : 0;
+	} else {
+		ret = 0;
+	}
+out:
+	kfree(feat);
+	return ret;
+}
+
+static long ds4t_get_calibration(struct ds4t_pad *pad, void __user *arg)
+{
+	struct ds4t_feature feat = { .len = pad->calib_len };
+
+	if (!pad->calib_len)
+		return -ENODATA;
+
+	memcpy(feat.data, pad->calib, pad->calib_len);
+	return copy_to_user(arg, &feat, sizeof(feat)) ? -EFAULT : 0;
+}
+
 static long ds4t_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	struct ds4t_pad *pad = file->private_data;
+	void __user *uarg = (void __user *)arg;
 
 	switch (cmd) {
 	case DS4T_IOC_GET_INFO:
-		return copy_to_user((void __user *)arg, &pad->info,
-				    sizeof(pad->info)) ? -EFAULT : 0;
+		return copy_to_user(uarg, &pad->info, sizeof(pad->info)) ?
+		       -EFAULT : 0;
+	case DS4T_IOC_GET_FEATURE:
+		return ds4t_feature_request(pad, uarg, HID_REQ_GET_REPORT);
+	case DS4T_IOC_SET_FEATURE:
+		return ds4t_feature_request(pad, uarg, HID_REQ_SET_REPORT);
+	case DS4T_IOC_GET_CALIBRATION:
+		return ds4t_get_calibration(pad, uarg);
 	default:
 		return -ENOTTY;
 	}

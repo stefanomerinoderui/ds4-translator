@@ -97,9 +97,15 @@ toggling colors from a thread.
 
 ### 4. Real IMU calibration passthrough
 
-**Status:** the daemon reads feature report `0x02`/`0x05` from the physical
-pad only as a mode switch and discards the payload. The emulated DS4
-answers feature report `0x02` with a fixed calibration blob.
+**Status:** implemented for the `driver` hide method only
+([kernel-driver.md](kernel-driver.md)): the module caches the pad's
+calibration report when it claims it, and the daemon serves it, converted to
+the USB layout, as feature `0x02` from the emulated DS4 on both the `uhid`
+and `functionfs` backends. Verified in a VM against the real
+`hid-playstation`, which accepts the converted values. Every other method
+still discards the payload of the read and serves a fixed calibration blob;
+passing it through there means making `usb-hid-transport` and the HID-BPF
+path fetch it too. The emulated DualSense keeps its fixed blob.
 
 **Why it matters:** gyro and accelerometer scaling seen by games does not
 match the actual controller.
