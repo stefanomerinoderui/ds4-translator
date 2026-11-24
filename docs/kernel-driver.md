@@ -61,6 +61,10 @@ vendor-class Xbox descriptors. The rest of this document covers option A.
 The module is an ordinary HID driver (`module_hid_driver()`), matching the
 same IDs the daemon handles today:
 
+The Sony vendor and DS4 product IDs live in the kernel's private
+`drivers/hid/hid-ids.h`, which is not part of the installed headers, so the
+module defines them itself (`0x054c`, `0x05c4`, `0x09cc`).
+
 ```c
 static const struct hid_device_id ds4t_devices[] = {
 	{ HID_USB_DEVICE(USB_VENDOR_ID_SONY, USB_DEVICE_ID_SONY_PS4_CONTROLLER) },
@@ -77,19 +81,29 @@ driver core tries the bus's drivers in registration order and binds the
 first one whose probe succeeds **(verify for the HID bus specifically)**.
 So the module has to be registered before `hid-playstation`:
 
-- A modprobe soft dependency makes that hold whenever `hid-playstation` is
-  loaded on demand:
+- A modprobe soft dependency helps when `hid-playstation` is loaded through
+  the same modprobe call:
 
   ```
   # /usr/lib/modprobe.d/ds4-translator.conf
   softdep hid_playstation pre: hid_ds4_translator
   ```
 
-- If `hid-playstation` is already loaded and bound (pad connected before
-  the service started, or the driver built into an initramfs), the daemon
-  does a single unbind from `playstation` and bind to `ds4-translator` via
-  sysfs at startup. That is the same mechanism the daemon already uses, but
-  needed once per boot instead of on every connection.
+  It is not a guarantee: udev can autoload `hid_playstation` by modalias
+  concurrently, and a built-in driver always registers first.
+
+- Therefore the rebind is the primary mechanism, not a fallback. After the
+  module is loaded (and whenever a pad is already bound), it must move any
+  pad bound to `playstation` over to `ds4-translator`, either in the module
+  (detach and reprobe) or by the daemon via sysfs unbind/bind at startup.
+  That is the mechanism the daemon already uses, but needed once per boot
+  instead of on every connection.
+
+**Other drivers matching the same IDs.** `hid-sony` is also shipped as a
+module and may match the same IDs, depending on the kernel version
+**(verify with `modinfo` aliases for `054c:05c4` and `054c:09cc`)**. The
+rebind logic must cover every driver that can hold the pad, not only
+`hid-playstation`.
 
 **Not touching the emulated controller.** The emulated DS4 uses the same
 `054c:05c4` ID, and under the `functionfs` backend it is a real USB device
@@ -99,11 +113,12 @@ today. Reliable discriminators, in order of preference:
 
 1. The USB device's host controller is `dummy_hcd` (walk up from
    `hid_to_usb_dev()` to the bus and check the HCD driver name).
-2. For `uhid`-backed emulation, the transport is `uhid_hid_driver` and not
-   `bluetoothd`'s, which `uhid` does not distinguish **(verify)**. The
-   daemon can instead tell the module which MAC it is emulating through the
-   control interface (section 3.4) and the module skips any device whose
-   `uniq` matches.
+2. For `uhid`-backed emulation, real Bluetooth pads are also `uhid`
+   devices (owned by `bluetoothd`), so the transport cannot tell them
+   apart. The daemon must tell the module which MAC it is emulating
+   through the control interface (section 3.3) and the module skips any
+   device whose `uniq` matches. The daemon has to set this before it
+   creates the virtual pad, or the module could claim it.
 
 **Daemon not running.** Two possible policies:
 
@@ -115,9 +130,12 @@ today. Reliable discriminators, in order of preference:
   (and battery notification) on attach, but only once per daemon start.
 
 Recommended: tie module lifetime to the service (`ExecStartPre=modprobe`,
-`ExecStopPost=modprobe -r`) and use *hold* while loaded. Unloading the
-module releases every pad back to `hid-playstation` on its own, which
-also replaces `rebind-unbound-controllers.sh`.
+`ExecStopPost=modprobe -r`) and use *hold* while loaded. Unbinding does
+not make the driver core reprobe other drivers, so on unload the module
+must trigger it itself (`bus_rescan_devices(&hid_bus_type)` in the exit
+path, if exported to modules **(verify)**; otherwise
+`echo > /sys/bus/hid/drivers_probe` from `ExecStopPost`). With that in
+place, unload replaces `rebind-unbound-controllers.sh`.
 
 ### 3.2 Probe
 
@@ -134,7 +152,7 @@ static int ds4t_probe(struct hid_device *hdev, const struct hid_device_id *id)
 		return ret;
 
 	/* Start the transport but create no hidraw, input or ff device. */
-	ret = hid_hw_start(hdev, 0);
+	ret = hid_hw_start(hdev, HID_CONNECT_DRIVER);
 	if (ret)
 		return ret;
 
@@ -161,11 +179,14 @@ err_stop:
 }
 ```
 
-`hid_hw_start(hdev, 0)` is the key line: with no `HID_CONNECT_*` flags the
-HID core creates no `hidraw`, `input` or force-feedback device, so there
-are no `/dev` nodes, no `power_supply`, and no LED class device to hide.
-The kernel's own drivers use this pattern for devices they drive entirely
-themselves **(verify current flag semantics)**.
+`hid_hw_start(hdev, HID_CONNECT_DRIVER)` is the key line:
+`HID_CONNECT_DRIVER` marks the device as claimed by the driver itself, and
+without the `HID_CONNECT_HIDINPUT`/`HIDRAW`/`FF` flags the HID core creates
+no `hidraw`, `input` or force-feedback device, so there are no `/dev`
+nodes, no `power_supply`, and no LED class device to hide. Passing `0`
+would not work: with nothing claimed, `hid_connect()` fails with
+`-ENODEV` ("device has no listeners") **(verify against the current
+kernel source)**.
 
 Reports arrive in `.raw_event`, which copies them into a per-pad queue and
 returns `1` so the HID core does no further processing.
@@ -254,12 +275,19 @@ service. Use-after-free on disconnect is the classic HID driver bug: the
 pad can vanish while the daemon is blocked in `read()` or mid-`ioctl()`, so
 the character device needs reference counting decoupled from the
 `hid_device` lifetime (see how `hidraw.c` handles `hidraw->exist`).
+Feature-report ioctls over Bluetooth are the worst case: with `UserspaceHID`
+the request round-trips through `bluetoothd` and can time out, so every
+blocking call needs a timeout and must be woken on disconnect.
+
+**Daemon crash.** *Hold* leaves every pad dead if the daemon is killed
+without running `ExecStopPost`. The module should release all pads when
+the last fd on `/dev/ds4-translator/control` closes.
 
 **Licensing.** The HID and driver-core symbols the module needs are
 `EXPORT_SYMBOL_GPL`, so the module must be GPL-2.0 compatible. The BPF
 program is already GPL-2.0-only, but the repository has no top-level
-license yet (`packaging/arch/PKGBUILD.in` uses `LicenseRef-unknown`). This
-needs settling before a module ships.
+license yet: there is no `LICENSE` file and `packaging/arch/PKGBUILD.in`
+uses `LicenseRef-unknown`. This needs settling before a module ships.
 
 **Building and distribution.**
 
@@ -270,7 +298,8 @@ needs settling before a module ships.
   must be built with the same toolchain (`make LLVM=1`), which DKMS needs
   to be told about.
 - Secure Boot systems refuse unsigned modules. DKMS can sign with a
-  Machine Owner Key, but the user has to enroll it once (`mokutil
+  Machine Owner Key of the user's own (the distribution's kernel signing key
+  is not available), but the user has to enroll it once (`mokutil
   --import`), which needs a reboot and console interaction.
 - Kernel API churn: HID driver callbacks change signature from time to
   time (for example `report_fixup` became `const` in 6.12). Expect to keep
@@ -311,22 +340,50 @@ access, by design. This is already true of the `unlink` method.
   `ignore_special_drivers` toggle exists). Adding it upstream would allow
   binding the pad to `hid-generic` race-free, which, together with HID-BPF,
   covers much of what the module would do.
+- **Write the module in Rust.** The running kernel has `CONFIG_RUST=y`, but
+  the Rust HID abstractions are not a stable out-of-tree target, so a C
+  module is the practical choice for a small shim.
 - **Keep the current design.** Everything in section 1 works today. The
   module is worth it only if maintaining the workarounds costs more than
   maintaining kernel code and DKMS packaging.
 
 ## 8. Suggested plan
 
-1. **Prototype** the binder with `hid_hw_start(hdev, 0)` and a debugfs
-   dump of incoming reports. Verify the open questions marked above:
-   binding order with the `softdep`, the `connect_mask = 0` behavior, and
-   declining the emulated device.
+1. **Prototype** the binder with `hid_hw_start(hdev, HID_CONNECT_DRIVER)`
+   and a debugfs dump of incoming reports, tested first against a `uhid`
+   fake pad in a VM (section 6). Verify the open questions marked above, in
+   this order: that `HID_CONNECT_DRIVER` binds with no `hidraw`/`input`
+   nodes, rebinding a pad from `hid-playstation` and `hid-sony`, declining
+   the emulated device, and disconnect while `read()` is blocked.
 2. **Character device** with the read/write/poll contract, plus a new
    daemon transport behind `hide_method=driver`, falling back to `unbind`
    when the module is absent.
 3. **Feature-report ioctls**, then calibration passthrough (Part 1, item 4
    of the unimplemented-features doc).
-4. **Packaging:** DKMS, modprobe `softdep`, service `ExecStartPre`/
-   `ExecStopPost`, Secure Boot instructions in the README.
+4. **Packaging** (section 9): DKMS, modprobe `softdep`, service
+   `ExecStartPre`/`ExecStopPost`, Secure Boot instructions in the README.
 5. **Remove** the workarounds in section 4 only after the module has run
    as the default for a release, keeping `unbind` as the fallback.
+
+## 9. Packaging as a separate package
+
+The module ships as its own package so the daemon stays buildable and
+usable on systems without kernel headers.
+
+- **`ds4-translator-dkms`:** module source, `dkms.conf` (with `LLVM=1`
+  handling and MOK signing), the modprobe config, and the uapi header
+  `ds4t.h` (ioctl numbers and structs).
+- **Daemon:** gains only a `driver` transport that includes `ds4t.h`. It
+  probes `/dev/ds4-translator/control` and falls back to `unbind` when it
+  is absent.
+- **ABI versioning:** `DS4T_GET_INFO` returns a `DS4T_ABI_VERSION`, so a
+  daemon and module of different releases refuse each other cleanly
+  instead of misreading structs.
+- **Location:** start as a `kernel/` subdirectory of this repository so
+  the uapi header has one source of truth; split into its own repository
+  only once the ABI is stable.
+- **Decisions needed before shipping:**
+  - License. GPL-2.0 is forced for the module; the repository has no
+    `LICENSE` file at all.
+  - Minimum supported kernel (for example the 6.12 LTS), which sets the
+    size of the `LINUX_VERSION_CODE` shim layer.
