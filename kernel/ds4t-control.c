@@ -83,6 +83,17 @@ static long ds4t_control_create_virtual(const void __user *arg)
 	return ds4t_virtual_create(&cfg);
 }
 
+static long ds4t_control_link_virtual(const void __user *arg)
+{
+	struct ds4t_link link;
+
+	if (copy_from_user(&link, arg, sizeof(link)))
+		return -EFAULT;
+	if (!memchr(link.hid_id, '\0', sizeof(link.hid_id)))
+		return -EINVAL;
+	return ds4t_virtual_link(link.hid_id);
+}
+
 static long ds4t_control_inject(const void __user *arg)
 {
 	struct ds4t_feature report;
@@ -110,6 +121,8 @@ static long ds4t_control_ioctl(struct file *file, unsigned int cmd,
 	case DS4T_IOC_CTL_DESTROY_VIRTUAL:
 		ds4t_virtual_destroy();
 		return 0;
+	case DS4T_IOC_CTL_LINK_VIRTUAL:
+		return ds4t_control_link_virtual((const void __user *)arg);
 	case DS4T_IOC_CTL_INJECT:
 		return ds4t_control_inject((const void __user *)arg);
 	default:

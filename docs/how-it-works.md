@@ -206,11 +206,18 @@ device and is confirmed to fix that detection failure. DualSense emulation
 never showed the issue on either backend.
 
 DS4 and DualSense each have their own independent backend setting because
-of this — `ds4-ctl set-backend <ds4|dualsense> <uhid|functionfs>`, persisted
+of this — `ds4-ctl set-backend <ds4|dualsense> <uhid|functionfs|kernel>`, persisted
 to `/etc/ds4-translator.conf` as `backend_ds4=`/`backend_dualsense=`
 alongside `type=`, defaulting to `ds4=functionfs`, `dualsense=uhid`. Either
 type can still be pointed at either backend if wanted (`functionfs` works
 for DualSense too); only the defaults differ.
+
+`kernel` is a third backend for the `driver` hide method
+([kernel-driver.md](kernel-driver.md)): the `hid-ds4-translator` module creates
+the virtual DS4/DualSense itself and translates the claimed pad's reports in
+the kernel, relaying rumble and LED back, so the daemon only configures it. It
+needs `ds4-ctl set-hide-method driver` and the module; without them the daemon
+logs why and uses `uhid`. Like `uhid`, the pad it creates has no USB parent.
 
 `functionfs` builds the gadget via configfs
 (`/sys/kernel/config/usb_gadget/`) using the generic `ffs` function, mounted

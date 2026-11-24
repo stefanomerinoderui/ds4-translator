@@ -26,12 +26,15 @@ static void print_usage() {
     std::cout << "  set-type <ds4|dualsense|xbox360|xboxone|xboxseries|none|hidden>   Change the virtual controller emulation type at runtime" << std::endl;
     std::cout << "                                   (none = fully untouched physical passthrough, hidden = physical" << std::endl;
     std::cout << "                                   hidden from other apps but not translated)" << std::endl;
-    std::cout << "  set-backend <ds4|dualsense> <uhid|functionfs>   Change that controller type's backend at" << std::endl;
+    std::cout << "  set-backend <ds4|dualsense> <uhid|functionfs|kernel>   Change that controller type's backend at" << std::endl;
     std::cout << "                                   runtime (recreates the device if that type is currently" << std::endl;
     std::cout << "                                   active, otherwise just persists for later). Defaults:" << std::endl;
     std::cout << "                                   dualsense=uhid, ds4=functionfs -- uhid never reliably" << std::endl;
     std::cout << "                                   enumerates as a real USB device, which some Wine/Proton" << std::endl;
     std::cout << "                                   titles need to detect DS4 emulation; functionfs does." << std::endl;
+    std::cout << "                                   kernel = the hid-ds4-translator module creates the pad and" << std::endl;
+    std::cout << "                                   translates in the kernel (needs set-hide-method driver;" << std::endl;
+    std::cout << "                                   falls back to uhid without it)." << std::endl;
     std::cout << "  set-name <ds4|dualsense> <name>  Override the controller name/product string reported to" << std::endl;
     std::cout << "                                   the OS (recreates the device if that type is currently" << std::endl;
     std::cout << "                                   active -- brief input interruption -- otherwise just" << std::endl;
@@ -726,14 +729,14 @@ int main(int argc, char* argv[]) {
         } else if (target == "set-backend") {
             // Position-aware (unlike every other command here): argv[3], if
             // present, is the controller word already typed -- offer
-            // ds4/dualsense first, then uhid/functionfs once one of those is
+            // ds4/dualsense first, then uhid/functionfs/kernel once one of those is
             // picked. argv[3:] wasn't passed at all until
             // ds4-ctl-completion.bash started forwarding every prior word
             // instead of just the command name.
             if (argc <= 3) {
                 std::cout << "ds4 dualsense" << std::endl;
             } else if (argc == 4) {
-                std::cout << "uhid functionfs" << std::endl;
+                std::cout << "uhid functionfs kernel" << std::endl;
             }
         } else if (target == "set-name") {
             // Same shape as set-backend for the first argument; the second
@@ -829,7 +832,7 @@ int main(int argc, char* argv[]) {
     std::string build_error;
     if (cmd == "set-backend") {
         if (argc < 4) {
-            std::cerr << "Error: set-backend requires <ds4|dualsense> <uhid|functionfs>" << std::endl;
+            std::cerr << "Error: set-backend requires <ds4|dualsense> <uhid|functionfs|kernel>" << std::endl;
             return 1;
         }
         full_cmd = ds4ipc::build_set_backend(argv[2], argv[3], &build_error);

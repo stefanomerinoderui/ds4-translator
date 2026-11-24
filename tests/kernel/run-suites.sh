@@ -16,5 +16,6 @@ DS4CTL=${4:?ds4-ctl path}
 rc=0
 "$HERE/test-binder.sh" "$KO" "$BUILD/fake-pad" "$BUILD/pad-client" "$BUILD/transport-check" \
     "$DAEMON" "$DS4CTL" || rc=1
-"$HERE/test-virtual.sh" "$KO" "$BUILD/fake-pad" "$BUILD/virtual-check" || rc=1
+"$HERE/test-virtual.sh" "$KO" "$BUILD/fake-pad" "$BUILD/virtual-check" \
+    "$DAEMON" "$DS4CTL" || rc=1
 exit "$rc"

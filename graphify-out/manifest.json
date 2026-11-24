@@ -30,10 +30,10 @@
     "semantic_hash": ""
   },
   "ds4-ctl-completion.bash": {
-    "mtime": 1795478903.6038437,
-    "seen": 1795485245.563297,
-    "ast_hash": "e26fa8551538c90fd79d0985c16cf1bd",
-    "semantic_hash": "e26fa8551538c90fd79d0985c16cf1bd"
+    "mtime": 1795553325.4500926,
+    "seen": 1795554315.0506396,
+    "ast_hash": "5be788b6415c2b665b4d43811b0d11bb",
+    "semantic_hash": ""
   },
   "rebind-unbound-controllers.sh": {
     "mtime": 1795478903.6068408,
@@ -42,16 +42,16 @@
     "semantic_hash": "c3cfd18ae05a94fe79277ca079d5dbfc"
   },
   "src/ctl.cpp": {
-    "mtime": 1795532187.3371012,
-    "seen": 1795532751.8970423,
-    "ast_hash": "6f4673b6e90a0f5b870a6be6381c0e3b",
+    "mtime": 1795553325.4495068,
+    "seen": 1795554315.0506887,
+    "ast_hash": "7d84c51a8dc703515e1a6e430fc03051",
     "semantic_hash": ""
   },
   "src/descriptors.h": {
-    "mtime": 1795478903.6071556,
-    "seen": 1795485245.563313,
-    "ast_hash": "5e4ca5392f0e6fa4bd4a8847f255eb47",
-    "semantic_hash": "5e4ca5392f0e6fa4bd4a8847f255eb47"
+    "mtime": 1795549398.5523794,
+    "seen": 1795554315.0506923,
+    "ast_hash": "4e680b269b5dfc9b1a95581c864f6758",
+    "semantic_hash": ""
   },
   "src/fs-util.cpp": {
     "mtime": 1795478903.6071556,
@@ -90,10 +90,10 @@
     "semantic_hash": "9702f2b66e9bd21240a80f3eb3984c78"
   },
   "src/hid-bpf/hid-bpf-transport.bpf.c": {
-    "mtime": 1795478903.6074939,
-    "seen": 1795485245.5633361,
-    "ast_hash": "0620533d21f312780fd600abc73bf8d7",
-    "semantic_hash": "0620533d21f312780fd600abc73bf8d7"
+    "mtime": 1795533243.2680056,
+    "seen": 1795554315.0507338,
+    "ast_hash": "1b6be2e5cb4bdba46014c6bd32ad58eb",
+    "semantic_hash": ""
   },
   "src/hid-bpf/hid_bpf.h": {
     "mtime": 1795478903.6074939,
@@ -132,9 +132,9 @@
     "semantic_hash": "eeb677cc02e712a7627a22c5aab1af73"
   },
   "src/ipc-client.cpp": {
-    "mtime": 1795489591.4082086,
-    "seen": 1795489841.6206193,
-    "ast_hash": "29c14718eff13e3a4a2c869c32170bc1",
+    "mtime": 1795553320.3311803,
+    "seen": 1795554315.0507443,
+    "ast_hash": "599c481bd208fb933eede19906e216dd",
     "semantic_hash": ""
   },
   "src/ipc-client.h": {
@@ -144,9 +144,9 @@
     "semantic_hash": "015b45491d31f39a22d30657dcec8fd8"
   },
   "src/main.cpp": {
-    "mtime": 1795532080.5468676,
-    "seen": 1795532751.897121,
-    "ast_hash": "1a21e5755608b0915e50002b3ba892c9",
+    "mtime": 1795553320.3304002,
+    "seen": 1795554315.0507472,
+    "ast_hash": "eb1e25b8ce3fbb42715a130c3f4c4ff0",
     "semantic_hash": ""
   },
   "src/paths.h": {
@@ -156,15 +156,15 @@
     "semantic_hash": ""
   },
   "src/translate.cpp": {
-    "mtime": 1795492550.3745735,
-    "seen": 1795492806.5963411,
-    "ast_hash": "d951defb4832a81993bac5a60878277e",
+    "mtime": 1795549193.835706,
+    "seen": 1795554315.05075,
+    "ast_hash": "8d9e4f7e00528eace5eef20301d235bf",
     "semantic_hash": ""
   },
   "src/translate.h": {
-    "mtime": 1795492538.2363133,
-    "seen": 1795492806.596345,
-    "ast_hash": "2e3af7b188b2f94ce351928810bf370c",
+    "mtime": 1795549193.8355422,
+    "seen": 1795554315.050751,
+    "ast_hash": "c27b83914f0a25aeb5983c5b17e74cee",
     "semantic_hash": ""
   },
   "src/udev-spoof.c": {
@@ -372,10 +372,10 @@
     "semantic_hash": "0be3ce01edcea78f8d24ceccad2c8ffc"
   },
   "tools/ds4-intercept/build.sh": {
-    "mtime": 1795478903.6104488,
-    "seen": 1795485245.5635366,
-    "ast_hash": "59e2f62a4471fb9dac9445c67bbacadb",
-    "semantic_hash": "59e2f62a4471fb9dac9445c67bbacadb"
+    "mtime": 1795533260.2436285,
+    "seen": 1795554315.0508149,
+    "ast_hash": "73e20f354aa5b308fb4145f192508bff",
+    "semantic_hash": ""
   },
   "tools/ds4-intercept/intercept.c": {
     "mtime": 1795478903.610494,
@@ -480,9 +480,9 @@
     "semantic_hash": "430e500c4e2654e672da88bf9a0c261f"
   },
   "ui/src/daemoncontroller.h": {
-    "mtime": 1795489820.175156,
-    "seen": 1795489841.6207047,
-    "ast_hash": "b150d57dca108f74765213e431e76523",
+    "mtime": 1795553325.4504833,
+    "seen": 1795554315.0508397,
+    "ast_hash": "003489bd58cca605c8c1ca98e12e39fe",
     "semantic_hash": ""
   },
   "ui/src/inputmonitor.cpp": {
@@ -552,21 +552,21 @@
     "semantic_hash": "2d215fb8a6c72dea9ad8ffd3125053c5"
   },
   "README.md": {
-    "mtime": 1795532735.7575974,
-    "seen": 1795532751.897435,
-    "ast_hash": "9bb9afd8a90d1f1a67eca18a4bae34bd",
+    "mtime": 1795554136.1766307,
+    "seen": 1795554315.0508556,
+    "ast_hash": "d597fc226ff0ab12514548b0544863e6",
     "semantic_hash": ""
   },
   "docs/how-it-works.md": {
-    "mtime": 1795491828.088667,
-    "seen": 1795492125.8656929,
-    "ast_hash": "3010a94d25f5ebf39824143aa28905e2",
+    "mtime": 1795554136.1764586,
+    "seen": 1795554315.050857,
+    "ast_hash": "c8d316f1147a1ee370f847e8308a9f89",
     "semantic_hash": ""
   },
   "docs/kernel-driver.md": {
-    "mtime": 1795494467.1189508,
-    "seen": 1795494538.5001876,
-    "ast_hash": "6144177c17f958625dcd6eb8e39ff970",
+    "mtime": 1795554136.176249,
+    "seen": 1795554315.0508585,
+    "ast_hash": "aa4e46042d911df5b5f7c7662e8e5a61",
     "semantic_hash": ""
   },
   "docs/security-findings.md": {
@@ -624,27 +624,27 @@
     "semantic_hash": "f0c9871272530025988b974d419e2cd8"
   },
   "tests/kernel/fake-pad.c": {
-    "mtime": 1795493069.3744147,
-    "seen": 1795493353.3788435,
-    "ast_hash": "bfffa64098898213a3089e85bab557f3",
+    "mtime": 1795549712.0610642,
+    "seen": 1795554315.050779,
+    "ast_hash": "f14a4220d47cb399ddc783c9e5e8926f",
     "semantic_hash": ""
   },
   "tests/kernel/run-vm.sh": {
-    "mtime": 1795494553.434066,
-    "seen": 1795532751.8972254,
-    "ast_hash": "647a78e9e69f4b04524b010403d5f797",
+    "mtime": 1795553131.948685,
+    "seen": 1795554315.0507848,
+    "ast_hash": "6f50313d6531f86e989d3559ba7627db",
     "semantic_hash": ""
   },
   "tests/kernel/test-binder.sh": {
-    "mtime": 1795494553.4343655,
-    "seen": 1795532751.897229,
-    "ast_hash": "8eec8109d0cff6c513d089d9c2f53957",
+    "mtime": 1795552523.5814664,
+    "seen": 1795554315.0507863,
+    "ast_hash": "03aef618adc18920097b026da1e78c5a",
     "semantic_hash": ""
   },
   "kernel/README.md": {
-    "mtime": 1795532735.7580595,
-    "seen": 1795532751.8974562,
-    "ast_hash": "39264e1f1fb632f4bd85c431fb26f177",
+    "mtime": 1795554136.1768131,
+    "seen": 1795554315.0508626,
+    "ast_hash": "03815df549e31d41a7b1376fd37842a6",
     "semantic_hash": ""
   },
   "assets/Dualshock_4_Layout_base.svg": {
@@ -654,45 +654,45 @@
     "semantic_hash": ""
   },
   "include/uapi/ds4t.h": {
-    "mtime": 1795531924.763581,
-    "seen": 1795532751.8970146,
-    "ast_hash": "09d39ad2e137129d08423bb8198a7d7c",
+    "mtime": 1795553234.3665864,
+    "seen": 1795554315.0506437,
+    "ast_hash": "d58827fe445534ffe299fcf301e08bbf",
     "semantic_hash": ""
   },
   "kernel/ds4t-chardev.c": {
-    "mtime": 1795493238.7764375,
-    "seen": 1795493353.3787785,
-    "ast_hash": "89ca6a0cdede774e13893e15be879c95",
+    "mtime": 1795549444.9785156,
+    "seen": 1795554315.0506523,
+    "ast_hash": "c26960a7d9a0972861b3d7853fd11a35",
     "semantic_hash": ""
   },
   "kernel/ds4t-driver.c": {
-    "mtime": 1795493238.7766006,
-    "seen": 1795493353.378782,
-    "ast_hash": "6fcbfd85e4022eea6a5951c93c437189",
+    "mtime": 1795549444.978721,
+    "seen": 1795554315.0506635,
+    "ast_hash": "f97a96d4bc26a2b22d3c004ce3546d4d",
     "semantic_hash": ""
   },
   "kernel/ds4t-internal.h": {
-    "mtime": 1795491473.8291965,
-    "seen": 1795492125.865462,
-    "ast_hash": "1fae146ad1d152b66b3f9b7c1cad1825",
+    "mtime": 1795553234.3667424,
+    "seen": 1795554315.050667,
+    "ast_hash": "292ed68cd8e0dac1324cb17eb3c97d31",
     "semantic_hash": ""
   },
   "src/driver-transport.cpp": {
-    "mtime": 1795494424.0996044,
-    "seen": 1795494538.4997928,
-    "ast_hash": "1dec17273d5a434684e3f4d5aef52d0e",
+    "mtime": 1795553252.4626043,
+    "seen": 1795554315.050696,
+    "ast_hash": "5625628ce9dbe2bf2d384dedfa83daf8",
     "semantic_hash": ""
   },
   "src/driver-transport.h": {
-    "mtime": 1795494424.0993035,
-    "seen": 1795494538.499797,
-    "ast_hash": "393e48c4cb1074a94f284ef1b11a4b5d",
+    "mtime": 1795553252.4624922,
+    "seen": 1795554315.0506992,
+    "ast_hash": "c21ff8b9b97e2787528b8e10d95e5b40",
     "semantic_hash": ""
   },
   "tests/component/test_driver_transport.cpp": {
-    "mtime": 1795494467.1186824,
-    "seen": 1795494538.4998934,
-    "ast_hash": "ba1b59e173f41bae6e9497ca79b4fe27",
+    "mtime": 1795554283.048404,
+    "seen": 1795554315.050757,
+    "ast_hash": "19afe14ee95744bda9d480c7194b1d2c",
     "semantic_hash": ""
   },
   "tests/kernel/pad-client.c": {
@@ -708,9 +708,9 @@
     "semantic_hash": ""
   },
   "kernel/ds4t-control.c": {
-    "mtime": 1795491608.996578,
-    "seen": 1795492125.865457,
-    "ast_hash": "ce8eba1bfd126f51ca326496ad2b6f14",
+    "mtime": 1795553234.3671505,
+    "seen": 1795554315.050656,
+    "ast_hash": "ba2beda440869ea97fad018c1b1500ef",
     "semantic_hash": ""
   },
   ".github/workflows/kernel.yml": {
@@ -729,6 +729,66 @@
     "mtime": 1795532252.7392786,
     "seen": 1795532751.8970163,
     "ast_hash": "6d482097b436155ba7ed5d94c927b23c",
+    "semantic_hash": ""
+  },
+  "kernel/ds4t-descriptors.h": {
+    "mtime": 1795549585.6619687,
+    "seen": 1795554315.0506597,
+    "ast_hash": "6c35ebe5ddfd142909cda81251ee3755",
+    "semantic_hash": ""
+  },
+  "kernel/ds4t-translate.c": {
+    "mtime": 1795549193.8332453,
+    "seen": 1795554315.0506704,
+    "ast_hash": "3a1361e70f19ce6153d577b7953e7378",
+    "semantic_hash": ""
+  },
+  "kernel/ds4t-translate.h": {
+    "mtime": 1795549601.4756265,
+    "seen": 1795554315.050674,
+    "ast_hash": "dd8910b25047c2c6ce4200c9608d3d0b",
+    "semantic_hash": ""
+  },
+  "kernel/ds4t-userspace.h": {
+    "mtime": 1795549601.4757564,
+    "seen": 1795554315.0506773,
+    "ast_hash": "f9fab345576287efd065a176d28fdd3e",
+    "semantic_hash": ""
+  },
+  "kernel/ds4t-virtual.c": {
+    "mtime": 1795553234.3673031,
+    "seen": 1795554315.0506809,
+    "ast_hash": "09bed53155551c77a63597329698613c",
+    "semantic_hash": ""
+  },
+  "tests/kernel/lib.sh": {
+    "mtime": 1795549727.6505911,
+    "seen": 1795554315.0507805,
+    "ast_hash": "3ff6661ca2dddf62d3ef4d1107119f1e",
+    "semantic_hash": ""
+  },
+  "tests/kernel/run-suites.sh": {
+    "mtime": 1795553586.3701878,
+    "seen": 1795554315.0507834,
+    "ast_hash": "c67cc52b420cf530d3ee24d6eef77a9d",
+    "semantic_hash": ""
+  },
+  "tests/kernel/test-virtual.sh": {
+    "mtime": 1795554101.7111177,
+    "seen": 1795554315.0507872,
+    "ast_hash": "87bc11799f1d644d101ebcad2c53b55e",
+    "semantic_hash": ""
+  },
+  "tests/kernel/virtual-check.c": {
+    "mtime": 1795553586.3698826,
+    "seen": 1795554315.0507898,
+    "ast_hash": "19629d925f16d1cae87e5e2f76b3ef33",
+    "semantic_hash": ""
+  },
+  "tests/unit/test_kernel_translate.cpp": {
+    "mtime": 1795549225.2016056,
+    "seen": 1795554315.0508108,
+    "ast_hash": "9bf0d6ad123fdd38448d8d7e81002f1a",
     "semantic_hash": ""
   }
 }

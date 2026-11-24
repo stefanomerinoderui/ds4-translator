@@ -75,6 +75,11 @@ struct ds4t_mac {
 	char str[DS4T_MAC_LEN];		/* NUL-terminated; empty clears it */
 };
 
+/* ioctl argument of DS4T_IOC_CTL_LINK_VIRTUAL. */
+struct ds4t_link {
+	char hid_id[DS4T_HID_ID_LEN];	/* claimed pad to follow; empty: none */
+};
+
 /* ioctl argument of DS4T_IOC_CTL_CREATE_VIRTUAL. */
 struct ds4t_virtual_cfg {
 	__u32 type;			/* DS4T_VIRTUAL_* */
@@ -138,6 +143,14 @@ struct ds4t_virtual_cfg {
 
 /* Destroys the virtual controller; harmless if there is none. */
 #define DS4T_IOC_CTL_DESTROY_VIRTUAL _IO(DS4T_IOC_MAGIC, 0x14)
+
+/*
+ * Makes the virtual controller follow another claimed pad, or none (empty
+ * hid_id), e.g. when a pad is plugged in or unplugged while it exists. -ENODEV
+ * if hid_id names no claimed pad or there is no virtual controller. The pad it
+ * followed before is released (the virtual pad shows neutral input).
+ */
+#define DS4T_IOC_CTL_LINK_VIRTUAL _IOW(DS4T_IOC_MAGIC, 0x16, struct ds4t_link)
 
 /*
  * Sets the virtual pad's input from a DualShock 4 USB input report (data[0]

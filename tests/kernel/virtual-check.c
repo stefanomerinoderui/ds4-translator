@@ -7,6 +7,10 @@
 //
 //   virtual-check --type 1|2 --mac XX:.. [--pad-mac XX:..] [--inject]
 //                 [--rumble] [--hold SECONDS]
+//   virtual-check --observe --name NAME [--hold SECONDS]
+//
+// With --observe it touches nothing: it only reads the state of the gamepad
+// called NAME (a virtual pad someone else made, such as the daemon).
 //
 // --pad-mac names the fake pad to follow (its HID id is found through sysfs);
 // without it nothing is followed and --inject sets the input instead. Dies, and
@@ -28,6 +32,8 @@
 #include "../../include/uapi/ds4t.h"
 
 #define DEVICE_NAME "ds4t virtual test pad"
+
+static const char *g_event_name = DEVICE_NAME;
 #define TEST_BIT(bit, arr) ((arr)[(bit) / 8] & (1 << ((bit) % 8)))
 
 static volatile sig_atomic_t g_stop;
@@ -92,7 +98,7 @@ static int open_event_node(char *path, size_t size)
 			if (fd < 0)
 				continue;
 			if (ioctl(fd, EVIOCGNAME(sizeof(name)), name) > 0 &&
-			    !strcmp(name, DEVICE_NAME))
+			    !strcmp(name, g_event_name))
 				return fd;
 			close(fd);
 		}
@@ -155,7 +161,7 @@ int main(int argc, char **argv)
 	struct ds4t_virtual_cfg cfg;
 	struct ds4t_mac ignore;
 	const char *mac = NULL, *pad_mac = NULL;
-	int type = 0, inject = 0, do_rumble = 0, hold = 3, fd, ev;
+	int type = 0, inject = 0, do_rumble = 0, observe = 0, hold = 3, fd, ev;
 	char path[64];
 
 	for (int i = 1; i < argc; i++) {
@@ -167,6 +173,10 @@ int main(int argc, char **argv)
 			pad_mac = argv[++i];
 		else if (!strcmp(argv[i], "--hold") && i + 1 < argc)
 			hold = atoi(argv[++i]);
+		else if (!strcmp(argv[i], "--name") && i + 1 < argc)
+			g_event_name = argv[++i];
+		else if (!strcmp(argv[i], "--observe"))
+			observe = 1;
 		else if (!strcmp(argv[i], "--inject"))
 			inject = 1;
 		else if (!strcmp(argv[i], "--rumble"))
@@ -174,10 +184,24 @@ int main(int argc, char **argv)
 		else
 			goto usage;
 	}
-	if (!type || !mac)
+	if (!observe && (!type || !mac))
 		goto usage;
 
 	signal(SIGTERM, on_signal);
+
+	if (observe) {
+		ev = open_event_node(path, sizeof(path));
+		if (ev < 0) {
+			printf("no event node called %s\n", g_event_name);
+			return 1;
+		}
+		printf("evdev found\n");
+		for (int i = 0; i < hold * 10 && !g_stop; i++) {
+			print_state(ev, "state");
+			sleep_ms(100);
+		}
+		return 0;
+	}
 
 	fd = open("/dev/ds4-translator/control", O_RDWR);
 	if (fd < 0) {
@@ -238,6 +262,7 @@ int main(int argc, char **argv)
 
 usage:
 	fprintf(stderr, "usage: virtual-check --type 1|2 --mac MAC [--pad-mac MAC] "
-			"[--inject] [--rumble] [--hold S]\n");
+			"[--inject] [--rumble] [--hold S]\n"
+			"       virtual-check --observe --name NAME [--hold S]\n");
 	return 2;
 }

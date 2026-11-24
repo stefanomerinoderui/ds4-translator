@@ -133,6 +133,7 @@ ds4-ctl set-backend ds4 functionfs        # default for ds4
 ds4-ctl set-backend ds4 uhid              # not recommended -- known DS4 detection issue in some titles
 ds4-ctl set-backend dualsense uhid        # default for dualsense
 ds4-ctl set-backend dualsense functionfs  # also works, just not the default
+ds4-ctl set-backend ds4 kernel            # kernel module translates (needs set-hide-method driver)
 ```
 
 This takes effect immediately if that controller type is the one currently

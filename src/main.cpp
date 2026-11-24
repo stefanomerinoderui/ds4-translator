@@ -610,6 +610,21 @@ int g_driver_control_fd = -1;
 // upgrade below keys on.
 bool g_phy_is_driver_transport = false;
 
+// HID id of the pad open through the driver method; empty otherwise. The
+// "kernel" backend's virtual controller follows it inside the module.
+std::string g_phy_hid_id;
+
+// True while the module's own virtual controller (the "kernel" backend)
+// exists. Its translation runs in the kernel, so the daemon only watches.
+bool g_kernel_vdev = false;
+
+// Points the module's virtual controller at the pad open now, or at none.
+static void kernel_link_virtual() {
+    if (g_kernel_vdev && g_driver_control_fd >= 0) {
+        driver_transport_link_virtual(g_driver_control_fd, g_phy_hid_id);
+    }
+}
+
 // IMU calibration of the physical pad, in the USB layout an emulated DS4
 // serves as feature report 0x02, when the driver method could read it from the
 // module. The other methods do not fetch it, and the emulated pad then serves
@@ -1156,6 +1171,8 @@ static int open_and_hide_physical_unbind(const std::string& hid_id, std::vector<
             const int fd = driver_transport_open(hid_id);
             if (fd >= 0) {
                 g_phy_is_driver_transport = true;
+                g_phy_hid_id = hid_id;
+                kernel_link_virtual();
                 load_physical_calibration(fd);
                 return fd;
             }
@@ -1300,6 +1317,8 @@ static void release_physical_connection(int fd, const std::string& path, mode_t 
     // The next pad has its own calibration (or none, on another method).
     set_physical_calibration(nullptr);
     g_phy_is_driver_transport = false;
+    g_phy_hid_id.clear();
+    kernel_link_virtual();
 
     // Before fd is closed: a Bluetooth rumble/LED report may still be
     // queued for it, and the pacer's flush thread must not write to a
@@ -1902,12 +1921,16 @@ static ControllerType read_config(ControllerType default_type) {
 
 enum BackendType {
     BACKEND_UHID,
-    BACKEND_FUNCTIONFS
+    BACKEND_FUNCTIONFS,
+    // The hid-ds4-translator module creates the virtual pad and translates in
+    // the kernel; needs the driver hide method.
+    BACKEND_KERNEL
 };
 
 static const char* backend_type_name(BackendType backend) {
     switch (backend) {
         case BACKEND_FUNCTIONFS: return "functionfs";
+        case BACKEND_KERNEL: return "kernel";
         default: return "uhid";
     }
 }
@@ -1915,6 +1938,7 @@ static const char* backend_type_name(BackendType backend) {
 static const char* backend_type_config_str(BackendType backend) {
     switch (backend) {
         case BACKEND_FUNCTIONFS: return "functionfs";
+        case BACKEND_KERNEL: return "kernel";
         default: return "uhid";
     }
 }
@@ -1941,6 +1965,8 @@ static BackendType read_backend_config(ControllerType type, BackendType default_
                 return BACKEND_FUNCTIONFS;
             } else if (val == "uhid") {
                 return BACKEND_UHID;
+            } else if (val == "kernel") {
+                return BACKEND_KERNEL;
             }
         }
     }
@@ -2143,6 +2169,35 @@ static int ffs_target_for_type(ControllerType type) {
     }
 }
 
+// The "kernel" backend: the module creates the virtual pad, follows the open
+// physical one and translates between them. It exists only for as long as the
+// control fd does, and the module needs the driver hide method to hold pads.
+static bool create_kernel_virtual(ControllerType type, const std::string& custom_name) {
+    if (g_hide_method != HIDE_METHOD_DRIVER) {
+        std::cerr << "kernel backend: needs the driver hide method (ds4-ctl set-hide-method driver)." << std::endl;
+        return false;
+    }
+    // Attaches, with the MAC already chosen above, so the module never claims
+    // the pad it is about to create.
+    reconcile_driver_attachment(true);
+    if (g_driver_control_fd < 0) {
+        std::cerr << "kernel backend: hid_ds4_translator is not attached." << std::endl;
+        return false;
+    }
+    const bool dualsense = (type == TYPE_DUALSENSE);
+    const std::string name = !custom_name.empty() ? custom_name
+        : dualsense ? "Sony Interactive Entertainment DualSense Wireless Controller"
+                    : "Sony Computer Entertainment Wireless Controller";
+    if (!driver_transport_create_virtual(g_driver_control_fd, dualsense, name, g_virtual_mac_str,
+                                         g_phy_hid_id)) {
+        return false;
+    }
+    std::cout << "Virtual USB Controller created by the kernel module." << std::endl;
+    g_kernel_vdev = true;
+    g_vdev_exists = true;
+    return true;
+}
+
 static bool create_virtual_device_backend(ControllerType type) {
     // Empty means "no override" -- each backend below falls back to its own
     // default name in that case.
@@ -2171,6 +2226,14 @@ static bool create_virtual_device_backend(ControllerType type) {
             std::cerr << "Failed to initialize FunctionFS backend. Falling back to UHID backend..." << std::endl;
             backend_type = BACKEND_UHID;
         }
+    }
+
+    if (backend_type == BACKEND_KERNEL) {
+        if (create_kernel_virtual(type, custom_name)) {
+            return true;
+        }
+        std::cerr << "Failed to create the kernel backend's controller. Falling back to UHID backend..." << std::endl;
+        backend_type = BACKEND_UHID;
     }
 
     if (backend_type == BACKEND_UHID) {
@@ -2240,7 +2303,15 @@ void destroy_virtual_device() {
     // A recreated GIP device starts with the Guide button released.
     g_gip_guide_down = false;
 
-    if (backend_type == BACKEND_FUNCTIONFS) {
+    if (backend_type == BACKEND_KERNEL || g_kernel_vdev) {
+        if (g_kernel_vdev) {
+            driver_transport_destroy_virtual(g_driver_control_fd);
+            g_kernel_vdev = false;
+            // Same reason as for uhid below: the old pad's minors and
+            // hid-playstation's player slot must be free before a recreate.
+            usleep(200000);
+        }
+    } else if (backend_type == BACKEND_FUNCTIONFS) {
         functionfs_close(&virtual_functionfs);
         usleep(200000); // Give kernel time to unbind the gadget UDC
     } else {
@@ -2310,6 +2381,18 @@ static void emit_input_report(ControllerType type, const struct dualshock4_input
             last_virtual_touch.points[1].contact = 0x80;
         }
         last_virtual_valid = true;
+    }
+
+    if (g_kernel_vdev) {
+        // A physical pad is translated inside the module. Only input of our
+        // own making (the synthetic pad, the neutral report) has to be
+        // handed to it, as a DS4 report it turns into whatever it presents.
+        if (!has_real_battery) {
+            uint8_t report[DS_VIRTUAL_REPORT_SIZE];
+            build_ds4_usb_report(common, num_touch, touch_reps, false, report);
+            driver_transport_inject(g_driver_control_fd, report, sizeof(report));
+        }
+        return;
     }
 
     if (type == TYPE_XBOX360) {
@@ -2424,7 +2507,7 @@ int main(int argc, char* argv[]) {
             std::cout << "Options:" << std::endl;
             std::cout << "  -t, --type <ds4|dualsense|xbox360|xboxone|xboxseries|none|hidden>   Target virtual controller type (default: ds4)" << std::endl;
             std::cout << "  -h, --help                  Show this help message" << std::endl;
-            std::cout << "Backend (uhid/functionfs) is config/set-backend only -- see 'ds4-ctl set-backend' (the Xbox types are always functionfs)." << std::endl;
+            std::cout << "Backend (uhid/functionfs/kernel) is config/set-backend only -- see 'ds4-ctl set-backend' (the Xbox types are always functionfs)." << std::endl;
             std::cout << "Hide method (legacy/unbind/unlink/driver) is config/set-hide-method only -- see 'ds4-ctl set-hide-method'." << std::endl;
             return 0;
         }
@@ -2534,6 +2617,7 @@ int main(int argc, char* argv[]) {
     // (UHID has no such concept of its own, so it reuses device_open, which
     // this function's UHID_OPEN/UHID_CLOSE handling below keeps in sync).
     auto vdev_configured = [&]() -> bool {
+        if (g_kernel_vdev) return true;
         if (backend_type == BACKEND_FUNCTIONFS) return virtual_functionfs.configured;
         return device_open;
     };
@@ -2542,6 +2626,7 @@ int main(int argc, char* argv[]) {
     // uhid_fd >= 0 alongside the UHID device_open flag (functionfs has no
     // equivalent fd to check here -- its I/O runs on dedicated threads).
     auto vdev_ready_for_io = [&]() -> bool {
+        if (g_kernel_vdev) return true;
         if (backend_type == BACKEND_FUNCTIONFS) return virtual_functionfs.configured;
         return device_open && uhid_fd >= 0;
     };
@@ -2793,7 +2878,8 @@ int main(int argc, char* argv[]) {
         // one a subscriber wants is its own business.
         std::string virtual_line;
         if (controller_type_emulates(target_type)) {
-            bool vdev_exists = (backend_type == BACKEND_FUNCTIONFS) ? virtual_functionfs.device_open : (uhid_fd >= 0);
+            bool vdev_exists = g_kernel_vdev ||
+                ((backend_type == BACKEND_FUNCTIONFS) ? virtual_functionfs.device_open : (uhid_fd >= 0));
             if (vdev_exists && last_virtual_valid) {
                 virtual_line = state_line("VIRTUAL", last_virtual_common, last_virtual_touch);
             } else {
@@ -3455,8 +3541,10 @@ int main(int argc, char* argv[]) {
                         } else {
                             response = "Already set to Hidden";
                         }
-                    } else if (cmd == "set-backend ds4 uhid" || cmd == "set-backend ds4 functionfs") {
-                        BackendType want_backend = (cmd == "set-backend ds4 uhid") ? BACKEND_UHID : BACKEND_FUNCTIONFS;
+                    } else if (cmd == "set-backend ds4 uhid" || cmd == "set-backend ds4 functionfs" ||
+                               cmd == "set-backend ds4 kernel") {
+                        BackendType want_backend = (cmd == "set-backend ds4 uhid") ? BACKEND_UHID
+                            : (cmd == "set-backend ds4 kernel") ? BACKEND_KERNEL : BACKEND_FUNCTIONFS;
                         if (backend_for_ds4 != want_backend) {
                             backend_for_ds4 = want_backend;
                             write_config(target_type, backend_for_ds4, backend_for_dualsense, g_name_ds4, g_name_dualsense);
@@ -3471,8 +3559,10 @@ int main(int argc, char* argv[]) {
                         } else {
                             response = "DS4 already set to use backend " + std::string(backend_type_name(want_backend));
                         }
-                    } else if (cmd == "set-backend dualsense uhid" || cmd == "set-backend dualsense functionfs") {
-                        BackendType want_backend = (cmd == "set-backend dualsense uhid") ? BACKEND_UHID : BACKEND_FUNCTIONFS;
+                    } else if (cmd == "set-backend dualsense uhid" || cmd == "set-backend dualsense functionfs" ||
+                               cmd == "set-backend dualsense kernel") {
+                        BackendType want_backend = (cmd == "set-backend dualsense uhid") ? BACKEND_UHID
+                            : (cmd == "set-backend dualsense kernel") ? BACKEND_KERNEL : BACKEND_FUNCTIONFS;
                         if (backend_for_dualsense != want_backend) {
                             backend_for_dualsense = want_backend;
                             write_config(target_type, backend_for_ds4, backend_for_dualsense, g_name_ds4, g_name_dualsense);

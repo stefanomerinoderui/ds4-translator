@@ -492,6 +492,57 @@ void ds4t_virtual_pad_gone(struct ds4t_pad *pad)
 		ds4t_pad_put(pad);
 }
 
+/* Releases the pad v follows, if any, and shows neutral input. */
+static struct ds4t_pad *ds4t_virt_unfollow(struct ds4t_virtual *v)
+{
+	struct ds4t_input in;
+	struct ds4t_pad *old;
+
+	spin_lock_irq(&v->lock);
+	old = v->src;
+	WRITE_ONCE(v->src, NULL);
+	if (old && v->live) {
+		ds4t_virt_neutral(&in);
+		ds4t_virt_emit(v, &in);
+	}
+	spin_unlock_irq(&v->lock);
+	return old;
+}
+
+int ds4t_virtual_link(const char *hid_id)
+{
+	struct ds4t_virtual *v;
+	struct ds4t_pad *pad = NULL, *old;
+	int ret = 0;
+
+	mutex_lock(&ds4t_virt_mutex);
+	v = rcu_dereference_protected(ds4t_virt,
+				      lockdep_is_held(&ds4t_virt_mutex));
+	if (!v) {
+		ret = -ENODEV;
+		goto out;
+	}
+	if (hid_id[0]) {
+		pad = ds4t_pad_find(hid_id);
+		if (!pad) {
+			ret = -ENODEV;
+			goto out;
+		}
+	}
+
+	old = ds4t_virt_unfollow(v);
+	if (old)
+		ds4t_pad_put(old);
+	if (pad) {
+		spin_lock_irq(&v->lock);
+		WRITE_ONCE(v->src, pad);	/* the reference moves to v */
+		spin_unlock_irq(&v->lock);
+	}
+out:
+	mutex_unlock(&ds4t_virt_mutex);
+	return ret;
+}
+
 int ds4t_virtual_inject(const u8 *report, size_t len)
 {
 	struct ds4t_virtual *v;

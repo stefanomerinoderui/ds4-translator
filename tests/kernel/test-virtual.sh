@@ -7,12 +7,14 @@
 # real driver, binds the virtual pad -- so what it exposes on evdev, and the
 # rumble it sends back, are the oracle.
 #
-#   test-virtual.sh <hid-ds4-translator.ko> <fake-pad> <virtual-check>
+#   test-virtual.sh <hid-ds4-translator.ko> <fake-pad> <virtual-check> <ds4-translator> <ds4-ctl>
 
 set -u
 KO=${1:?module path}
 FAKE=${2:?fake-pad path}
 VCHECK=${3:?virtual-check path}
+DAEMON=${4:?ds4-translator path}
+DS4CTL=${5:?ds4-ctl path}
 MAC_PAD=AA:BB:CC:00:00:11
 MAC_VIRT=74:e7:d6:3a:47:e8	# the daemon's default emulated MAC
 
@@ -103,6 +105,43 @@ wait_virtual '^evdev found'
 stop_virtual
 stop_pads
 check "rmmod works once nothing is attached" rmmod hid_ds4_translator
+
+echo "# the real daemon with the kernel backend"
+insmod "$KO" || { echo "insmod failed"; exit 1; }
+export DS4_RUNTIME_DIR=/tmp/ds4d DS4_STATE_DIR=/tmp/ds4d/state DS4_CONFIG_PATH=/tmp/ds4d/ds4-translator.conf
+mkdir -p "$DS4_RUNTIME_DIR"
+printf 'hide_method=driver\nbackend_ds4=kernel\n' >"$DS4_CONFIG_PATH"
+DS4_NAME="Sony Computer Entertainment Wireless Controller"
+# Reads the daemon's pad (by name) until it shows the pad's state, for 3 s.
+daemon_pad_shows() { # <state>
+    "$VCHECK" --observe --name "$DS4_NAME" --hold 3 2>&1 | grep -q "^state $1\$"
+}
+start_pad bt "$MAC_PAD" --fixed 1 --stream 1 || nok "fake pad did not become ready"
+"$DAEMON" -t ds4 >/tmp/daemon.log 2>&1 &
+daemon_pid=$!
+check "the daemon asked the module for the virtual controller" \
+    bash -c "for _ in \$(seq 100); do grep -q 'created by the kernel module' /tmp/daemon.log && exit 0; sleep 0.1; done; exit 1"
+check "hid-playstation binds the module's virtual pad" wait_driver "$MAC_VIRT" "$FALLBACK"
+check "the daemon's pad shows the physical pad's state" daemon_pad_shows "$FIXED_STATE"
+check "the daemon did not fall back" bash -c "! grep -q 'Falling back' /tmp/daemon.log"
+
+"$DS4CTL" set-backend ds4 uhid >/tmp/ctl.log 2>&1
+check "switching to uhid takes the kernel pad down and brings one up" \
+    bash -c "for _ in \$(seq 100); do grep -q 'created via UHID' /tmp/daemon.log && exit 0; sleep 0.1; done; exit 1"
+check "the uhid pad shows the physical pad's state" daemon_pad_shows "$FIXED_STATE"
+"$DS4CTL" set-backend ds4 kernel >/tmp/ctl.log 2>&1
+check "and back to kernel" \
+    bash -c "for _ in \$(seq 100); do [ \$(grep -c 'created by the kernel module' /tmp/daemon.log) -ge 2 ] && exit 0; sleep 0.1; done; exit 1"
+check "the kernel pad shows the physical pad's state again" daemon_pad_shows "$FIXED_STATE"
+
+kill -KILL "$daemon_pid"
+wait "$daemon_pid" 2>/dev/null
+check "a killed daemon takes its virtual pad with it" \
+    bash -c "for _ in \$(seq 50); do ! grep -qi '^HID_UNIQ=$MAC_VIRT\$' /sys/bus/hid/devices/*/uevent 2>/dev/null && exit 0; sleep 0.1; done; exit 1"
+check "and returns the physical pad" wait_driver "$MAC_PAD" "$FALLBACK"
+stop_pads
+unset DS4_RUNTIME_DIR DS4_STATE_DIR DS4_CONFIG_PATH
+check "rmmod works once the daemon is gone" rmmod hid_ds4_translator
 
 echo "# no kernel splats across the whole run"
 check "no oops, KASAN/KFENCE report, slab corruption or lockdep splat in dmesg" \

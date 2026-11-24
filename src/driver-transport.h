@@ -12,6 +12,8 @@
 // per write(), and an error/POLLHUP once the pad is gone -- so the fd is
 // returned as is and closed with a plain close().
 #include <chrono>
+#include <stddef.h>
+#include <stdint.h>
 #include <string>
 #include <vector>
 
@@ -37,6 +39,22 @@ bool driver_transport_claim(int control_fd);
 
 // Hands every pad back to its regular driver.
 void driver_transport_detach(int control_fd);
+
+// The module's own virtual controller (the "kernel" emulation backend): it
+// translates the claimed pad's input itself, relays rumble/LED back, and goes
+// away when the control fd closes. `dualsense` picks the pad type, `mac` is the
+// pad's uniq (and what driver_transport_set_ignore_mac() was given), `hid_id`
+// the claimed pad it follows, or empty for none. False with errno-style
+// diagnostics logged (module too old, a controller already exists, no such
+// pad).
+bool driver_transport_create_virtual(int control_fd, bool dualsense, const std::string& name,
+                                     const std::string& mac, const std::string& hid_id);
+void driver_transport_destroy_virtual(int control_fd);
+// Follows another claimed pad, or none when hid_id is empty.
+bool driver_transport_link_virtual(int control_fd, const std::string& hid_id);
+// Sets the virtual controller's input from a 64-byte DS4 USB input report
+// (0x01), for when no physical pad drives it.
+bool driver_transport_inject(int control_fd, const uint8_t* report, size_t len);
 
 // True if the module has created the node for hid_id, i.e. it has claimed that
 // pad and the daemon could open it now.

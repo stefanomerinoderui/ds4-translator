@@ -139,4 +139,29 @@ TEST_F(DriverTransportTest, HidIdCannotEscapeTheDeviceDirectory) {
     }
 }
 
+TEST_F(DriverTransportTest, VirtualControllerCallsFailOnAnythingButTheControlNode) {
+    // A plain file is no control node: every ioctl fails instead of being sent.
+    const int fd = open("/dev/null", O_RDWR);
+    ASSERT_GE(fd, 0);
+    EXPECT_FALSE(driver_transport_create_virtual(fd, false, "pad", "74:e7:d6:3a:47:e8", ""));
+    EXPECT_FALSE(driver_transport_link_virtual(fd, kHidId));
+    const uint8_t report[64] = {0x01};
+    EXPECT_FALSE(driver_transport_inject(fd, report, sizeof(report)));
+    close(fd);
+}
+
+TEST_F(DriverTransportTest, VirtualControllerRefusesFieldsThatDoNotFit) {
+    // Truncating would hand the module a different name, MAC or pad.
+    const int fd = open("/dev/null", O_RDWR);
+    ASSERT_GE(fd, 0);
+    EXPECT_FALSE(driver_transport_create_virtual(fd, true, std::string(200, 'n'), "74:e7:d6:3a:47:e8", ""));
+    EXPECT_FALSE(driver_transport_create_virtual(fd, true, "pad", std::string(30, '0'), ""));
+    EXPECT_FALSE(driver_transport_create_virtual(fd, true, "pad", "74:e7:d6:3a:47:e8", std::string(40, 'x')));
+    EXPECT_FALSE(driver_transport_link_virtual(fd, std::string(40, 'x')));
+    const uint8_t big[200] = {0x01};
+    EXPECT_FALSE(driver_transport_inject(fd, big, sizeof(big)));
+    EXPECT_FALSE(driver_transport_inject(fd, big, 0));
+    close(fd);
+}
+
 } // namespace

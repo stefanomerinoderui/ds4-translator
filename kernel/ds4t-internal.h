@@ -104,6 +104,7 @@ void ds4t_virtual_input(struct ds4t_pad *pad, const u8 *data, int size);
 void ds4t_virtual_pad_gone(struct ds4t_pad *pad);
 int ds4t_virtual_create(const struct ds4t_virtual_cfg *cfg);
 void ds4t_virtual_destroy(void);
+int ds4t_virtual_link(const char *hid_id);
 int ds4t_virtual_inject(const u8 *report, size_t len);
 
 /* The device the virtual controller hangs off (the control node's). */

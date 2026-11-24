@@ -58,6 +58,12 @@ microseconds, so there is little latency to win. C would also mean
 reimplementing what `functionfs` already does in user space, including the
 vendor-class Xbox descriptors. The rest of this document covers option A.
 
+A slice of option B was built afterwards as the `kernel` emulation backend
+(section 8, step 7): the module creates a DualShock 4 or DualSense of its own
+and translates into it. The translation is small (a repack of one 64-byte
+report, no remapping), which is what made it reasonable; Xbox types and
+everything the daemon does around the pad stay in user space.
+
 ## 3. Option A design: `hid-ds4-translator`
 
 ### 3.1 Binding
@@ -399,10 +405,29 @@ access, by design. This is already true of the `unlink` method.
    attach/detach churn, unplugging under load and while the kernel waits on
    the pad, and unload/load cycles, with SLUB poisoning, red zones and
    aggressive KFENCE sampling enabled. Everything below is still open.
-6. **Remove** the workarounds in section 4 only after the module has run as
+7. **The `kernel` emulation backend** (`ds4-ctl set-backend <ds4|dualsense>
+   kernel`, needs `driver`, falls back to `uhid`). Done in the VM. The
+   module's virtual device is a `hid_device` with its own low-level driver
+   that the real `hid-playstation` binds, so that driver is the oracle in
+   `tests/kernel/test-virtual.sh`: the pad's state on evdev, rumble reaching
+   the fake pad as a Bluetooth report with a valid CRC (25 ms pacing), the
+   pad's IMU calibration, unplugging, injection without a pad, and the real
+   daemon switching `kernel` and `uhid` back and forth. The translation lives
+   in `kernel/ds4t-translate.c`, which also builds in user space; a unit test
+   holds it byte for byte to the daemon's own `src/translate.cpp`, which the
+   `uhid` and `functionfs` backends keep using.
+8. **Remove** the workarounds in section 4 only after the module has run as
    the default for a release, keeping `unbind` as the fallback.
 
 ### Not yet validated, and deliberately not decided
+
+- **The `kernel` backend on real hardware and in games.** Its virtual pad has
+  no USB parent, like `uhid`'s, so Wine/Proton titles that never detected a
+  `uhid` DualShock 4 are expected to behave the same; that is the reason
+  `functionfs` stays the DS4 default and `kernel` stays opt-in. The daemon's
+  `ds4-ctl led`/`identify` write to the physical pad directly and are
+  overwritten by the module's next output report, which it builds from the
+  game's own rumble and LED state.
 
 - **Real hardware.** Nothing has run on a physical pad: USB, Bluetooth over
   `bluetoothd`'s `uhid` session (probe timing, the calibration read, output

@@ -103,6 +103,72 @@ bool driver_transport_set_ignore_mac(int control_fd, const std::string& mac) {
     return true;
 }
 
+namespace {
+
+// Copies a string into a fixed ioctl field, refusing one that does not fit
+// (silent truncation would hand the module a different MAC or pad).
+template <size_t N>
+bool copy_field(char (&field)[N], const std::string& value, const char* what) {
+    if (value.size() >= N) {
+        std::cerr << "driver: " << what << " '" << value << "' is too long" << std::endl;
+        return false;
+    }
+    memset(field, 0, N);
+    memcpy(field, value.c_str(), value.size());
+    return true;
+}
+
+} // namespace
+
+bool driver_transport_create_virtual(int control_fd, bool dualsense, const std::string& name,
+                                     const std::string& mac, const std::string& hid_id) {
+    struct ds4t_virtual_cfg cfg;
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.type = dualsense ? DS4T_VIRTUAL_DUALSENSE : DS4T_VIRTUAL_DS4;
+    if (!copy_field(cfg.name, name, "controller name") || !copy_field(cfg.mac, mac, "MAC") ||
+        !copy_field(cfg.hid_id, hid_id, "HID id")) {
+        return false;
+    }
+    if (ioctl(control_fd, DS4T_IOC_CTL_CREATE_VIRTUAL, &cfg) != 0) {
+        std::cerr << "driver: the module cannot create the virtual controller: " << strerror(errno)
+                  << std::endl;
+        return false;
+    }
+    return true;
+}
+
+void driver_transport_destroy_virtual(int control_fd) {
+    if (control_fd >= 0 && ioctl(control_fd, DS4T_IOC_CTL_DESTROY_VIRTUAL) != 0) {
+        std::cerr << "driver: cannot destroy the virtual controller: " << strerror(errno) << std::endl;
+    }
+}
+
+bool driver_transport_link_virtual(int control_fd, const std::string& hid_id) {
+    struct ds4t_link link;
+    if (!copy_field(link.hid_id, hid_id, "HID id")) {
+        return false;
+    }
+    if (ioctl(control_fd, DS4T_IOC_CTL_LINK_VIRTUAL, &link) != 0) {
+        std::cerr << "driver: cannot link the virtual controller to '" << hid_id
+                  << "': " << strerror(errno) << std::endl;
+        return false;
+    }
+    return true;
+}
+
+bool driver_transport_inject(int control_fd, const uint8_t* report, size_t len) {
+    struct ds4t_feature feat;
+    if (len == 0 || len > sizeof(feat.data)) {
+        return false;
+    }
+    memset(&feat, 0, sizeof(feat));
+    feat.len = static_cast<__u16>(len);
+    memcpy(feat.data, report, len);
+    // ENODEV just means the controller is not up yet or already gone; the
+    // caller sends the next report anyway, so it is not worth a log line each.
+    return ioctl(control_fd, DS4T_IOC_CTL_INJECT, &feat) == 0;
+}
+
 bool driver_transport_node_exists(const std::string& hid_id) {
     if (!hid_id_is_path_safe(hid_id)) {
         return false;

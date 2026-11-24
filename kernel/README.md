@@ -10,8 +10,13 @@ hands every pad back to `hid-playstation`. While attached it claims the pad,
 dumps incoming reports to debugfs, and exposes each pad as
 `/dev/ds4-translator/<hid_id>` for the daemon's `driver` hide method
 (`ds4-ctl set-hide-method driver`), with raw feature-report ioctls and the
-calibration cached at probe (the daemon serves it to the emulated DS4). Not
-yet: DKMS packaging and CI.
+calibration cached at probe (the daemon serves it to the emulated DS4).
+
+It can also create the virtual controller itself (`ds4-ctl set-backend ds4
+kernel`): a DualShock 4 or DualSense that `hid-playstation` binds, fed by the
+claimed pad's translated reports (`ds4t-translate.c`, also built in user space
+for the unit tests) with output and feature reports handled in the module
+(`ds4t-virtual.c`). Closing the control node destroys it.
 
 ## Build
 
