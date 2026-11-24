@@ -2328,100 +2328,13 @@ static void emit_input_report(ControllerType type, const struct dualshock4_input
     }
 
     struct uhid_event out_ev;
-    // Only the payload bytes we're about to populate need to start zeroed
-    // (dualshock4_input_report_usb::reserved[3] / touch-padding slots on
-    // the DS4 side, various reserved*[] fields on the DualSense side).
-    // `type` and `input2.size` are both set below, and the ~4.3KB
-    // rd_data/create2/etc. portions of the union are never read for an
-    // INPUT2 event, so they don't need clearing.
-    const size_t payload_len = (type == TYPE_DS4)
-        ? sizeof(struct dualshock4_input_report_usb)
-        : 64; // matches out_ev.u.input2.size = 64; in the DualSense branch below
-    memset(out_ev.u.input2.data, 0, payload_len);
     out_ev.type = UHID_INPUT2;
-
+    out_ev.u.input2.size = DS_VIRTUAL_REPORT_SIZE;
     if (type == TYPE_DS4) {
-        out_ev.u.input2.size = sizeof(struct dualshock4_input_report_usb);
-        struct dualshock4_input_report_usb* out_ds = (struct dualshock4_input_report_usb*)out_ev.u.input2.data;
-        out_ds->report_id = 0x01;
-        out_ds->common = common;
-        if (!has_real_battery) {
-            // No physical hardware behind this device — report a plausible
-            // fixed state (USB-wired, fully charged) instead of whatever
-            // zeroed/synthetic value `common.status` happens to hold.
-            // status[0] bit4 = cable state (1=USB), bits 3:0 = battery level (0-10, 0x0B=full)
-            out_ds->common.status[0] = 0x1B; // cable=1, battery=0x0B (full)
-            out_ds->common.status[1] = 0x00;
-        }
-        // else: common.status[0]/[1] already came straight from the real
-        // controller's own report via `out_ds->common = common` above.
-        out_ds->num_touch_reports = (num_touch > 3) ? 3 : num_touch;
-        for (int i = 0; i < out_ds->num_touch_reports; ++i) {
-            out_ds->touch_reports[i] = touch_reps[i];
-        }
-        // Any remaining slots (all 3, when num_touch is 0 — every
-        // synthetic/standalone report) must have both points marked "not
-        // touching" (contact bit7 set). Real hardware always fills every
-        // slot in the report regardless of how many actually carry a new
-        // touch event; leaving them zeroed (contact=0x00, x=0, y=0) reads
-        // as a genuine touch at (0,0) to any consumer that doesn't
-        // strictly gate on num_touch_reports before reading slot contents.
-        for (int i = out_ds->num_touch_reports; i < 3; ++i) {
-            out_ds->touch_reports[i].points[0].contact = 0x80;
-            out_ds->touch_reports[i].points[1].contact = 0x80;
-        }
+        build_ds4_usb_report(common, num_touch, touch_reps, has_real_battery, out_ev.u.input2.data);
     } else { // DualSense
-        out_ev.u.input2.size = 64;
-        out_ev.u.input2.data[0] = 0x01;
-        struct dualsense_input_report* out_ds5 = (struct dualsense_input_report*)&out_ev.u.input2.data[1];
-
-        out_ds5->x = common.x;
-        out_ds5->y = common.y;
-        out_ds5->rx = common.rx;
-        out_ds5->ry = common.ry;
-
-        out_ds5->z = common.z;
-        out_ds5->rz = common.rz;
-
-        out_ds5->buttons[0] = common.buttons[0];
-        out_ds5->buttons[1] = common.buttons[1];
-        out_ds5->buttons[2] = common.buttons[2] & 0x03;
-        out_ds5->buttons[3] = 0;
-
-        out_ds5->seq_number = sequence_number++;
-        memcpy(out_ds5->gyro, common.gyro, sizeof(out_ds5->gyro));
-        memcpy(out_ds5->accel, common.accel, sizeof(out_ds5->accel));
-        out_ds5->sensor_timestamp = (uint32_t)common.sensor_timestamp;
-
-        if (num_touch > 0) {
-            int latest = num_touch - 1;
-            if (latest > 3) latest = 3;
-            out_ds5->points[0].contact = touch_reps[latest].points[0].contact;
-            out_ds5->points[0].x_lo = touch_reps[latest].points[0].x_lo;
-            out_ds5->points[0].x_hi = touch_reps[latest].points[0].x_hi;
-            out_ds5->points[0].y_lo = touch_reps[latest].points[0].y_lo;
-            out_ds5->points[0].y_hi = touch_reps[latest].points[0].y_hi;
-
-            out_ds5->points[1].contact = touch_reps[latest].points[1].contact;
-            out_ds5->points[1].x_lo = touch_reps[latest].points[1].x_lo;
-            out_ds5->points[1].x_hi = touch_reps[latest].points[1].x_hi;
-            out_ds5->points[1].y_lo = touch_reps[latest].points[1].y_lo;
-            out_ds5->points[1].y_hi = touch_reps[latest].points[1].y_hi;
-        } else {
-            out_ds5->points[0].contact = 0x80;
-            out_ds5->points[1].contact = 0x80;
-        }
-
-        if (has_real_battery) {
-            int percent;
-            BatteryState state;
-            decode_ds4_battery(common.status[0], percent, state);
-            out_ds5->status[0] = encode_dualsense_battery(percent, state);
-        } else {
-            out_ds5->status[0] = 0x2B; // Fully charged, complete
-        }
-        out_ds5->status[1] = 0x00;
-        out_ds5->status[2] = 0x00;
+        build_dualsense_report(common, num_touch, touch_reps, sequence_number++, has_real_battery,
+                               out_ev.u.input2.data);
     }
 
     if (backend_type == BACKEND_FUNCTIONFS) {

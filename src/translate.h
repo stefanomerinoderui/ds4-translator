@@ -127,6 +127,20 @@ constexpr size_t DS4_CALIBRATION_SIZE = 36;
 bool ds4_calibration_to_usb_layout(const uint8_t* report, size_t len,
                                    uint8_t out[DS4_CALIBRATION_SIZE]);
 
+// The 64-byte input report 0x01 the virtual DS4 / DualSense presents, built
+// from the physical pad's common block and touch reports. The DS4 one is the
+// pad's own data with unused touch slots marked "no finger"; the DualSense one
+// is a real repack (sequence number, newest touch report, re-encoded battery).
+// Without a physical battery behind it the status bytes are a fixed
+// "fully charged" instead.
+constexpr size_t DS_VIRTUAL_REPORT_SIZE = 64;
+void build_ds4_usb_report(const dualshock4_input_report_common& common, uint8_t num_touch,
+                          const dualshock4_touch_report touch_reps[4], bool has_real_battery,
+                          uint8_t out[DS_VIRTUAL_REPORT_SIZE]);
+void build_dualsense_report(const dualshock4_input_report_common& common, uint8_t num_touch,
+                            const dualshock4_touch_report touch_reps[4], uint8_t seq,
+                            bool has_real_battery, uint8_t out[DS_VIRTUAL_REPORT_SIZE]);
+
 enum BatteryState { BATTERY_DISCHARGING, BATTERY_CHARGING, BATTERY_FULL };
 
 void decode_ds4_battery(uint8_t ds4_status0, int& percent, BatteryState& state);

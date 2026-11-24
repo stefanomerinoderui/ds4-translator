@@ -272,3 +272,80 @@ size_t build_gip_input_report(const dualshock4_input_report_common& common, bool
     if (series && touchpad) out[GIP_SERIES_SHARE_OFFSET] |= 0x01; // Touchpad click -> Share
     return size;
 }
+
+void build_ds4_usb_report(const dualshock4_input_report_common& common, uint8_t num_touch,
+                          const dualshock4_touch_report touch_reps[4], bool has_real_battery,
+                          uint8_t out[DS_VIRTUAL_REPORT_SIZE]) {
+    memset(out, 0, DS_VIRTUAL_REPORT_SIZE);
+    auto* report = reinterpret_cast<dualshock4_input_report_usb*>(out);
+    report->report_id = 0x01;
+    report->common = common;
+    if (!has_real_battery) {
+        // No hardware behind this device: report a plausible fixed state
+        // (USB-wired, fully charged) instead of whatever zeroed or synthetic
+        // value common.status happens to hold. status[0] bit 4 is the cable,
+        // bits 3:0 the level (0-10, 0x0B = full).
+        report->common.status[0] = 0x1B;
+        report->common.status[1] = 0x00;
+    }
+    report->num_touch_reports = (num_touch > 3) ? 3 : num_touch;
+    for (int i = 0; i < report->num_touch_reports; ++i) {
+        report->touch_reports[i] = touch_reps[i];
+    }
+    // Real hardware fills every slot; leaving unused ones zeroed (contact 0,
+    // x 0, y 0) reads as a touch at (0,0) to any consumer that does not gate
+    // on num_touch_reports, so mark both points "not touching" (bit 7).
+    for (int i = report->num_touch_reports; i < 3; ++i) {
+        report->touch_reports[i].points[0].contact = 0x80;
+        report->touch_reports[i].points[1].contact = 0x80;
+    }
+}
+
+void build_dualsense_report(const dualshock4_input_report_common& common, uint8_t num_touch,
+                            const dualshock4_touch_report touch_reps[4], uint8_t seq,
+                            bool has_real_battery, uint8_t out[DS_VIRTUAL_REPORT_SIZE]) {
+    memset(out, 0, DS_VIRTUAL_REPORT_SIZE);
+    out[0] = 0x01;
+    auto* report = reinterpret_cast<dualsense_input_report*>(&out[1]);
+
+    report->x = common.x;
+    report->y = common.y;
+    report->rx = common.rx;
+    report->ry = common.ry;
+    report->z = common.z;
+    report->rz = common.rz;
+    report->buttons[0] = common.buttons[0];
+    report->buttons[1] = common.buttons[1];
+    report->buttons[2] = common.buttons[2] & 0x03;
+    report->buttons[3] = 0;
+    report->seq_number = seq;
+    memcpy(report->gyro, common.gyro, sizeof(report->gyro));
+    memcpy(report->accel, common.accel, sizeof(report->accel));
+    report->sensor_timestamp = (uint32_t)common.sensor_timestamp;
+
+    if (num_touch > 0) {
+        // The newest report of the batch: the older ones are the same
+        // fingers a few milliseconds earlier.
+        const int latest = (num_touch > 4 ? 4 : num_touch) - 1;
+        for (int i = 0; i < 2; ++i) {
+            const dualshock4_touch_point& from = touch_reps[latest].points[i];
+            report->points[i].contact = from.contact;
+            report->points[i].x_lo = from.x_lo;
+            report->points[i].x_hi = from.x_hi;
+            report->points[i].y_lo = from.y_lo;
+            report->points[i].y_hi = from.y_hi;
+        }
+    } else {
+        report->points[0].contact = 0x80;
+        report->points[1].contact = 0x80;
+    }
+
+    if (has_real_battery) {
+        int percent;
+        BatteryState state;
+        decode_ds4_battery(common.status[0], percent, state);
+        report->status[0] = encode_dualsense_battery(percent, state);
+    } else {
+        report->status[0] = 0x2B; // fully charged
+    }
+}

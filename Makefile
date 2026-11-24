@@ -379,15 +379,27 @@ TEST_CXXFLAGS  = -O1 -g $(STRICT_WARNINGS) -std=c++17 -DDS4_VERSION=\"test\" -Is
 GTEST_FILTER ?= *
 GTEST_ARGS    = --gtest_filter='$(GTEST_FILTER)' --gtest_output=xml:$(TEST_BUILD_DIR)/$(notdir $@).xml
 
+# kernel/ds4t-translate.c is the module's own translation, built here as plain
+# C so the unit tests can hold it to the daemon's src/translate.cpp.
+KTRANSLATE_SRC = kernel/ds4t-translate.c
+KTRANSLATE_OBJ = $(TEST_BUILD_DIR)/ds4t-translate.o
+KTRANSLATE_OBJ_SAN = $(TEST_BUILD_DIR)/ds4t-translate-san.o
+$(KTRANSLATE_OBJ): $(KTRANSLATE_SRC) kernel/ds4t-translate.h
+	@mkdir -p $(TEST_BUILD_DIR)
+	$(CC) -O1 -g $(PRODUCT_WARNINGS) -c -o $@ $<
+$(KTRANSLATE_OBJ_SAN): $(KTRANSLATE_SRC) kernel/ds4t-translate.h
+	@mkdir -p $(TEST_BUILD_DIR)
+	$(CC) -O1 -g $(PRODUCT_WARNINGS) -fsanitize=address,undefined -fno-sanitize-recover=undefined -c -o $@ $<
+
 UNIT_TEST_BIN = $(TEST_BUILD_DIR)/unit-tests
 UNIT_TEST_SRC = $(wildcard tests/unit/*.cpp)
 # hid-unbind-detect.cpp needs write_hid_driver_sysfs from main.cpp; the stub
 # stands in so it links without the daemon.
 UNIT_LIB_SRC  = src/ipc-client.cpp src/translate.cpp src/fs-util.cpp src/hid-unbind-detect.cpp tests/stubs/hid_driver_sysfs_stub.cpp
 
-$(UNIT_TEST_BIN): $(UNIT_TEST_SRC) $(UNIT_LIB_SRC) $(wildcard src/*.h)
+$(UNIT_TEST_BIN): $(UNIT_TEST_SRC) $(UNIT_LIB_SRC) $(KTRANSLATE_OBJ) $(wildcard src/*.h)
 	@mkdir -p $(TEST_BUILD_DIR)
-	$(CXX) $(TEST_CXXFLAGS) -o $@ $(UNIT_TEST_SRC) $(UNIT_LIB_SRC) $(GTEST_LDFLAGS) -lpthread
+	$(CXX) $(TEST_CXXFLAGS) -Ikernel -o $@ $(UNIT_TEST_SRC) $(UNIT_LIB_SRC) $(KTRANSLATE_OBJ) $(GTEST_LDFLAGS) -lpthread
 
 test-unit: $(UNIT_TEST_BIN)
 	$(UNIT_TEST_BIN) $(GTEST_ARGS)
@@ -399,10 +411,10 @@ USB_TEST_BIN = $(TEST_BUILD_DIR)/usb-transport-tests
 
 # Same unit suites under ASan+UBSan: memory/UB bugs in the parsers fail the run.
 SAN_TEST_BIN = $(TEST_BUILD_DIR)/unit-tests-san
-$(SAN_TEST_BIN): $(UNIT_TEST_SRC) $(UNIT_LIB_SRC) $(wildcard src/*.h)
+$(SAN_TEST_BIN): $(UNIT_TEST_SRC) $(UNIT_LIB_SRC) $(KTRANSLATE_OBJ_SAN) $(wildcard src/*.h)
 	@mkdir -p $(TEST_BUILD_DIR)
-	$(CXX) $(TEST_CXXFLAGS) -fsanitize=address,undefined -fno-sanitize-recover=undefined \
-	    -fno-omit-frame-pointer -o $@ $(UNIT_TEST_SRC) $(UNIT_LIB_SRC) $(GTEST_LDFLAGS) -lpthread
+	$(CXX) $(TEST_CXXFLAGS) -Ikernel -fsanitize=address,undefined -fno-sanitize-recover=undefined \
+	    -fno-omit-frame-pointer -o $@ $(UNIT_TEST_SRC) $(UNIT_LIB_SRC) $(KTRANSLATE_OBJ_SAN) $(GTEST_LDFLAGS) -lpthread
 
 test-sanitize: $(SAN_TEST_BIN) $(USB_TEST_BIN)-san
 	$(SAN_TEST_BIN) $(GTEST_ARGS)
