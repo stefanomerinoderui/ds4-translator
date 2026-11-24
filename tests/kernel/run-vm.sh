@@ -12,6 +12,11 @@
 # which catch most use-after-free and out-of-bounds writes in slab memory. For
 # the full set, build a debug kernel and pass its tree as KERNEL_DIR (the
 # module is built against it).
+#
+# The guest shares the host's /lib/modules, so a DKMS-installed copy of the
+# module would be autoloaded by the first DS4-shaped device and stand in for the
+# build under test; modprobe.blacklist keeps alias autoload off (insmod by path
+# is unaffected).
 
 set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -29,4 +34,4 @@ gcc -Wall -Wextra -Werror -O2 -o "$BUILD/pad-client" "$HERE/pad-client.c"
 g++ -std=c++17 -Wall -Wextra -Werror -O2 -I"$ROOT/src" -o "$BUILD/transport-check" \
     "$HERE/transport-check.cpp" "$ROOT/src/driver-transport.cpp"
 
-exec vng --run --append "slub_debug=FZPU kfence.sample_interval=1" --user root --exec "$HERE/test-binder.sh $ROOT/kernel/hid-ds4-translator.ko $BUILD/fake-pad $BUILD/pad-client $BUILD/transport-check $ROOT/build/ds4-translator $ROOT/build/ds4-ctl"
+exec vng --run --append "slub_debug=FZPU kfence.sample_interval=1 modprobe.blacklist=hid_ds4_translator" --user root --exec "$HERE/test-binder.sh $ROOT/kernel/hid-ds4-translator.ko $BUILD/fake-pad $BUILD/pad-client $BUILD/transport-check $ROOT/build/ds4-translator $ROOT/build/ds4-ctl"

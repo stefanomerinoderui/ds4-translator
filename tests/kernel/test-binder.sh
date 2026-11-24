@@ -128,6 +128,9 @@ mount | grep -q debugfs || mount -t debugfs none /sys/kernel/debug
 modprobe uhid || { echo "uhid unavailable"; exit 1; }
 modprobe hid_playstation || { echo "hid_playstation unavailable"; exit 1; }
 
+# A copy installed on the host (DKMS) must not stand in for the build under test.
+rmmod hid_ds4_translator 2>/dev/null
+
 echo "# 0a. oracle: hid-playstation accepts the fake Bluetooth pad's calibration"
 # A valid CRC proves the seed (0xA3) used by src/translate.cpp; the payload's
 # gyro words only validate in the Bluetooth order, which proves that layout.
