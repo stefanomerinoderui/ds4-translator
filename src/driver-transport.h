@@ -38,6 +38,10 @@ bool driver_transport_claim(int control_fd);
 // Hands every pad back to its regular driver.
 void driver_transport_detach(int control_fd);
 
+// True if the module has created the node for hid_id, i.e. it has claimed that
+// pad and the daemon could open it now.
+bool driver_transport_node_exists(const std::string& hid_id);
+
 // Reads the calibration report the module cached when it claimed the pad
 // (0x02, 37 bytes, over USB; 0x05, 41 bytes with CRC, over Bluetooth). False
 // if the module has none or the fd is not a pad node.

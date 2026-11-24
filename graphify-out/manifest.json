@@ -144,9 +144,9 @@
     "semantic_hash": "015b45491d31f39a22d30657dcec8fd8"
   },
   "src/main.cpp": {
-    "mtime": 1795493244.0010142,
-    "seen": 1795493353.378812,
-    "ast_hash": "0843a4db73f7845bd3f34c219d11ade1",
+    "mtime": 1795494448.7563908,
+    "seen": 1795494538.4998643,
+    "ast_hash": "c9bca107d667e3a7b3f551d18668c4d3",
     "semantic_hash": ""
   },
   "src/paths.h": {
@@ -564,9 +564,9 @@
     "semantic_hash": ""
   },
   "docs/kernel-driver.md": {
-    "mtime": 1795493213.3621852,
-    "seen": 1795493353.3789153,
-    "ast_hash": "8d651597ea50531b18a0e8a20155952e",
+    "mtime": 1795494467.1189508,
+    "seen": 1795494538.5001876,
+    "ast_hash": "6144177c17f958625dcd6eb8e39ff970",
     "semantic_hash": ""
   },
   "docs/security-findings.md": {
@@ -678,21 +678,21 @@
     "semantic_hash": ""
   },
   "src/driver-transport.cpp": {
-    "mtime": 1795492581.7050765,
-    "seen": 1795492806.59626,
-    "ast_hash": "7378607ec4714e0eea0707821e29bea6",
+    "mtime": 1795494424.0996044,
+    "seen": 1795494538.4997928,
+    "ast_hash": "1dec17273d5a434684e3f4d5aef52d0e",
     "semantic_hash": ""
   },
   "src/driver-transport.h": {
-    "mtime": 1795492581.7047071,
-    "seen": 1795492806.596264,
-    "ast_hash": "02606c48468fde0ba9659057a9365dee",
+    "mtime": 1795494424.0993035,
+    "seen": 1795494538.499797,
+    "ast_hash": "393e48c4cb1074a94f284ef1b11a4b5d",
     "semantic_hash": ""
   },
   "tests/component/test_driver_transport.cpp": {
-    "mtime": 1795491828.088116,
-    "seen": 1795492125.8655355,
-    "ast_hash": "07b62075c44a2929c3aa89292e756a66",
+    "mtime": 1795494467.1186824,
+    "seen": 1795494538.4998934,
+    "ast_hash": "ba1b59e173f41bae6e9497ca79b4fe27",
     "semantic_hash": ""
   },
   "tests/kernel/pad-client.c": {

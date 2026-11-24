@@ -599,6 +599,11 @@ std::string g_virtual_mac_str = kDefaultVirtualMac;
 // back to its regular driver.
 int g_driver_control_fd = -1;
 
+// True while the open physical connection was made through the driver method,
+// which needs no teardown beyond close() but is what the Bluetooth to USB
+// upgrade below keys on.
+bool g_phy_is_driver_transport = false;
+
 // IMU calibration of the physical pad, in the USB layout an emulated DS4
 // serves as feature report 0x02, when the driver method could read it from the
 // module. The other methods do not fetch it, and the emulated pad then serves
@@ -1144,6 +1149,7 @@ int open_and_hide_physical_unbind(const std::string& hid_id, std::vector<Physica
         if (g_driver_control_fd >= 0) {
             const int fd = driver_transport_open(hid_id);
             if (fd >= 0) {
+                g_phy_is_driver_transport = true;
                 load_physical_calibration(fd);
                 return fd;
             }
@@ -1287,6 +1293,7 @@ void release_physical_connection(int fd, const std::string& path, mode_t orig_mo
                                   std::vector<PhysicalNode>& hidden_nodes) {
     // The next pad has its own calibration (or none, on another method).
     set_physical_calibration(nullptr);
+    g_phy_is_driver_transport = false;
 
     // Before fd is closed: a Bluetooth rumble/LED report may still be
     // queued for it, and the pacer's flush thread must not write to a
@@ -3139,7 +3146,31 @@ int main(int argc, char* argv[]) {
             if (now - last_usb_upgrade_check >= USB_UPGRADE_CHECK_INTERVAL) {
                 last_usb_upgrade_check = now;
                 std::string usb_hid_id = find_usb_ds4_hid_id();
-                if (!usb_hid_id.empty()) {
+                if (!usb_hid_id.empty() && g_phy_is_driver_transport) {
+                    // The module claims both interfaces of the pad, and the
+                    // duplicate-MAC refusal below is hid-playstation's, which
+                    // never sees either, so nothing has to be unbound: just
+                    // read the USB node instead. Only once the module has
+                    // claimed it; the next check retries otherwise.
+                    if (driver_transport_node_exists(usb_hid_id)) {
+                        std::cout << "USB connection detected for physical controller; switching from Bluetooth ("
+                                  << phy_name << ") to USB (" << usb_hid_id << ") through the driver module..."
+                                  << std::endl;
+                        release_physical_connection(phy_fd, phy_path, orig_mode, hidden_nodes);
+                        phy_fd = -1;
+                        phy_name = "";
+                        // Same as the HID-BPF upgrade below: keep the virtual
+                        // device for the reconnect instead of recreating it.
+                        if (controller_type_emulates(target_type) && vdev_configured()) {
+                            emit_neutral_report(target_type);
+                            phy_disconnect_pending_destroy = true;
+                            phy_disconnect_time = std::chrono::steady_clock::now();
+                        }
+                        // The reconnect at the top of the loop opens this one,
+                        // not whichever pad the bus scan happens to list first.
+                        g_pending_unbind_hid_id = usb_hid_id;
+                    }
+                } else if (!usb_hid_id.empty()) {
                     // Under the BPF transport, phy_name already *is* the
                     // hid_id (see open_and_hide_physical_unbind()'s bus
                     // 0x0005 branch) -- hidraw_to_hid_id() expects a
@@ -3338,7 +3369,7 @@ int main(int argc, char* argv[]) {
                         response = "Error: too many live monitors are already connected.";
                     } else if (cmd == "status") {
                         std::string phy_display = phy_name.empty() ? "None" :
-                            ((g_phy_is_unbind_transport || g_phy_is_bpf_transport) ? phy_name : ("/dev/" + phy_name));
+                            ((g_phy_is_unbind_transport || g_phy_is_bpf_transport || g_phy_is_driver_transport) ? phy_name : ("/dev/" + phy_name));
                         response = "Physical Controller: " + phy_display + "\n";
                         response += "Connection Type: " + std::string(
                             phy_fd >= 0 ? (is_bluetooth ? "Bluetooth" : "USB") : "N/A") + "\n";
@@ -3351,7 +3382,7 @@ int main(int argc, char* argv[]) {
                         response += "DualSense Name: " + (g_name_dualsense.empty() ?
                             "Sony Interactive Entertainment DualSense Wireless Controller (default)" : g_name_dualsense) + "\n";
                         response += "Hide Method: " + std::string(hide_method_config_str(g_hide_method)) +
-                            ((g_phy_is_unbind_transport || g_phy_is_bpf_transport) ? " (active on current connection)" : "") + "\n";
+                            ((g_phy_is_unbind_transport || g_phy_is_bpf_transport || g_phy_is_driver_transport) ? " (active on current connection)" : "") + "\n";
                         response += "Device Open by Host: " + std::string((vdev_configured()) ? "Yes" : "No") + "\n";
                         response += "Standalone Virtual (no hardware): " + std::string(standalone_virtual ? "Yes" : "No") + "\n";
                         response += "MAC Squat: " + std::string(g_mac_squat_enabled ? "on" : "off") +

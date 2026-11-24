@@ -117,6 +117,19 @@ TEST_F(DriverTransportTest, DetachToleratesAnInvalidFd) {
     driver_transport_detach(-1); // must not crash or close fd -1's neighbours
 }
 
+TEST_F(DriverTransportTest, NodeExistsOnlyOnceTheModuleHasCreatedIt) {
+    EXPECT_FALSE(driver_transport_node_exists(kHidId));
+    make_node(kHidId);
+    EXPECT_TRUE(driver_transport_node_exists(kHidId));
+}
+
+TEST_F(DriverTransportTest, NodeExistsRejectsIdsThatEscapeTheDirectory) {
+    make_node("victim");
+    EXPECT_FALSE(driver_transport_node_exists("../dev/victim"));
+    EXPECT_FALSE(driver_transport_node_exists(""));
+    EXPECT_FALSE(driver_transport_node_exists(".hidden"));
+}
+
 TEST_F(DriverTransportTest, HidIdCannotEscapeTheDeviceDirectory) {
     make_node("victim");
     for (const char *bad : {"", "../dev/victim", "a/b", ".hidden"}) {

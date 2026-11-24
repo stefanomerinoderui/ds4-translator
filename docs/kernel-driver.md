@@ -412,13 +412,15 @@ access, by design. This is already true of the `unlink` method.
 - **Making `driver` the default.** It stays opt-in until the two points
   above are settled; flipping a default is a decision for the maintainer,
   not something this work can justify with a fake pad.
-- **Bluetooth to USB upgrade.** The daemon's hot-swap (unbind Bluetooth so
-  the kernel binds USB) is not done for this method. The module claims both
-  interfaces of a pad, so nothing is refused and nothing needs unbinding, but
-  the daemon keeps the Bluetooth connection while a cable is plugged in and
-  only moves to USB when Bluetooth drops. It was left out because the VM
-  cannot exercise it: the daemon deliberately ignores USB-bus `uhid`
-  devices, which is all a fake can be.
+- **Bluetooth to USB upgrade.** The daemon's hot-swap for this method does
+  not unbind anything: the module claims both interfaces of a pad and
+  hid-playstation's duplicate-MAC refusal never comes into play, so the daemon
+  just drops the Bluetooth connection and opens the USB node once the module
+  has created it (`main.cpp`, next to the HID-BPF upgrade). Only the node
+  lookup is tested (`test_driver_transport.cpp`); the VM cannot exercise the
+  switch itself, because the daemon deliberately ignores USB-bus `uhid`
+  devices, which is all a fake can be. Unplugging the cable falls back to
+  Bluetooth through the ordinary reconnect.
 
 ## 9. Packaging as a separate package
 

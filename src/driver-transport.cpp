@@ -17,6 +17,12 @@ namespace {
 
 constexpr auto kRetryInterval = std::chrono::milliseconds(50);
 
+// hid_id becomes a path component: reject anything that could leave the device
+// directory rather than trusting the uevent parser upstream.
+bool hid_id_is_path_safe(const std::string& hid_id) {
+    return !hid_id.empty() && hid_id.find('/') == std::string::npos && hid_id[0] != '.';
+}
+
 void report_abi_mismatch(unsigned module_abi) {
     std::cerr << "driver: kernel module speaks ABI " << module_abi
               << ", this daemon speaks " << DS4T_ABI_VERSION
@@ -97,6 +103,14 @@ bool driver_transport_set_ignore_mac(int control_fd, const std::string& mac) {
     return true;
 }
 
+bool driver_transport_node_exists(const std::string& hid_id) {
+    if (!hid_id_is_path_safe(hid_id)) {
+        return false;
+    }
+    struct stat st;
+    return stat((ds4paths::driver_dev_dir() + "/" + hid_id).c_str(), &st) == 0;
+}
+
 bool driver_transport_get_calibration(int pad_fd, std::vector<uint8_t>& report) {
     struct ds4t_feature feat;
     memset(&feat, 0, sizeof(feat));
@@ -119,9 +133,7 @@ bool driver_transport_available() {
 }
 
 int driver_transport_open(const std::string& hid_id, std::chrono::milliseconds wait) {
-    // hid_id becomes a path component: reject anything that could leave the
-    // device directory rather than trusting the uevent parser upstream.
-    if (hid_id.empty() || hid_id.find('/') != std::string::npos || hid_id[0] == '.') {
+    if (!hid_id_is_path_safe(hid_id)) {
         std::cerr << "driver: refusing suspicious hid id '" << hid_id << "'" << std::endl;
         return -1;
     }
