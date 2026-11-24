@@ -39,6 +39,9 @@ jobs:
             linux-headers linux-lts-headers
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # Nothing here pushes; do not leave the token in .git/config.
+          persist-credentials: false
 
       - name: Build against every installed kernel
         run: |
