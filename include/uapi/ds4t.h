@@ -12,6 +12,14 @@
  *   poll()   POLLIN when a report is queued, POLLHUP|POLLERR after removal
  *
  * Only one process may have a pad open at a time (-EBUSY otherwise).
+ *
+ * The module claims nothing until a daemon attaches: it opens
+ * /dev/ds4-translator/control (one opener at a time, -EBUSY otherwise), names
+ * its emulated pad with DS4T_IOC_CTL_SET_IGNORE_MAC, and then issues
+ * DS4T_IOC_CTL_ATTACH, which takes over every matching pad another driver
+ * already holds. Closing the node (including the daemon being killed) hands
+ * every pad back to the regular drivers. Until the attach, pads behave as if
+ * the module were not loaded.
  */
 #ifndef _UAPI_DS4T_H
 #define _UAPI_DS4T_H
@@ -20,12 +28,13 @@
 #include <linux/types.h>
 
 /* Bumped on any incompatible change to this header. */
-#define DS4T_ABI_VERSION	1
+#define DS4T_ABI_VERSION	2
 
 /* Largest report the node transfers (the largest real one is 78 bytes). */
 #define DS4T_MAX_REPORT		128
 
 #define DS4T_UNIQ_LEN		64
+#define DS4T_MAC_LEN		18	/* "AA:BB:CC:DD:EE:FF" plus NUL */
 #define DS4T_HID_ID_LEN		32
 
 struct ds4t_info {
@@ -38,8 +47,33 @@ struct ds4t_info {
 	char hid_id[DS4T_HID_ID_LEN];	/* sysfs name, NUL-terminated */
 };
 
+/* ioctl argument of DS4T_IOC_CTL_SET_IGNORE_MAC. */
+struct ds4t_mac {
+	char str[DS4T_MAC_LEN];		/* NUL-terminated; empty clears it */
+};
+
 #define DS4T_IOC_MAGIC		0xD4
 
+/* Pad nodes. */
+
 #define DS4T_IOC_GET_INFO	_IOR(DS4T_IOC_MAGIC, 0x01, struct ds4t_info)
+
+/* Control node. */
+
+/* The module's DS4T_ABI_VERSION, as a __u32. */
+#define DS4T_IOC_CTL_GET_ABI	_IOR(DS4T_IOC_MAGIC, 0x10, __u32)
+
+/*
+ * The MAC (a pad's uniq) of the daemon's own emulated controller, which the
+ * module must never claim. Forgotten when the control node is closed.
+ */
+#define DS4T_IOC_CTL_SET_IGNORE_MAC _IOW(DS4T_IOC_MAGIC, 0x11, struct ds4t_mac)
+
+/*
+ * Starts claiming pads, taking over the ones other drivers hold now. Separate
+ * from open() so the ignore MAC can be set first; otherwise an emulated pad
+ * that already exists would be claimed too. Idempotent.
+ */
+#define DS4T_IOC_CTL_ATTACH	_IO(DS4T_IOC_MAGIC, 0x12)
 
 #endif /* _UAPI_DS4T_H */

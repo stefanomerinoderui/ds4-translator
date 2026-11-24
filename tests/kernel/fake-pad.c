@@ -29,8 +29,9 @@
 
 #define VID_SONY 0x054c
 #define PID_DS4_V1 0x05c4
-#define REPORT_SIZE_USB 64
-#define REPORT_SIZE_BT 78
+// The fake's descriptor is the USB one, which declares only input report 0x01
+// (64 bytes); the HID core drops any other report ID, so both buses send that.
+#define REPORT_SIZE 64
 #define FEATURE_CAL_USB 0x02
 #define FEATURE_CAL_USB_SIZE 37
 #define FEATURE_CAL_BT 0x05
@@ -85,6 +86,9 @@ static int answer_get_report(int fd, const struct uhid_get_report_req *req)
 	struct uhid_event ev;
 	size_t size = 0;
 
+	printf("get_report rnum=%02x id=%u\n", req->rnum, req->id);
+	fflush(stdout);
+
 	memset(&ev, 0, sizeof(ev));
 	ev.type = UHID_GET_REPORT_REPLY;
 	ev.u.get_report_reply.id = req->id;
@@ -110,15 +114,14 @@ static int answer_get_report(int fd, const struct uhid_get_report_req *req)
 	return uhid_write(fd, &ev);
 }
 
-static int send_input(int fd, int bus, uint8_t counter)
+static int send_input(int fd, uint8_t counter)
 {
 	struct uhid_event ev;
-	size_t size = bus == BUS_BLUETOOTH ? REPORT_SIZE_BT : REPORT_SIZE_USB;
 
 	memset(&ev, 0, sizeof(ev));
 	ev.type = UHID_INPUT2;
-	ev.u.input2.size = size;
-	ev.u.input2.data[0] = bus == BUS_BLUETOOTH ? 0x11 : 0x01;
+	ev.u.input2.size = REPORT_SIZE;
+	ev.u.input2.data[0] = 0x01;
 	ev.u.input2.data[1] = counter;
 	return uhid_write(fd, &ev);
 }
@@ -213,7 +216,7 @@ int main(int argc, char **argv)
 			return 1;
 	}
 	for (i = 0; i < count && !g_stop; i++) {
-		if (send_input(fd, bus, (uint8_t)i) || handle_events(fd))
+		if (send_input(fd, (uint8_t)i) || handle_events(fd))
 			return 1;
 		sleep_ms(10);
 	}
@@ -222,7 +225,7 @@ int main(int argc, char **argv)
 
 	for (i = 0; i < hold * 100 && !g_stop; i++) {
 		sleep_ms(10);
-		if ((stream && send_input(fd, bus, counter++)) ||
+		if ((stream && send_input(fd, counter++)) ||
 		    handle_events(fd))
 			break;
 	}

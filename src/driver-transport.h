@@ -14,6 +14,29 @@
 #include <chrono>
 #include <string>
 
+// The module is inert until a daemon attaches through its control node: it
+// takes over the pads other drivers hold only once told to, and closing the
+// control fd -- or this process dying, however it dies -- hands every pad
+// back. That is why the daemon must keep the fd open exactly as long as it
+// wants pads held.
+//
+// Opens the control node and checks the module's ABI. The module still claims
+// nothing at this point. Returns the control fd, or -1 (module not loaded,
+// another daemon attached, ABI mismatch).
+int driver_transport_attach();
+
+// Names the emulated controller's MAC so the module never claims it. Must be
+// done before driver_transport_claim(), and kept current afterwards;
+// replaces any earlier value.
+bool driver_transport_set_ignore_mac(int control_fd, const std::string& mac);
+
+// Makes the module start claiming pads, taking over the ones other drivers
+// hold now. Blocks while that happens.
+bool driver_transport_claim(int control_fd);
+
+// Hands every pad back to its regular driver.
+void driver_transport_detach(int control_fd);
+
 // True while the kernel module is loaded. Callers use it to fall back to the
 // unbind method without paying driver_transport_open()'s wait for a node
 // that will never appear.

@@ -7,6 +7,10 @@
 //   pad-client NODE read N        read N input reports, print id/len/seq
 //   pad-client NODE write HEX     write one output report (e.g. 05ff00...)
 //   pad-client NODE hold          read until the pad goes away, print how
+//   pad-client CONTROL control [MAC]
+//                                 attach through the control node (optionally
+//                                 naming the emulated pad's MAC), then stay
+//                                 attached until killed
 
 #include <errno.h>
 #include <fcntl.h>
@@ -96,12 +100,38 @@ static int do_hold(int fd)
 	}
 }
 
+static int do_control(int fd, const char *mac)
+{
+	struct ds4t_mac arg = { { 0 } };
+	__u32 abi = 0;
+
+	if (ioctl(fd, DS4T_IOC_CTL_GET_ABI, &abi)) {
+		perror("pad-client: CTL_GET_ABI");
+		return 1;
+	}
+	if (mac) {
+		snprintf(arg.str, sizeof(arg.str), "%s", mac);
+		if (ioctl(fd, DS4T_IOC_CTL_SET_IGNORE_MAC, &arg)) {
+			perror("pad-client: CTL_SET_IGNORE_MAC");
+			return 1;
+		}
+	}
+	if (ioctl(fd, DS4T_IOC_CTL_ATTACH)) {
+		perror("pad-client: CTL_ATTACH");
+		return 1;
+	}
+	printf("attached abi=%u\n", abi);
+	fflush(stdout);
+	for (;;)
+		pause();
+}
+
 int main(int argc, char **argv)
 {
 	int fd, ret;
 
 	if (argc < 3) {
-		fprintf(stderr, "usage: pad-client NODE info|read N|write HEX|hold\n");
+		fprintf(stderr, "usage: pad-client NODE info|read N|write HEX|hold|control [MAC]\n");
 		return 2;
 	}
 	fd = open(argv[1], O_RDWR | O_CLOEXEC);
@@ -118,6 +148,8 @@ int main(int argc, char **argv)
 		ret = do_write(fd, argv[3]);
 	else if (!strcmp(argv[2], "hold"))
 		ret = do_hold(fd);
+	else if (!strcmp(argv[2], "control") && argc <= 4)
+		ret = do_control(fd, argc == 4 ? argv[3] : NULL);
 	else
 		ret = 2;
 	close(fd);

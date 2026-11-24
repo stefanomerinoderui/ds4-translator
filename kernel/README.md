@@ -4,10 +4,13 @@ HID driver that claims a physical DualShock 4 before `hid-playstation`, so
 no other driver creates a hidraw, input, battery or LED device for it. See
 [docs/kernel-driver.md](../docs/kernel-driver.md) for the design.
 
-**Status: prototype (M2).** The module binds the pad, dumps incoming reports
-to debugfs, and exposes each pad as `/dev/ds4-translator/<hid_id>` for the
-daemon's `driver` hide method (`ds4-ctl set-hide-method driver`). Not yet:
-the control device, release-on-close, and feature-report ioctls.
+**Status: prototype (M3).** The module is inert until a daemon attaches
+through `/dev/ds4-translator/control`; closing that node, however it happens,
+hands every pad back to `hid-playstation`. While attached it claims the pad,
+dumps incoming reports to debugfs, and exposes each pad as
+`/dev/ds4-translator/<hid_id>` for the daemon's `driver` hide method
+(`ds4-ctl set-hide-method driver`). Not yet: feature-report ioctls and
+calibration passthrough.
 
 ## Build
 
@@ -24,16 +27,18 @@ make kernel-check      # checkpatch.pl --strict
 Loading a module needs root, so these are shown, not run for you:
 
 ```
-sudo insmod kernel/hid-ds4-translator.ko
-sudo cat /sys/kernel/debug/ds4t/*      # last 32 reports of each claimed pad
-ls -l /dev/ds4-translator/             # one 0600 node per claimed pad
-sudo rmmod hid_ds4_translator          # pads go back to hid-playstation
+sudo insmod kernel/hid-ds4-translator.ko   # inert: pads still use hid-playstation
+sudo ds4-translator &                      # with hide_method=driver: attaches
+sudo cat /sys/kernel/debug/ds4t/*          # last 32 reports of each claimed pad
+ls -l /dev/ds4-translator/                 # control + one 0600 node per claimed pad
+sudo rmmod hid_ds4_translator              # only works once the daemon has detached
 ```
 
-`ignore_mac=AA:BB:CC:DD:EE:FF` (module parameter, also writable at runtime
-under `/sys/module/hid_ds4_translator/parameters/`) names the emulated pad,
-which is never claimed. Pads already bound to another driver, or that
-connect later and lose the load-order race, are taken over.
+While attached, pads already bound to another driver, or that connect later
+and lose the load-order race, are taken over. The daemon names its own
+emulated pad through the control node so it is never claimed;
+`ignore_mac=AA:BB:CC:DD:EE:FF` (module parameter, writable at runtime under
+`/sys/module/hid_ds4_translator/parameters/`) does the same by hand.
 
 ## Test without hardware
 

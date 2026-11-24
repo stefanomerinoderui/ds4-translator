@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-only
 //
 // Drives src/driver-transport.cpp (the daemon's side) against the real kernel
-// module, the way main.cpp's loop does: open by hid_id, poll, read reports,
-// write an output report, and notice the pad going away. Used by
-// test-binder.sh.
+// module, the way main.cpp does: attach (naming the emulated pad's MAC before
+// claiming anything), open by hid_id, poll, read reports, write an output
+// report, and notice the pad going away. Used by test-binder.sh.
 //
-//   transport-check HID_ID
+//   transport-check HID_ID [IGNORE_MAC]
 
 #include <chrono>
 #include <cstdio>
@@ -74,12 +74,18 @@ int wait_for_disconnect(int fd) {
 } // namespace
 
 int main(int argc, char **argv) {
-    if (argc != 2) {
-        std::cerr << "usage: transport-check HID_ID" << std::endl;
+    if (argc < 2 || argc > 3) {
+        std::cerr << "usage: transport-check HID_ID [IGNORE_MAC]" << std::endl;
         return 2;
     }
-    if (!driver_transport_available()) {
-        std::cout << "module not loaded" << std::endl;
+    const int control_fd = driver_transport_attach();
+    if (control_fd < 0) {
+        std::cout << "attach failed" << std::endl;
+        return 1;
+    }
+    if ((argc == 3 && !driver_transport_set_ignore_mac(control_fd, argv[2])) ||
+        !driver_transport_claim(control_fd)) {
+        std::cout << "claim failed" << std::endl;
         return 1;
     }
     const int fd = driver_transport_open(argv[1]);
@@ -89,5 +95,6 @@ int main(int argc, char **argv) {
     }
     const int rc = read_reports(fd) || write_output(fd) || wait_for_disconnect(fd);
     close(fd);
+    driver_transport_detach(control_fd);
     return rc;
 }

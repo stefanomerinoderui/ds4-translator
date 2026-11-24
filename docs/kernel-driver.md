@@ -120,22 +120,30 @@ today. Reliable discriminators, in order of preference:
    device whose `uniq` matches. The daemon has to set this before it
    creates the virtual pad, or the module could claim it.
 
-**Daemon not running.** Two possible policies:
+**Daemon not running.** The module only claims pads while a daemon is
+attached, which fixes the question of what a pad does without one: it simply
+belongs to `hid-playstation`, as if the module were not loaded.
 
-- *Hold:* the module keeps the pad but exposes nothing. Simple, but the
-  pad is dead without the daemon.
-- *Release:* `probe()` returns `-ENODEV` while no daemon is attached,
-  so `hid-playstation` binds normally; attaching triggers a reprobe of
-  matching devices. This reintroduces the brief `hid-playstation` bind
-  (and battery notification) on attach, but only once per daemon start.
+- The daemon attaches by opening `/dev/ds4-translator/control` (one opener at
+  a time), naming its emulated pad's MAC with `DS4T_IOC_CTL_SET_IGNORE_MAC`,
+  and then issuing `DS4T_IOC_CTL_ATTACH`. The MAC comes first because the
+  attach takes over every matching pad on the bus, and the emulated pad
+  (same IDs) must not be among them.
+- Closing the control node, including by the daemon being killed, detaches:
+  every claimed pad is unbound and the bus is rescanned so each lands back on
+  its regular driver. This replaces `rebind-unbound-controllers.sh` for the
+  driver method, with no `ExecStopPost`.
+- Both takeover and release run on the module's own workqueue, not in the
+  caller's context. Probing `hid-playstation` reads feature reports with an
+  interruptible wait, which fails at once with `-EIO` when a signal is
+  pending, as it is while a killed daemon's file descriptors are closed;
+  done there, the pad would come back driverless.
+- The open control node pins the module, so `rmmod` is refused while a daemon
+  is attached; there is no need for `ExecStopPost=modprobe -r`.
 
-Recommended: tie module lifetime to the service (`ExecStartPre=modprobe`,
-`ExecStopPost=modprobe -r`) and use *hold* while loaded. Unbinding does
-not make the driver core reprobe other drivers, so on unload the module
-must trigger it itself (`bus_rescan_devices(&hid_bus_type)` in the exit
-path, if exported to modules **(verify)**; otherwise
-`echo > /sys/bus/hid/drivers_probe` from `ExecStopPost`). With that in
-place, unload replaces `rebind-unbound-controllers.sh`.
+Briefly letting `hid-playstation` bind, with its battery notification, on
+attach is the price of this policy. It happens once per daemon start, and
+only when the pad was connected before the daemon.
 
 ### 3.2 Probe
 
@@ -227,10 +235,11 @@ so SDL, Steam, browsers and Wine never enumerate it.
 | `ioctl(DS4T_GET_INFO)` | Bus, VID, PID, MAC (`hdev->uniq`), HID ID string |
 | `ioctl(DS4T_GET_FEATURE)` / `ioctl(DS4T_SET_FEATURE)` | Feature reports via `hid_hw_raw_request()`, for calibration and pairing (Part 2 of [unimplemented-features.md](unimplemented-features.md)) |
 
-A misc control device, `/dev/ds4-translator/control`, carries
-module-wide settings (the emulated MAC to ignore, the hold/release policy)
-and announces pad arrival and removal, replacing the daemon's raw uevent
-socket for this purpose.
+A misc control device, `/dev/ds4-translator/control`, carries the
+module-wide state: attach (which turns the module on) and detach (the close),
+and the emulated MAC to ignore; see section 3.1. Announcing pad arrival and
+removal through it, to replace the daemon's raw uevent socket, is not
+implemented: the HID-bus uevents already carry everything the daemon needs.
 
 Exposing feature reports through the module also unlocks the calibration
 work: the daemon becomes the one process that can talk to the pad, so
@@ -287,9 +296,9 @@ Feature-report ioctls over Bluetooth are the worst case: with `UserspaceHID`
 the request round-trips through `bluetoothd` and can time out, so every
 blocking call needs a timeout and must be woken on disconnect.
 
-**Daemon crash.** *Hold* leaves every pad dead if the daemon is killed
-without running `ExecStopPost`. The module should release all pads when
-the last fd on `/dev/ds4-translator/control` closes.
+**Daemon crash.** Pads are released when the control node closes (section
+3.1), so a killed daemon leaves no pad dead. This is covered by a
+`SIGKILL` test in `tests/kernel/test-binder.sh`.
 
 **Licensing.** The HID and driver-core symbols the module needs are
 `EXPORT_SYMBOL_GPL`, so the module must be GPL-2.0 compatible. The BPF
@@ -369,7 +378,8 @@ access, by design. This is already true of the `unlink` method.
 3. **Feature-report ioctls**, then calibration passthrough (Part 1, item 4
    of the unimplemented-features doc).
 4. **Packaging** (section 9): DKMS, modprobe `softdep`, service
-   `ExecStartPre`/`ExecStopPost`, Secure Boot instructions in the README.
+   `ExecStartPre=-modprobe` (no `ExecStopPost` needed), Secure Boot
+   instructions in the README.
 5. **Remove** the workarounds in section 4 only after the module has run
    as the default for a release, keeping `unbind` as the fallback.
 

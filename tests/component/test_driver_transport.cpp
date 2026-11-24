@@ -11,6 +11,7 @@
 #include <string>
 #include <thread>
 
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -78,6 +79,42 @@ TEST_F(DriverTransportTest, WaitsForTheNodeToAppear) {
     creator.join();
     EXPECT_GE(Clock::now() - start, std::chrono::milliseconds(150));
     EXPECT_LT(Clock::now() - start, std::chrono::seconds(2));
+}
+
+TEST_F(DriverTransportTest, AttachFailsWhenTheModuleIsNotLoaded) {
+    EXPECT_EQ(driver_transport_attach(), -1);
+}
+
+TEST_F(DriverTransportTest, AttachRejectsAControlNodeThatIsNotTheModule) {
+    ASSERT_EQ(mkdir(module_dir_.c_str(), 0700), 0);
+    make_node("control");
+    EXPECT_EQ(driver_transport_attach(), -1); // ENOTTY on the ABI ioctl
+}
+
+TEST_F(DriverTransportTest, AttachFailsWithoutAControlNode) {
+    ASSERT_EQ(mkdir(module_dir_.c_str(), 0700), 0);
+    EXPECT_EQ(driver_transport_attach(), -1);
+}
+
+TEST_F(DriverTransportTest, IgnoreMacAndClaimFailOnAFdThatIsNotTheModule) {
+    make_node("control");
+    const int fd = open((dev_dir_ + "/control").c_str(), O_RDWR);
+    ASSERT_GE(fd, 0);
+    EXPECT_FALSE(driver_transport_set_ignore_mac(fd, "AA:BB:CC:DD:EE:FF"));
+    EXPECT_FALSE(driver_transport_claim(fd));
+    close(fd);
+}
+
+TEST_F(DriverTransportTest, IgnoreMacRejectsAStringThatCannotFit) {
+    make_node("control");
+    const int fd = open((dev_dir_ + "/control").c_str(), O_RDWR);
+    ASSERT_GE(fd, 0);
+    EXPECT_FALSE(driver_transport_set_ignore_mac(fd, std::string(64, 'A')));
+    close(fd);
+}
+
+TEST_F(DriverTransportTest, DetachToleratesAnInvalidFd) {
+    driver_transport_detach(-1); // must not crash or close fd -1's neighbours
 }
 
 TEST_F(DriverTransportTest, HidIdCannotEscapeTheDeviceDirectory) {

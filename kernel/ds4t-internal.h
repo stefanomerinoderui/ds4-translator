@@ -76,6 +76,19 @@ void ds4t_pad_unregister(struct ds4t_pad *pad);
 /* Called from raw_event(): queue one input report for user space. */
 void ds4t_pad_report(struct ds4t_pad *pad, const u8 *data, int size);
 
+/* Attach state (ds4t-driver.c): the module only claims pads while attached. */
+bool ds4t_attached(void);
+/* Takes over every matching pad another driver holds. */
+void ds4t_attach(void);
+/* Releases every claimed pad back to the regular drivers. */
+void ds4t_detach(void);
+
+/* The daemon's emulated MAC (ds4t-control.c), never to be claimed. */
+bool ds4t_mac_ignored(const char *uniq);
+
+int ds4t_control_init(void);
+void ds4t_control_exit(void);
+
 void ds4t_debugfs_init(void);
 void ds4t_debugfs_exit(void);
 

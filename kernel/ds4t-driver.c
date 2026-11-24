@@ -32,6 +32,7 @@ struct ds4t_steal_work {
 
 static struct hid_driver ds4t_driver;
 static struct workqueue_struct *ds4t_wq;
+static bool ds4t_is_attached;		/* a daemon holds the control node */
 
 static const struct hid_device_id ds4t_devices[] = {
 	{ HID_USB_DEVICE(DS4T_VENDOR_SONY, DS4T_PRODUCT_PS4_V1) },
@@ -52,6 +53,8 @@ static bool ds4t_is_emulated(struct hid_device *hdev)
 	struct device *d;
 
 	if (ignore_mac[0] && strcasecmp(hdev->uniq, ignore_mac) == 0)
+		return true;
+	if (ds4t_mac_ignored(hdev->uniq))
 		return true;
 
 	if (hdev->bus != BUS_USB)
@@ -106,7 +109,8 @@ static int ds4t_probe(struct hid_device *hdev, const struct hid_device_id *id)
 	struct ds4t_pad *pad;
 	int ret;
 
-	if (ds4t_is_emulated(hdev))
+	/* Without a daemon every pad belongs to the regular drivers. */
+	if (!ds4t_attached() || ds4t_is_emulated(hdev))
 		return -ENODEV;
 
 	pad = ds4t_pad_alloc(hdev);
@@ -178,23 +182,31 @@ static struct hid_driver ds4t_driver = {
 	.raw_event = ds4t_raw_event,
 };
 
+bool ds4t_attached(void)
+{
+	return READ_ONCE(ds4t_is_attached);
+}
+
 /*
  * Moves a pad that another driver (hid-playstation, hid-sony, ...) bound
- * first over to this driver. A driver registered earlier is always tried
- * first, so when it loses the load-order race the pad has to be taken over.
- * If our probe refuses it, hand it back so it is never left driverless.
+ * first over to this driver, or binds one that has no driver at all. A driver
+ * registered earlier is always tried first, so when it wins the race the pad
+ * has to be taken over. If our probe refuses it, hand it back so it is never
+ * left driverless.
  */
 static void ds4t_steal(struct device *dev)
 {
 	struct hid_device *hdev = to_hid_device(dev);
 
-	if (!dev->driver || dev->driver == &ds4t_driver.driver)
+	if (!ds4t_attached() || dev->driver == &ds4t_driver.driver)
 		return;
 	if (!hid_match_id(hdev, ds4t_devices) || ds4t_is_emulated(hdev))
 		return;
 
-	hid_info(hdev, "taking over from %s\n", dev->driver->name);
-	device_release_driver(dev);
+	if (dev->driver) {
+		hid_info(hdev, "taking over from %s\n", dev->driver->name);
+		device_release_driver(dev);
+	}
 	if (device_driver_attach(&ds4t_driver.driver, dev) &&
 	    device_attach(dev) < 0)
 		hid_warn(hdev, "could not rebind after takeover failed\n");
@@ -204,6 +216,52 @@ static int ds4t_steal_cb(struct device *dev, void *unused)
 {
 	ds4t_steal(dev);
 	return 0;
+}
+
+static int ds4t_release_cb(struct device *dev, void *unused)
+{
+	if (dev->driver == &ds4t_driver.driver)
+		device_release_driver(dev);
+	return 0;
+}
+
+/*
+ * Taking pads over and handing them back probe other drivers, whose feature
+ * report reads wait interruptibly. Run from the daemon's own context that
+ * fails at once with -EIO whenever a signal is pending, which is exactly the
+ * case when the daemon is being killed -- so both happen on the workqueue.
+ */
+static void ds4t_steal_all_workfn(struct work_struct *work)
+{
+	bus_for_each_dev(&hid_bus_type, NULL, NULL, ds4t_steal_cb);
+}
+
+/* Unbinding does not reprobe, so the pads are rescanned onto their drivers. */
+static void ds4t_release_all_workfn(struct work_struct *work)
+{
+	bus_for_each_dev(&hid_bus_type, NULL, NULL, ds4t_release_cb);
+	if (bus_rescan_devices(&hid_bus_type))
+		pr_warn(DS4T_NAME ": rescan after release failed\n");
+}
+
+static DECLARE_WORK(ds4t_steal_all_work, ds4t_steal_all_workfn);
+static DECLARE_WORK(ds4t_release_all_work, ds4t_release_all_workfn);
+
+void ds4t_attach(void)
+{
+	WRITE_ONCE(ds4t_is_attached, true);
+	queue_work(ds4t_wq, &ds4t_steal_all_work);
+	/* Returns once every pad is taken over; the queue is ordered, so a
+	 * release from a previous detach has finished before this runs.
+	 */
+	flush_work(&ds4t_steal_all_work);
+}
+
+/* Does not wait: the pads are back on their drivers shortly after. */
+void ds4t_detach(void)
+{
+	WRITE_ONCE(ds4t_is_attached, false);
+	queue_work(ds4t_wq, &ds4t_release_all_work);
 }
 
 static void ds4t_steal_workfn(struct work_struct *work)
@@ -263,9 +321,13 @@ static int __init ds4t_init(void)
 	if (ret)
 		goto err_unregister;
 
-	bus_for_each_dev(&hid_bus_type, NULL, NULL, ds4t_steal_cb);
+	ret = ds4t_control_init();
+	if (ret)
+		goto err_notifier;
 	return 0;
 
+err_notifier:
+	bus_unregister_notifier(&hid_bus_type, &ds4t_nb);
 err_unregister:
 	hid_unregister_driver(&ds4t_driver);
 err_dbg:
@@ -276,12 +338,15 @@ err_dbg:
 
 static void __exit ds4t_exit(void)
 {
+	/*
+	 * An open control node pins the module, so nothing is attached here;
+	 * destroying the workqueue lets a release queued by the last close
+	 * finish before the driver goes.
+	 */
+	ds4t_control_exit();
 	bus_unregister_notifier(&hid_bus_type, &ds4t_nb);
 	destroy_workqueue(ds4t_wq);	/* drains pending takeovers */
 	hid_unregister_driver(&ds4t_driver);
-	/* Unbinding does not reprobe, so give every freed pad back. */
-	if (bus_rescan_devices(&hid_bus_type))
-		pr_warn(DS4T_NAME ": rescan after unload failed\n");
 	ds4t_debugfs_exit();
 }
 

@@ -592,6 +592,60 @@ static const std::string kVirtualMacRuntimePath = kVirtualMacRuntimeDir + "/virt
 // uhid's uniq and the USB gadget's serialnumber want the string, DS4 feature
 // reports 0x10/0x12 carry the same address byte-reversed.
 std::string g_virtual_mac_str = kDefaultVirtualMac;
+
+// Control fd of the hid-ds4-translator module while this daemon is attached
+// to it (see driver-transport.h); -1 otherwise. Holding it open is what keeps
+// the module claiming pads: closing it, or this process dying, hands every pad
+// back to its regular driver.
+int g_driver_control_fd = -1;
+
+// Tells the module which MAC the emulated controller advertises, so it never
+// claims its own emulated pad. No-op while detached; attaching pushes it
+// before claiming.
+static void driver_push_ignore_mac() {
+    if (g_driver_control_fd >= 0) {
+        driver_transport_set_ignore_mac(g_driver_control_fd, g_virtual_mac_str);
+    }
+}
+
+// Attaches to the module while the driver method is in force and the pad is
+// meant to be hidden, and detaches the rest of the time -- which is what
+// releases the pad to games under `release-physical`, a type of "none", or
+// another hide method. Called on every pass of the main loop, so a failed
+// attach (module not loaded yet) is retried, but not more than every few
+// seconds.
+static void reconcile_driver_attachment(bool want) {
+    static std::chrono::steady_clock::time_point next_attempt;
+    constexpr auto kRetryInterval = std::chrono::seconds(5);
+
+    if (!want) {
+        if (g_driver_control_fd >= 0) {
+            driver_transport_detach(g_driver_control_fd);
+            g_driver_control_fd = -1;
+            std::cout << "driver: detached; the physical pad is back with its regular driver." << std::endl;
+        }
+        next_attempt = {};
+        return;
+    }
+    if (g_driver_control_fd >= 0 || std::chrono::steady_clock::now() < next_attempt) {
+        return;
+    }
+    g_driver_control_fd = driver_transport_attach();
+    if (g_driver_control_fd < 0) {
+        next_attempt = std::chrono::steady_clock::now() + kRetryInterval;
+        return;
+    }
+    // The MAC first: claiming takes over every pad already on the bus, and
+    // the emulated one must not be among them.
+    driver_push_ignore_mac();
+    if (!driver_transport_claim(g_driver_control_fd)) {
+        driver_transport_detach(g_driver_control_fd);
+        g_driver_control_fd = -1;
+        next_attempt = std::chrono::steady_clock::now() + kRetryInterval;
+        return;
+    }
+    std::cout << "driver: attached to hid_ds4_translator." << std::endl;
+}
 uint8_t g_virtual_mac_le[6] = { 0xe8, 0x47, 0x3a, 0xd6, 0xe7, 0x74 };
 
 std::string g_remembered_physical_mac; // learned from the pad; empty until then
@@ -734,6 +788,8 @@ static void select_virtual_mac(ControllerType type) {
     std::error_code ec;
     fs::create_directories(kVirtualMacRuntimeDir, ec);
     (void)ds4fs::write_file_atomic(kVirtualMacRuntimePath, g_virtual_mac_str + "\n", 0644, nullptr);
+
+    driver_push_ignore_mac();
 }
 
 // hid-generic deliberately refuses every device the kernel lists in its
@@ -1049,14 +1105,14 @@ int open_and_hide_physical_unbind(const std::string& hid_id, std::vector<Physica
     // everything below. Its fd needs no teardown beyond close(), which is
     // what release_physical_connection() already does for a plain fd.
     if (g_hide_method == HIDE_METHOD_DRIVER) {
-        if (driver_transport_available()) {
+        if (g_driver_control_fd >= 0) {
             const int fd = driver_transport_open(hid_id);
             if (fd >= 0) {
                 return fd;
             }
             std::cerr << "driver: falling back to the unbind method for " << hid_id << "." << std::endl;
         } else {
-            std::cerr << "driver: hid_ds4_translator is not loaded; using the unbind method." << std::endl;
+            std::cerr << "driver: not attached to hid_ds4_translator; using the unbind method." << std::endl;
         }
     }
 
@@ -2852,6 +2908,10 @@ int main(int argc, char* argv[]) {
 
     std::vector<struct pollfd> pfds; // reused across iterations; cleared and repopulated each pass below
     while (running) {
+        reconcile_driver_attachment(g_hide_method == HIDE_METHOD_DRIVER &&
+                                    controller_type_hides_physical(target_type) &&
+                                    !ignore_physical && !standalone_virtual);
+
         // If physical controller disconnected, scan & setup. Skipped while a
         // standalone virtual controller (created via `ds4-ctl virtual`, no
         // physical hardware involved) is active, so plugging in real
@@ -4305,6 +4365,9 @@ int main(int argc, char* argv[]) {
         std::cout << "Releasing physical controller grab..." << std::endl;
         release_physical_connection(phy_fd, phy_path, orig_mode, hidden_nodes);
     }
+    // After the virtual device is gone (see the player-slot note above), so
+    // the pad is handed back to hid-playstation only now.
+    reconcile_driver_attachment(false);
     restore_suppressed_bluetooth();
     // The release above may have recreated nodes for a device that's
     // already gone; without the main loop left to sweep, this is the last

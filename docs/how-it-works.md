@@ -57,11 +57,13 @@ entirely — so the driver cannot simply be unbound the way the USB side is.
 removes them.
 
 `driver` replaces both transports with the out-of-tree module in `kernel/`
-(design: [kernel-driver.md](kernel-driver.md)). When the module is not loaded,
-or does not hold the pad, a connection falls back to `unbind`. **Known gap:**
-`ds4-ctl release-physical` and a stopped daemon only close the node; the
-module keeps the pad until it is unloaded or the pad is replugged (the
-release-on-close behavior is still to come).
+(design: [kernel-driver.md](kernel-driver.md)). The module is inert until the
+daemon attaches through `/dev/ds4-translator/control`; it does so only while
+this method is selected, a physical pad is meant to be hidden (not type
+`none`) and `release-physical` is not in force. Attaching takes over pads
+`hid-playstation` already holds. Detaching, or the daemon dying however it
+dies, hands every pad back. When the module is not loaded, or does not hold
+the pad, a connection falls back to `unbind`.
 
 **How `unlink` works.** `/dev` is `devtmpfs`, where root can `unlink()` a
 device node like any other file. The unlink drops only the *path*: the

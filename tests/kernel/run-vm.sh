@@ -20,9 +20,10 @@ command -v vng >/dev/null || { echo "virtme-ng not found: uv tool install virtme
 KDIR=${KERNEL_DIR:-/lib/modules/$(uname -r)/build}
 mkdir -p "$BUILD"
 make -C "$ROOT/kernel" KDIR="$KDIR" >/dev/null
+make -C "$ROOT" build/ds4-translator build/ds4-ctl >/dev/null
 gcc -Wall -Wextra -Werror -O2 -o "$BUILD/fake-pad" "$HERE/fake-pad.c"
 gcc -Wall -Wextra -Werror -O2 -o "$BUILD/pad-client" "$HERE/pad-client.c"
 g++ -std=c++17 -Wall -Wextra -Werror -O2 -I"$ROOT/src" -o "$BUILD/transport-check" \
     "$HERE/transport-check.cpp" "$ROOT/src/driver-transport.cpp"
 
-exec vng --run --user root --exec "$HERE/test-binder.sh $ROOT/kernel/hid-ds4-translator.ko $BUILD/fake-pad $BUILD/pad-client $BUILD/transport-check"
+exec vng --run --user root --exec "$HERE/test-binder.sh $ROOT/kernel/hid-ds4-translator.ko $BUILD/fake-pad $BUILD/pad-client $BUILD/transport-check $ROOT/build/ds4-translator $ROOT/build/ds4-ctl"
