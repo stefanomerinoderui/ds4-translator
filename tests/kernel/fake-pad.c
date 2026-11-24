@@ -32,8 +32,14 @@
 #define FEATURE_CAL_USB_SIZE 37
 #define FEATURE_CAL_BT 0x05
 #define FEATURE_CAL_BT_SIZE 41
+// hid-playstation reads these in probe and gives up if they fail.
+#define FEATURE_PAIRING 0x12
+#define FEATURE_PAIRING_SIZE 16
+#define FEATURE_FIRMWARE 0xA3
+#define FEATURE_FIRMWARE_SIZE 49
 
 static volatile sig_atomic_t g_stop;
+static uint8_t g_mac[6];	// as sent in the pairing report: least significant byte first
 
 static void on_signal(int sig)
 {
@@ -70,7 +76,7 @@ static int create_device(int fd, int bus, const char *mac)
 }
 
 // Feature reads: report id first, then a pattern of 0xA5 so a test can tell
-// real data from a zero-filled buffer.
+// real data from a zero-filled buffer. The pairing report carries the MAC.
 static int answer_get_report(int fd, const struct uhid_get_report_req *req)
 {
 	struct uhid_event ev;
@@ -84,10 +90,17 @@ static int answer_get_report(int fd, const struct uhid_get_report_req *req)
 	else if (req->rnum == FEATURE_CAL_BT)
 		size = FEATURE_CAL_BT_SIZE;
 
+	else if (req->rnum == FEATURE_PAIRING)
+		size = FEATURE_PAIRING_SIZE;
+	else if (req->rnum == FEATURE_FIRMWARE)
+		size = FEATURE_FIRMWARE_SIZE;
+
 	if (size) {
 		ev.u.get_report_reply.size = size;
 		memset(ev.u.get_report_reply.data, 0xA5, size);
 		ev.u.get_report_reply.data[0] = req->rnum;
+		if (req->rnum == FEATURE_PAIRING)
+			memcpy(&ev.u.get_report_reply.data[1], g_mac, sizeof(g_mac));
 	} else {
 		ev.u.get_report_reply.err = EIO;
 	}
@@ -166,6 +179,11 @@ int main(int argc, char **argv)
 	}
 	if (!bus || !mac || i != argc)
 		return usage();
+	if (sscanf(mac, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx", &g_mac[5], &g_mac[4],
+		   &g_mac[3], &g_mac[2], &g_mac[1], &g_mac[0]) != 6) {
+		fprintf(stderr, "fake-pad: bad MAC '%s'\n", mac);
+		return 2;
+	}
 
 	signal(SIGTERM, on_signal);
 	signal(SIGINT, on_signal);

@@ -22,4 +22,4 @@ mkdir -p "$BUILD"
 make -C "$ROOT/kernel" KDIR="$KDIR" >/dev/null
 gcc -Wall -Wextra -Werror -O2 -o "$BUILD/fake-pad" "$HERE/fake-pad.c"
 
-exec vng --user root --exec "$HERE/test-binder.sh $ROOT/kernel/hid-ds4-translator.ko $BUILD/fake-pad"
+exec vng --run --user root --exec "$HERE/test-binder.sh $ROOT/kernel/hid-ds4-translator.ko $BUILD/fake-pad"

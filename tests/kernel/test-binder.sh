@@ -11,7 +11,7 @@ set -u
 KO=${1:?module path}
 FAKE=${2:?fake-pad path}
 DRIVER=hid-ds4-translator
-FALLBACK=hid-playstation
+FALLBACK=playstation   # driver name; the module is hid_playstation
 MAC_A=AA:BB:CC:00:00:01
 MAC_B=AA:BB:CC:00:00:02
 DEBUGFS=/sys/kernel/debug/ds4t
@@ -46,10 +46,11 @@ bound_driver() {
     [ -L "$dev/driver" ] && basename "$(readlink "$dev/driver")"
 }
 
-# Waits up to ~3 s for $1's bound driver to become $2.
+# Waits up to ~10 s for $1's bound driver to become $2 (a rebind after
+# rmmod takes a couple of seconds in the VM).
 wait_driver() {
     local _
-    for _ in $(seq 30); do
+    for _ in $(seq 100); do
         [ "$(bound_driver "$1")" = "$2" ] && return 0
         sleep 0.1
     done
@@ -94,8 +95,9 @@ check "no input node"  bash -c "! ls '$dev'/input/* >/dev/null 2>&1"
 check "no power_supply" bash -c "! ls /sys/class/power_supply/ps-controller-battery-* >/dev/null 2>&1"
 dump=$DEBUGFS/$(basename "$dev")
 check "debugfs ring has the reports" grep -q '^total [1-9]' "$dump"
+# The driver symlink appears before probe finishes, so give the log a moment.
 check "probe logged the claim" \
-    bash -c "dmesg | grep -q 'claimed USB pad $MAC_A'"
+    bash -c "sleep 0.5; dmesg | grep -qi 'claimed USB pad $MAC_A'"
 check "no calibration warning" bash -c "! dmesg | grep -q 'calibration report .* failed'"
 
 echo "# 2. unload hands the pad back"

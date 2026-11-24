@@ -100,10 +100,10 @@ So the module has to be registered before `hid-playstation`:
   instead of on every connection.
 
 **Other drivers matching the same IDs.** `hid-sony` is also shipped as a
-module and may match the same IDs, depending on the kernel version
-**(verify with `modinfo` aliases for `054c:05c4` and `054c:09cc`)**. The
-rebind logic must cover every driver that can hold the pad, not only
-`hid-playstation`.
+module, but on kernel 7.3.5 its aliases do not include `054c:05c4` or
+`054c:09cc`; only `hid-playstation` does (checked with `modinfo`). Older
+kernels may differ, and the module does not depend on it: the takeover
+applies to whichever driver holds a matching pad.
 
 **Not touching the emulated controller.** The emulated DS4 uses the same
 `054c:05c4` ID, and under the `functionfs` backend it is a real USB device
