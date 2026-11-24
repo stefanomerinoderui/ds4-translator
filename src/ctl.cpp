@@ -755,7 +755,34 @@ static bool calibrate_stick_center(const std::string& target) {
     return true;
 }
 
+// Calibration is USB only, and the daemon refuses it over Bluetooth. Checking
+// the connection before the confirmation prompt means the user is not asked to
+// confirm something that would then be refused.
+static bool check_pad_connected_over_usb() {
+    std::string response;
+    if (!send_command("status", response)) {
+        std::cerr << response << std::endl;
+        print_daemon_unreachable_help();
+        return false;
+    }
+    const std::string key = "Connection Type: ";
+    const size_t start = response.find(key);
+    if (start == std::string::npos) {
+        std::cerr << "Error: could not read the controller's connection type from the daemon." << std::endl;
+        return false;
+    }
+    const size_t value_start = start + key.size();
+    const std::string connection = response.substr(value_start, response.find('\n', value_start) - value_start);
+    if (connection != "USB") {
+        std::cerr << "Error: calibration needs the controller on USB, but it is connected over " << connection
+                  << ". Unplug its USB cable (or unpair the Bluetooth link) and try again." << std::endl;
+        return false;
+    }
+    return true;
+}
+
 static int run_calibrate(const std::string& target, bool permanent) {
+    if (!check_pad_connected_over_usb()) return 1;
     std::cout << "This writes to the controller's calibration memory and can leave it unusable if\n"
                  "interrupted or if the controller does not respond as expected. The result is "
               << (permanent ? "PERMANENT." : "lost on reset or standby.") << std::endl;

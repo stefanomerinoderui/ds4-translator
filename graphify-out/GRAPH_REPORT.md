@@ -1,31 +1,31 @@
 # Graph Report - ds4-translator  (2026-11-23)
 
 ## Corpus Check
-- 106 files · ~127,478 words
+- 106 files · ~127,631 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 33 file(s) not represented in the graph (top: .qml 12, (none) 6, .toml 5)
 - WARNING: 33 of 144 files seen (23%) have no supported extractor and are missing from this graph entirely. It may look complete while representing only part of the codebase.
 
 ## Summary
-- 2092 nodes · 4051 edges · 126 communities (95 shown, 31 thin omitted)
+- 2093 nodes · 4055 edges · 121 communities (91 shown, 30 thin omitted)
 - Extraction: 89% EXTRACTED · 11% INFERRED · 0% AMBIGUOUS · INFERRED: 434 edges (avg confidence: 0.85)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `e5504630`
+- Built from commit: `91e89026`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
 ## Community Hubs (Navigation)
 - Result
 - Qt UI model (DS4 settings)
-- PhysicalFeatureIo
+- capture_physical_features_hidraw
 - Translation unit tests
 - TEST
 - Release workflow (CI)
-- broker.py
+- serve_lines
 - TEST_F
-- main
+- ControllerType
 - Executor
 - intercept.c
 - Hardware verify.sh
@@ -37,7 +37,7 @@
 - src/main.cpp
 - hid-bpf/hid_bpf_helpers.h
 - USB HID transport (libusb)
-- functionfs-backend.c
+- FakePad
 - ipc-client.cpp
 - TEST
 - Bluetooth output pacer
@@ -55,17 +55,17 @@
 - InputState
 - trayicon.cpp
 - TEST_F
-- usb-hid-transport.cpp
+- interrupt_transfer
 - inputmonitor.cpp
 - dualsense_input_report
-- hid-driver-sysfs.h
+- BackendType
 - scenario_from
 - QString
 - DualShock 4 plain layout diagram (SVG, 600x400, Inkscape)
 - helpers.py
 - usb_hid_transport_open
 - hid-bpf-transport.cpp
-- steps.py
+- plan
 - appcontroller.cpp
 - Button
 - dualshock4_input_report_common
@@ -74,7 +74,7 @@
 - name
 - DualShock 4 base layout diagram (unlabelled SVG)
 - Ds4Output
-- TEST
+- Parsed
 - jobs
 - scenario.py
 - libusb_stub.cpp
@@ -89,7 +89,7 @@
 - ds4-translator README
 - OutputState
 - How DS4-Translator Works
-- atomic
+- test_ipc_transport.cpp
 - hid-ds4-translator kernel module (Option A binder)
 - Unimplemented DualShock 4 features
 - dualshock4_touch_point
@@ -97,8 +97,8 @@
 - Bluetooth HID authorization prompt screenshot
 - TEST
 - with
-- PhysicalNode
-- process.py
+- udev-spoof.c
+- steps.py
 - static_checks.sh
 - compatibility-arch
 - Arch pacman repository setup
@@ -119,18 +119,13 @@
 - unistd
 - SingleInstance
 - paths.h
-- check_value
+- StatusField
 - dualshock4_input_report_bt
 - dualsense_touch_point
 - dualshock4_input_report_usb
 - Debugging and Interceptor Guide
-- UI
-- singleinstance.cpp
-- FakeDaemon
+- StepFailed
 - TEST
-- closedir
-- read
-- ReadStatus
 
 ## God Nodes (most connected - your core abstractions)
 1. `InputMonitor` - 109 edges
@@ -145,6 +140,8 @@
 10. `IpcClient` - 31 edges
 
 ## Surprising Connections (you probably didn't know these)
+- `on_ringbuf_report()` --calls--> `write()`  [INFERRED]
+  src/hid-bpf-transport.cpp → tools/ds4-intercept/intercept.c
 - `TEST()` --calls--> `dpad_name()`  [INFERRED]
   tests/unit/test_ipc_protocol.cpp → src/ipc-client.cpp
 - `run_virtual_ui()` --calls--> `poll()`  [INFERRED]
@@ -152,8 +149,6 @@
 - `run_virtual_ui()` --calls--> `read()`  [INFERRED]
   src/ctl.cpp → tools/ds4-intercept/intercept.c
 - `run_test_ui()` --calls--> `close()`  [INFERRED]
-  src/ctl.cpp → tools/ds4-intercept/intercept.c
-- `run_test_ui()` --calls--> `poll()`  [INFERRED]
   src/ctl.cpp → tools/ds4-intercept/intercept.c
 
 ## Import Cycles
@@ -163,7 +158,7 @@
 - **Arch package release and signing pipeline** — packaging_arch_readme_pacman_repository, packaging_arch_readme_arch_repo_ci, packaging_arch_readme_signing, packaging_arch_index_pacman_repo_page [EXTRACTED 1.00]
 - **Mechanisms for hiding the Bluetooth physical pad** — docs_how_it_works_hide_methods, docs_how_it_works_hid_generic_swap, docs_how_it_works_mac_squat, docs_how_it_works_unlink_nodes [EXTRACTED 1.00]
 
-## Communities (126 total, 31 thin omitted)
+## Communities (121 total, 30 thin omitted)
 
 ### Community 0 - "Result"
 Cohesion: 0.10
@@ -173,9 +168,9 @@ Nodes (11): FakeRunner, FakeUI, GuardTest, PromptTest, RepeatTest, RestoreTest, 
 Cohesion: 0.03
 Nodes (21): InputMonitor, kSourceCount, m_accumulated, m_active, m_allSources, m_buffer, m_connectionNote, m_fd (+13 more)
 
-### Community 2 - "PhysicalFeatureIo"
-Cohesion: 0.33
-Nodes (3): PhysicalFeatureIo, fd_, via_usb_transport_
+### Community 2 - "capture_physical_features_hidraw"
+Cohesion: 0.16
+Nodes (16): functionfs_set_ds4_firmware(), functionfs_set_ds4_imu_calibration(), capture_physical_features_hidraw(), capture_physical_features_usb(), clear_physical_firmware(), clear_physical_imu_cal(), hidraw_get_feature(), PhysicalFeatureIo (+8 more)
 
 ### Community 4 - "TEST"
 Cohesion: 0.04
@@ -185,25 +180,21 @@ Nodes (9): calculate_crc32(), field_at(), fill_touch(), le16(), make_bt_calibrat
 Cohesion: 0.05
 Nodes (45): container, needs, permissions, runs-on, steps, needs, runs-on, steps (+37 more)
 
-### Community 6 - "broker.py"
-Cohesion: 0.14
-Nodes (7): serve_lines(), ServeTest, BadRequest, _execute(), _send(), serve(), _validate()
-
 ### Community 7 - "TEST_F"
-Cohesion: 0.12
-Nodes (5): ds4_add(), TEST_F(), uevent(), UeventFeed, fds_
+Cohesion: 0.10
+Nodes (6): ds4_add(), TEST(), TEST_F(), uevent(), UeventFeed, fds_
 
-### Community 8 - "main"
-Cohesion: 0.08
-Nodes (41): backend_for_type(), backend_type_config_str(), backend_type_name(), BackendType, BACKEND_FUNCTIONFS, BACKEND_UHID, create_virtual_device(), create_virtual_device_backend() (+33 more)
+### Community 8 - "ControllerType"
+Cohesion: 0.11
+Nodes (21): functionfs_close(), functionfs_set_mac(), create_virtual_device(), create_virtual_device_backend(), destroy_virtual_device(), ffs_target_for_type(), physical_pad_on_playstation(), read_config() (+13 more)
 
 ### Community 9 - "Executor"
-Cohesion: 0.26
-Nodes (5): Step, Executor, hit(), probe(), Outcome
+Cohesion: 0.16
+Nodes (8): Step, substitute(), Executor, hit(), probe(), Outcome, Runner, UI
 
 ### Community 10 - "intercept.c"
-Cohesion: 0.16
-Nodes (24): classify_path(), decode_evdev_ioctl(), decode_hidraw_ioctl(), decode_ioctl(), dev_type_str(), dup(), dup2(), dup3() (+16 more)
+Cohesion: 0.06
+Nodes (68): build_feature_report(), build_ffs_descriptors(), build_ffs_strings(), ensure_configfs_mounted(), ep0_loop(), find_udc(), functionfs_init(), functionfs_send_event_packet() (+60 more)
 
 ### Community 11 - "Hardware verify.sh"
 Cohesion: 0.10
@@ -215,11 +206,11 @@ Nodes (21): DaemonController, m_activeBackend, m_buildError, m_connectionType, m
 
 ### Community 13 - "ds4-ctl CLI"
 Cohesion: 0.11
-Nodes (36): button_names_joined(), ButtonSpec, bit, dpad, name, calibrate_step(), calibrate_stick_center(), calibrate_triggers() (+28 more)
+Nodes (37): button_names_joined(), ButtonSpec, bit, dpad, name, calibrate_step(), calibrate_stick_center(), calibrate_triggers() (+29 more)
 
 ### Community 14 - "pairing.cpp"
-Cohesion: 0.07
-Nodes (18): bluez_ds4_device_info(), build_ds4_pairing_report(), cable_pair(), choose_adapter(), key_hex(), list_adapters(), parse_bt_mac(), upper() (+10 more)
+Cohesion: 0.09
+Nodes (14): bluez_ds4_device_info(), build_ds4_pairing_report(), cable_pair(), choose_adapter(), key_hex(), list_adapters(), parse_bt_mac(), upper() (+6 more)
 
 ### Community 15 - "UI IPC client"
 Cohesion: 0.09
@@ -230,64 +221,64 @@ Cohesion: 0.10
 Nodes (14): fake_parent(), is_tagged(), physical_ds4(), TEST(), udev_device, devpath, pid, uevent (+6 more)
 
 ### Community 17 - "src/main.cpp"
-Cohesion: 0.09
-Nodes (39): functionfs_set_ds4_firmware(), functionfs_set_ds4_imu_calibration(), capture_physical_features_hidraw(), capture_physical_features_usb(), clear_physical_firmware(), clear_physical_imu_cal(), device_node_sysfs_path(), discard_pending_bt_output() (+31 more)
+Cohesion: 0.07
+Nodes (43): device_node_sysfs_path(), discard_pending_bt_output(), find_physical_ds4(), find_usb_ds4_hid_id(), get_event_nodes(), hidraw_to_hid_id(), ipc_peer_is_privileged(), is_own_virtual_hidraw() (+35 more)
 
 ### Community 18 - "hid-bpf/hid_bpf_helpers.h"
 Cohesion: 0.11
 Nodes (8): extract_bits(), field_end_byte(), field_start_byte(), BPF_PROG(), extract_bits(), field_end_byte(), field_start_byte(), BPF_PROG()
 
 ### Community 19 - "USB HID transport (libusb)"
-Cohesion: 0.10
-Nodes (21): abort_transport(), TransportState, active_transfer, bus_number, ctx, device_address, ep_in, ep_out (+13 more)
+Cohesion: 0.07
+Nodes (26): abort_transport(), feature_control_transfer(), find_transport(), on_transfer_done(), TransportState, active_transfer, bus_number, ctx (+18 more)
 
-### Community 20 - "functionfs-backend.c"
-Cohesion: 0.12
-Nodes (22): build_feature_report(), build_ffs_descriptors(), build_ffs_strings(), ensure_configfs_mounted(), ep0_loop(), functionfs_close(), functionfs_init(), functionfs_set_mac() (+14 more)
+### Community 20 - "FakePad"
+Cohesion: 0.13
+Nodes (12): FakePad, answer_mode_read, last_target, mode_was_permanent_during_store, reject_sets, result, selected_offset, sent (+4 more)
 
 ### Community 21 - "ipc-client.cpp"
 Cohesion: 0.17
-Nodes (26): build_led(), build_set_hide_method(), build_set_name(), connect_socket(), decode_buttons(), dpad_name(), errno_text(), format_state_line() (+18 more)
+Nodes (30): backend_values(), build_led(), build_set_backend(), build_set_hide_method(), build_set_mac_squat(), build_set_name(), build_set_type(), check_value() (+22 more)
 
 ### Community 22 - "TEST"
-Cohesion: 0.06
-Nodes (39): build_calibration_command(), build_flash_mode_report(), build_flash_select_report(), build_reset_report(), calibration_run_step(), calibration_target_name(), CalibrationStep, CAL_STEP_SAMPLE (+31 more)
+Cohesion: 0.09
+Nodes (28): build_calibration_command(), build_flash_mode_report(), build_flash_select_report(), build_reset_report(), calibration_run_step(), calibration_target_name(), CalibrationStep, CAL_STEP_SAMPLE (+20 more)
 
 ### Community 23 - "Bluetooth output pacer"
-Cohesion: 0.09
-Nodes (18): BtOutputPacer, cond_, kMinInterval, last_write_, mutex_, pending_, pending_fd_, pending_state_ (+10 more)
+Cohesion: 0.08
+Nodes (20): BtOutputPacer, cond_, kMinInterval, last_write_, mutex_, pending_, pending_fd_, pending_state_ (+12 more)
 
 ### Community 24 - "AppController (UI)"
 Cohesion: 0.08
 Nodes (8): AppController, m_autostartEnabled, m_closeToTray, m_settingsError, m_startHidden, m_trayAvailable, m_trayEnabled, QML_ELEMENT
 
 ### Community 25 - "FunctionFSDevice"
-Cohesion: 0.05
-Nodes (29): FunctionFSDevice, configured, device_open, ep0_fd, ep0_thread, ep0_thread_spawned, ep_in_fd, ep_out_fd (+21 more)
+Cohesion: 0.08
+Nodes (22): FunctionFSDevice, configured, device_open, ep0_fd, ep0_thread, ep0_thread_spawned, ep_in_fd, ep_out_fd (+14 more)
 
 ### Community 27 - "TrayIcon"
 Cohesion: 0.12
 Nodes (11): AppController, DaemonController, TrayIcon, m_app, m_daemon, m_menu, m_summaryAction, m_tray (+3 more)
 
 ### Community 28 - "hid-unbind-detect.cpp"
-Cohesion: 0.19
-Nodes (10): hid_bus_scan_existing(), hid_id_env_matches_ds4(), hid_id_sysfs_matches_ds4(), hid_id_unbind(), hid_uevent_monitor_open(), hid_uevent_monitor_read(), hid_uevent_sender_is_kernel(), is_ds4_vid_pid_bus() (+2 more)
+Cohesion: 0.14
+Nodes (13): hid_bus_scan_existing(), hid_id_env_matches_ds4(), hid_id_sysfs_matches_ds4(), hid_id_unbind(), hid_uevent_monitor_open(), hid_uevent_monitor_read(), hid_uevent_sender_is_kernel(), is_ds4_vid_pid_bus() (+5 more)
 
 ### Community 29 - "cli.py"
-Cohesion: 0.16
+Cohesion: 0.14
 Nodes (9): build_parser(), builtin_variables(), cmd_check(), cmd_list(), cmd_run(), load_scenario(), main(), resolve() (+1 more)
 
 ### Community 31 - "daemoncontroller.cpp"
-Cohesion: 0.19
-Nodes (7): DaemonController::beginInteraction(), DaemonController::endInteraction(), DaemonController::identify(), DaemonController::refreshStatus(), DaemonController::resetLed(), isHardwareTest(), TrayIcon::buildMenu()
+Cohesion: 0.21
+Nodes (6): DaemonController::beginInteraction(), DaemonController::endInteraction(), DaemonController::identify(), DaemonController::refreshStatus(), DaemonController::resetLed(), isHardwareTest()
 
 ### Community 32 - "steps"
 Cohesion: 0.09
 Nodes (21): runs-on, steps, jobs, analyze, name, on, pull_request, push (+13 more)
 
 ### Community 33 - "translate.cpp"
-Cohesion: 0.11
-Nodes (29): functionfs_send_event_packet(), functionfs_send_input_report(), emit_input_report(), send_gip_guide_event(), ascii_field(), BatteryState, BATTERY_CHARGING, BATTERY_DISCHARGING (+21 more)
+Cohesion: 0.12
+Nodes (27): functionfs_send_input_report(), emit_input_report(), ascii_field(), BatteryState, BATTERY_CHARGING, BATTERY_DISCHARGING, BATTERY_FULL, build_gip_input_report() (+19 more)
 
 ### Community 34 - "TEST_F"
 Cohesion: 0.12
@@ -298,16 +289,20 @@ Cohesion: 0.12
 Nodes (20): runs-on, steps, jobs, clang-tidy, lint, python, runs-on, steps (+12 more)
 
 ### Community 36 - "InputState"
+Cohesion: 0.09
+Nodes (22): decode_touch_point(), format_state_line(), InputState, accel, buttons, dpad, gyro, has_motion (+14 more)
+
+### Community 37 - "trayicon.cpp"
 Cohesion: 0.10
-Nodes (21): decode_touch_point(), InputState, accel, buttons, dpad, gyro, has_motion, has_touch (+13 more)
+Nodes (5): main(), appletIcon(), TrayIcon::buildMenu(), TrayIcon::isAvailable(), TrayIcon::TrayIcon()
 
 ### Community 38 - "TEST_F"
 Cohesion: 0.15
 Nodes (3): AtomicWrite, dir_, TEST_F()
 
-### Community 39 - "usb-hid-transport.cpp"
-Cohesion: 0.12
-Nodes (9): feature_control_transfer(), find_transport(), on_transfer_done(), transfer_status_to_error(), usb_hid_transport_get_feature_report(), usb_hid_transport_set_feature_report(), Clock, libusb_control_transfer() (+1 more)
+### Community 39 - "interrupt_transfer"
+Cohesion: 0.31
+Nodes (7): cancel_active_transfer(), interrupt_transfer(), transfer_status_to_error(), libusb_alloc_transfer(), libusb_cancel_transfer(), libusb_free_transfer(), libusb_submit_transfer()
 
 ### Community 40 - "inputmonitor.cpp"
 Cohesion: 0.18
@@ -317,9 +312,13 @@ Nodes (7): InputMonitor::clearStates(), InputMonitor::dpadName(), InputMonitor::
 Cohesion: 0.11
 Nodes (18): dualsense_input_report, accel, buttons, gyro, points, reserved, reserved2, reserved3 (+10 more)
 
-### Community 43 - "scenario_from"
+### Community 42 - "BackendType"
 Cohesion: 0.14
-Nodes (4): scenario_from(), ParsingTest, VariablesTest, PlanTest
+Nodes (15): backend_for_type(), backend_type_config_str(), backend_type_name(), BackendType, BACKEND_FUNCTIONFS, BACKEND_UHID, hide_method_config_str(), hide_method_is_unbind_family() (+7 more)
+
+### Community 43 - "scenario_from"
+Cohesion: 0.16
+Nodes (3): scenario_from(), ParsingTest, VariablesTest
 
 ### Community 45 - "DualShock 4 plain layout diagram (SVG, 600x400, Inkscape)"
 Cohesion: 0.16
@@ -330,16 +329,16 @@ Cohesion: 0.21
 Nodes (3): CliTest, run_cli(), scenario_file()
 
 ### Community 47 - "usb_hid_transport_open"
-Cohesion: 0.19
-Nodes (16): device_still_present(), find_hid_interface(), is_own_virtual_usb_device(), usb_hid_transport_open(), libusb_context, libusb_device, libusb_exit(), libusb_free_config_descriptor() (+8 more)
+Cohesion: 0.24
+Nodes (14): device_still_present(), find_hid_interface(), is_own_virtual_usb_device(), usb_hid_transport_open(), libusb_device, libusb_free_config_descriptor(), libusb_free_device_list(), libusb_get_active_config_descriptor() (+6 more)
 
 ### Community 48 - "hid-bpf-transport.cpp"
-Cohesion: 0.13
-Nodes (16): bpf_object_path(), find_hidraw_node(), find_pinned_ringbuf(), hid_bpf_transport_close(), hid_bpf_transport_open(), log_write_error(), pump_thread_fn(), run_udev_hid_bpf() (+8 more)
+Cohesion: 0.10
+Nodes (16): bpf_object_path(), find_hidraw_node(), find_pinned_ringbuf(), hid_bpf_transport_close(), hid_bpf_transport_open(), log_write_error(), on_ringbuf_report(), run_udev_hid_bpf() (+8 more)
 
-### Community 49 - "steps.py"
-Cohesion: 0.14
-Nodes (8): Scenario, substitute(), replace(), _Lenient, plan(), walk(), RoundRestart, StepFailed
+### Community 49 - "plan"
+Cohesion: 0.22
+Nodes (4): PlanTest, _Lenient, plan(), walk()
 
 ### Community 51 - "Button"
 Cohesion: 0.13
@@ -366,24 +365,24 @@ Cohesion: 0.17
 Nodes (12): Shoulder bumpers L1/R1, DualShock 4 controller, DualShock 4 base layout diagram (unlabelled SVG), D-pad, Face buttons (cross, circle, square, triangle), Light bar, PS button, Share and Options buttons (+4 more)
 
 ### Community 57 - "Ds4Output"
-Cohesion: 0.17
-Nodes (12): log_physical_write_error(), send_physical_output_report(), write_physical_output_report(), build_ds4_output_report(), Ds4Output, b, flash_off, flash_on (+4 more)
+Cohesion: 0.18
+Nodes (11): log_physical_write_error(), write_physical_output_report(), build_ds4_output_report(), Ds4Output, b, flash_off, flash_on, g (+3 more)
 
-### Community 58 - "TEST"
-Cohesion: 0.13
-Nodes (9): parse_hid_id(), LLVMFuzzerTestOneInput(), parse(), Parsed, bus, ok, product, vendor (+1 more)
+### Community 58 - "Parsed"
+Cohesion: 0.40
+Nodes (5): Parsed, bus, ok, product, vendor
 
 ### Community 59 - "jobs"
 Cohesion: 0.17
 Nodes (12): needs, runs-on, jobs, integration, performance, security-static, smoke-sanity, needs (+4 more)
 
 ### Community 60 - "scenario.py"
-Cohesion: 0.20
-Nodes (12): _argv(), check_variables(), texts(), visit(), _expand_steps(), load(), _number(), _parse_guard() (+4 more)
+Cohesion: 0.16
+Nodes (15): _argv(), check_variables(), texts(), visit(), count_steps(), _expand_steps(), load(), _number() (+7 more)
 
 ### Community 61 - "libusb_stub.cpp"
-Cohesion: 0.15
-Nodes (21): cancel_active_transfer(), interrupt_transfer(), usb_hid_transport_close(), Clock, last_feature_set(), libusb_alloc_transfer(), libusb_attach_kernel_driver(), libusb_cancel_transfer() (+13 more)
+Cohesion: 0.17
+Nodes (19): usb_hid_transport_close(), Clock, last_feature_set(), libusb_attach_kernel_driver(), libusb_claim_interface(), libusb_close(), libusb_context, libusb_control_transfer() (+11 more)
 
 ### Community 62 - "Security findings register"
 Cohesion: 0.20
@@ -402,7 +401,7 @@ Cohesion: 0.20
 Nodes (9): TimingStats, interval_max_us, interval_mean_us, interval_min_us, latency_max_us, latency_mean_us, reports, window_us (+1 more)
 
 ### Community 67 - "sockclient.py"
-Cohesion: 0.32
+Cohesion: 0.33
 Nodes (6): connect(), fuzz(), idle(), raw(), reset(), subscribe()
 
 ### Community 68 - "steps"
@@ -425,9 +424,9 @@ Nodes (8): format_output_line(), OutputState, blue, green, red, rumble_left, rum
 Cohesion: 0.33
 Nodes (7): FunctionFS backend, How DS4-Translator Works, Haptics rumble heuristic, Emulation type none, udev hide rules (72-ds4-translator-hide.rules), Virtual controller identity and feature reports, Light bar flash passthrough
 
-### Community 74 - "atomic"
-Cohesion: 0.33
-Nodes (5): Controls, feed, gone, reclaimed, wedge
+### Community 74 - "test_ipc_transport.cpp"
+Cohesion: 0.13
+Nodes (6): Clock, Controls, feed, gone, reclaimed, wedge
 
 ### Community 75 - "hid-ds4-translator kernel module (Option A binder)"
 Cohesion: 0.33
@@ -449,13 +448,21 @@ Nodes (5): DaemonController::backendValues(), DaemonController::hideMethodValues
 Cohesion: 0.50
 Nodes (5): Buttons: Always accept, Accept, Deny, DS4 controller Bluetooth pairing authorization step, Human Interface Device Service (HID), Bluetooth HID authorization prompt screenshot, Wireless Controller (74:E7:D6:3A:47:E8)
 
+### Community 80 - "TEST"
+Cohesion: 0.09
+Nodes (15): connect_socket(), errno_text(), read_available(), ReadStatus, Again, Data, Eof, Error (+7 more)
+
 ### Community 81 - "with"
 Cohesion: 0.40
 Nodes (5): with, fetch-depth, if-no-files-found, name, path
 
-### Community 82 - "PhysicalNode"
-Cohesion: 0.11
-Nodes (15): find_usb_ds4_hid_id(), own_virtual_hid_bound(), physical_pad_on_playstation(), physical_pad_present(), PhysicalNode, fd, is_grabbed, is_unlinked (+7 more)
+### Community 82 - "udev-spoof.c"
+Cohesion: 0.27
+Nodes (7): init_functions(), is_virtual_sony_controller(), next_uevent_buffer(), udev_device_get_parent_with_subsystem_devtype(), udev_device_get_subsystem(), udev_device_get_sysattr_value(), virtual_mac_serial()
+
+### Community 83 - "steps.py"
+Cohesion: 0.12
+Nodes (7): StreamProcessTest, BadRequest, _execute(), _send(), serve(), _validate(), stream_process()
 
 ### Community 85 - "compatibility-arch"
 Cohesion: 0.50
@@ -481,25 +488,21 @@ Nodes (3): unit, needs, runs-on
 Cohesion: 0.21
 Nodes (3): RootBrokerTest, BrokerError, RootBroker
 
-### Community 94 - "string"
-Cohesion: 0.15
-Nodes (3): StatusField, key, value
-
 ### Community 101 - "unistd"
-Cohesion: 0.19
-Nodes (3): set_error(), write_all(), write_file_atomic()
+Cohesion: 0.14
+Nodes (7): set_error(), write_all(), write_file_atomic(), FakePad, accepts_set, answers, sent
 
 ### Community 102 - "SingleInstance"
-Cohesion: 0.17
-Nodes (7): main(), SingleInstance::listen(), SingleInstance::notifyRunningInstance(), SingleInstance, m_server, public, TrayIcon::isAvailable()
+Cohesion: 0.12
+Nodes (8): SingleInstance::listen(), SingleInstance::notifyRunningInstance(), SingleInstance::socketPath(), ensurePrivateDirectory(), SingleInstance, m_server, public, SingleInstance::SingleInstance()
 
 ### Community 103 - "paths.h"
 Cohesion: 0.61
 Nodes (6): config_path(), from_env(), none_sentinel_path(), runtime_dir(), socket_path(), state_dir()
 
-### Community 104 - "check_value"
-Cohesion: 0.19
-Nodes (16): backend_values(), build_set_backend(), build_set_mac_squat(), build_set_type(), check_value(), contains(), controller_values(), is_valid_backend() (+8 more)
+### Community 104 - "StatusField"
+Cohesion: 0.40
+Nodes (5): parse_status(), status_value(), StatusField, key, value
 
 ### Community 105 - "dualshock4_input_report_bt"
 Cohesion: 0.25
@@ -517,52 +520,28 @@ Nodes (9): dualshock4_input_report_usb, common, num_touch_reports, report_id, re
 Cohesion: 0.40
 Nodes (5): Bluetooth HID session teardown (BlueZ send buffer overrun), Debugging and Interceptor Guide, ds4-ctl status diagnostics, libds4-intercept (LD_PRELOAD tracer), Bluetooth audio output reports
 
-### Community 116 - "UI"
-Cohesion: 0.18
-Nodes (3): count_steps(), Runner, UI
-
-### Community 117 - "singleinstance.cpp"
-Cohesion: 0.22
-Nodes (3): SingleInstance::socketPath(), ensurePrivateDirectory(), SingleInstance::SingleInstance()
-
-### Community 118 - "FakeDaemon"
-Cohesion: 0.22
-Nodes (6): setup_ipc_socket(), FakeDaemon, dir_, handler_, listen_fd_, thread_
-
 ### Community 119 - "TEST"
 Cohesion: 0.28
 Nodes (3): ns_per_op(), report(), TEST()
 
-### Community 120 - "closedir"
-Cohesion: 0.39
-Nodes (8): find_udc(), closedir(), get_tracked_dir(), is_interesting_dir(), opendir(), readdir(), track_dir(), untrack_dir()
-
-### Community 122 - "read"
-Cohesion: 0.33
-Nodes (5): read_hid_ignore_special_drivers(), pump_thread_fn(), read_command(), evdev_type_name(), read()
-
-### Community 123 - "ReadStatus"
-Cohesion: 0.40
-Nodes (5): ReadStatus, Again, Data, Eof, Error
-
 ## Knowledge Gaps
 - **377 isolated node(s):** `name`, `bit`, `dpad`, `name`, `arg_completions` (+372 more)
   These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 934 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
-- **31 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **30 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
 - **Why does `InputMonitor` connect `Qt UI model (DS4 settings)` to `daemoncontroller.h`, `TimingStats`, `InputMonitor::disconnectStream`, `InputState`, `OutputState`, `inputmonitor.cpp`, `Button`, `Source`, `.selected`?**
-  _High betweenness centrality (0.108) - this node is a cross-community bridge._
+  _High betweenness centrality (0.101) - this node is a cross-community bridge._
 - **Are the 34 inferred relationships involving `TEST()` (e.g. with `backend_values()` and `build_led()`) actually correct?**
   _`TEST()` has 34 INFERRED edges - model-reasoned connections that need verification._
 - **What connects `name`, `bit`, `dpad` to the rest of the system?**
   _377 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Result` be split into smaller, more focused modules?**
   _Cohesion score 0.10285714285714286 - nodes in this community are weakly interconnected._
-- **Why does `TEST()` connect `TEST` to `main`, `Ds4Output`, `translate.cpp`?**
-  _High betweenness centrality (0.062) - this node is a cross-community bridge._
+- **Why does `close()` connect `intercept.c` to `InputMonitor::disconnectStream`, `unistd`, `TEST_F`, `ControllerType`, `inputmonitor.cpp`, `ds4-ctl CLI`, `UI IPC client`, `hid-bpf-transport.cpp`, `TEST`, `src/main.cpp`, `hid-unbind-detect.cpp`, `libusb_stub.cpp`?**
+  _High betweenness centrality (0.065) - this node is a cross-community bridge._
 - **Are the 24 inferred relationships involving `TEST()` (e.g. with `build_ds4_output_report()` and `build_gip_input_report()`) actually correct?**
   _`TEST()` has 24 INFERRED edges - model-reasoned connections that need verification._
 - **Should `Qt UI model (DS4 settings)` be split into smaller, more focused modules?**
