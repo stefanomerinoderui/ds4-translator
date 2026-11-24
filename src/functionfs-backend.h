@@ -72,6 +72,12 @@ struct FunctionFSDevice {
 // used, exactly as before this existed.
 void functionfs_set_mac(const uint8_t mac_le[6], const char *mac_str);
 
+// Implemented by the daemon (main.cpp): sends rumble and light bar values to the
+// physical controller, which the emulated device's output reports are mapped
+// onto. Declared here so both sides see one prototype.
+void send_physical_output_report(int fd, bool bluetooth, uint8_t motor_left, uint8_t motor_right,
+                                 uint8_t r, uint8_t g, uint8_t b);
+
 // Sets the IMU calibration (36 bytes, the payload of DS4 feature report 0x02)
 // that the emulated DS4 serves, taken from the physical pad; NULL goes back to
 // the built-in fixed values. Safe to call while the device is running: the

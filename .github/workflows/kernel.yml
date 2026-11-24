@@ -9,7 +9,11 @@ name: Kernel module
 # Not covered here: tests/kernel (needs virtme-ng and the HID modules, which
 # GitHub's runner kernel lacks; run `make kernel-test` locally) and the
 # CachyOS Clang+LTO kernel, which `kernel/Makefile` handles by detecting
-# CONFIG_CC_IS_CLANG and is only tried on a developer machine.
+# CONFIG_CC_IS_CLANG and is only tried on a developer machine, together with
+# the Clang static analyzer (`make kernel-lint`).
+#
+# Warnings are errors everywhere in this job. DKMS builds on users' machines
+# use plain `make`, which is lenient on purpose (see kernel/Makefile).
 on:
   push:
     branches: [main]
@@ -43,12 +47,13 @@ jobs:
           # Nothing here pushes; do not leave the token in .git/config.
           persist-credentials: false
 
-      - name: Build against every installed kernel
+      # `strict` is a clean W=1 build with KCFLAGS=-Werror: any warning fails.
+      - name: Build strictly against every installed kernel
         run: |
           set -e
           for kdir in /usr/lib/modules/*/build; do
             echo "::group::$kdir"
-            make -C kernel KDIR="$kdir" W=1 all
+            make -C kernel KDIR="$kdir" strict
             make -C kernel KDIR="$kdir" clean
             echo "::endgroup::"
           done
@@ -66,11 +71,10 @@ jobs:
             echo "::endgroup::"
           done
 
-      # The two static checkers are advisory: the kernel tree they would come
-      # from is not installed, and a checkpatch.pl newer or older than the
-      # kernel developed against reports different style rules.
-      - name: checkpatch (kernel 6.12's script, pinned)
-        continue-on-error: true
+      # Both checkers fail the job. checkpatch.pl is not part of the installed
+      # headers, so kernel 6.12's script (the supported floor) is fetched and
+      # pinned by digest.
+      - name: checkpatch --strict (kernel 6.12's script, pinned)
         run: |
           set -e
           base=https://raw.githubusercontent.com/torvalds/linux/v6.12/scripts
@@ -87,6 +91,9 @@ jobs:
           cd "$GITHUB_WORKSPACE"
           make -C kernel check CHECKPATCH=/tmp/checkpatch/checkpatch.pl
 
-      - name: sparse
-        continue-on-error: true
+      - name: sparse (findings are errors)
         run: make -C kernel KDIR="$(ls -d /usr/lib/modules/*lts*/build)" sparse
+
+      # The Clang static analyzer (`make -C kernel analyze`) needs a kernel
+      # built with Clang, which Arch's is not; it runs in `make kernel-lint`
+      # on a Clang-built kernel such as CachyOS's.

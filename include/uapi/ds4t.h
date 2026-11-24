@@ -22,8 +22,8 @@
  * every pad back to the regular drivers. Until the attach, pads behave as if
  * the module were not loaded.
  */
-#ifndef _UAPI_DS4T_H
-#define _UAPI_DS4T_H
+#ifndef DS4T_UAPI_H
+#define DS4T_UAPI_H
 
 #include <linux/ioctl.h>
 #include <linux/types.h>
@@ -106,4 +106,4 @@ struct ds4t_mac {
  */
 #define DS4T_IOC_CTL_ATTACH	_IO(DS4T_IOC_MAGIC, 0x12)
 
-#endif /* _UAPI_DS4T_H */
+#endif /* DS4T_UAPI_H */

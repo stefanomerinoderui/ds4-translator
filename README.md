@@ -208,6 +208,23 @@ make test-hwtest       # the hardware-test runner's own tests (Python, tools/hwt
 make test-unit GTEST_FILTER='*Golden*'   # narrow to matching tests
 ```
 
+### Static analysis and warnings
+
+Warnings are errors throughout, in the build and in CI:
+
+```bash
+make lint              # all of the following
+make all debug         # -Wall -Wextra -Werror plus -Wconversion, -Wsign-conversion, -Wmissing-declarations ... (see STRICT_WARNINGS / PRODUCT_WARNINGS in the Makefile)
+make tidy              # clang-tidy over src/, any finding fails (.clang-tidy)
+make kernel-lint       # kernel module: W=1 -Werror, checkpatch --strict, sparse if installed, the Clang static analyzer on a Clang-built kernel
+make test-security-static  # also actionlint, zizmor and shellcheck at every severity
+```
+
+`.github/zizmor.yml` lists the two zizmor rules switched off, with the reason
+for each. clang-tidy is configured for the version CI installs; a much newer
+one (23.x) adds two noisy checks that `.clang-tidy` turns off, with the
+reasons.
+
 `DS4_RUNTIME_DIR`, `DS4_STATE_DIR` and `DS4_CONFIG_PATH` (see `src/paths.h`)
 relocate the daemon's socket, state and config, which is how the integration
 test runs a daemon next to a production one. It refuses to start while a real

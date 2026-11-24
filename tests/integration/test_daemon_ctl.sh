@@ -19,8 +19,11 @@ pass "daemon created its control socket in the scratch dir"
 check "status reports emulation off" "Virtual Emulation: None" "$CTL" status
 check "set-hide-method persists" "Hide method set to unlink" "$CTL" set-hide-method unlink
 check "status reflects hide method" "Hide Method: unlink" "$CTL" status
-grep -q '^hide_method=unlink$' "$DS4_CONFIG_PATH" && pass "config file written to override path" \
-    || fail "config file written to override path"
+if grep -q '^hide_method=unlink$' "$DS4_CONFIG_PATH"; then
+    pass "config file written to override path"
+else
+    fail "config file written to override path"
+fi
 
 check "set-hide-method accepts driver" "Hide method set to driver" "$CTL" set-hide-method driver
 check "status reflects the driver method" "Hide Method: driver" "$CTL" status
@@ -36,17 +39,20 @@ check "set-mac-squat accepted" "MAC squat" "$CTL" set-mac-squat on
 check "daemon rejects an unknown command" "Unknown" raw "bogus-command"
 check "daemon rejects an invalid type" "Unknown command" raw "set-type nope"
 
-daemon_alive && pass "daemon alive after bad input" || fail "daemon alive after bad input"
+if daemon_alive; then pass "daemon alive after bad input"; else fail "daemon alive after bad input"; fi
 
 # Garbage and oversized input must not take the daemon down.
 raw "$(head -c 100000 /dev/zero | tr '\0' 'A')" >/dev/null 2>&1
 raw "$(head -c 100000 /dev/urandom | base64 -w0)" >/dev/null 2>&1
-daemon_alive && pass "daemon alive after oversized/garbage input" \
-    || fail "daemon alive after oversized/garbage input"
+if daemon_alive; then
+    pass "daemon alive after oversized/garbage input"
+else
+    fail "daemon alive after oversized/garbage input"
+fi
 check "daemon still answers after garbage" "Virtual Emulation" "$CTL" status
 
 # Clean shutdown on SIGTERM removes the socket.
 kill -TERM "$DAEMON_PID"; wait "$DAEMON_PID" 2>/dev/null; DAEMON_PID=""
-[ ! -e "$SOCK" ] && pass "socket removed on shutdown" || fail "socket removed on shutdown"
+if [ ! -e "$SOCK" ]; then pass "socket removed on shutdown"; else fail "socket removed on shutdown"; fi
 
 finish integration

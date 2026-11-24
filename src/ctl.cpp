@@ -18,7 +18,7 @@ static std::string button_names_joined();
 #define DS4_VERSION "unknown"
 #endif
 
-void print_usage() {
+static void print_usage() {
     std::cout << "Usage: ds4-ctl <command> [args]" << std::endl;
     std::cout << "Commands:" << std::endl;
     std::cout << "  version                          Print ds4-ctl's version" << std::endl;
@@ -249,7 +249,7 @@ static void send_ui_state(const UiState& s) {
     uint8_t l2 = (s.buttons & SYN_BTN_L2) ? 255 : 0;
     uint8_t r2 = (s.buttons & SYN_BTN_R2) ? 255 : 0;
     (void)snprintf(cmdbuf, sizeof(cmdbuf), "input %x %u %u %u %u %u %u %u",
-             s.buttons, s.dpad, 128, 128, 128, 128, l2, r2);
+             s.buttons, s.dpad, 128u, 128u, 128u, 128u, l2, r2);
     std::string resp;
     send_command(cmdbuf, resp);
 }
@@ -333,7 +333,7 @@ static int run_virtual_ui(const std::string& type, bool auto_destroy) {
     // -- skipping tcsetattr restoration and, now, the --auto destroy-on-exit
     // below. Clearing ISIG makes Ctrl+C arrive as plain data like every
     // other key here, so it always goes through the normal exit path.
-    raw_term.c_lflag &= ~(ICANON | ECHO | ISIG);
+    raw_term.c_lflag &= static_cast<tcflag_t>(~(ICANON | ECHO | ISIG));
     raw_term.c_cc[VMIN] = 0;
     raw_term.c_cc[VTIME] = 0;
     tcsetattr(STDIN_FILENO, TCSANOW, &raw_term);
@@ -571,7 +571,7 @@ static int run_test_ui() {
         return 1;
     }
     raw_term = orig_term;
-    raw_term.c_lflag &= ~(ICANON | ECHO);
+    raw_term.c_lflag &= static_cast<tcflag_t>(~(ICANON | ECHO));
     raw_term.c_cc[VMIN] = 0;
     raw_term.c_cc[VTIME] = 0;
     tcsetattr(STDIN_FILENO, TCSANOW, &raw_term);

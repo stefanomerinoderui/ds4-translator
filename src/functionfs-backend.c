@@ -30,7 +30,6 @@ extern bool is_bluetooth;
 extern uint8_t cur_motor_left, cur_motor_right;
 extern uint8_t cur_r, cur_g, cur_b;
 extern bool g_suppress_next_led_update; // see its doc comment in main.cpp
-extern void send_physical_output_report(int fd, bool bluetooth, uint8_t motor_left, uint8_t motor_right, uint8_t r, uint8_t g, uint8_t b);
 
 #define GADGET_DIR "/sys/kernel/config/usb_gadget/ds4translatorffs"
 #define FUNCTION_NAME "ds4emu0"
@@ -302,7 +301,7 @@ static size_t build_ffs_descriptors(int target_type, uint8_t *buf) {
             p[4] = 0; // bCountryCode
             p[5] = 1; // bNumDescriptors
             p[6] = 0x22; // Report
-            p[7] = rdesc_len & 0xFF; p[8] = rdesc_len >> 8;
+            p[7] = (uint8_t)(rdesc_len & 0xFF); p[8] = (uint8_t)(rdesc_len >> 8);
             p += 9;
         }
 
@@ -401,8 +400,8 @@ static void handle_setup(struct FunctionFSDevice *dev, const struct usb_ctrlrequ
 
     if (req_type == USB_TYPE_CLASS && recip == USB_RECIP_INTERFACE) {
         if (setup->bRequest == 0x01 && dir_in) { // GET_REPORT
-            uint8_t rtype = setup->wValue >> 8;
-            uint8_t rnum = setup->wValue & 0xFF;
+            uint8_t rtype = (uint8_t)(setup->wValue >> 8);
+            uint8_t rnum = (uint8_t)(setup->wValue & 0xFF);
             size_t len = 0;
             if (rtype == 3) { // Feature
                 len = build_feature_report(dev->target_type, rnum, buf);

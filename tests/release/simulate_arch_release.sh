@@ -93,4 +93,9 @@ consume "package without signature" "$OUT/unsigned" release.asc "$REL" fail
 
 consume "repo signed by a key pacman does not trust" "$OUT/site" other.asc "$(cat "$OUT/pub/other.fpr")" fail
 
-[ "$FAILED" -eq 0 ] && echo "release rehearsal: all checks passed" || { echo "release rehearsal: FAILED"; exit 1; }
+if [ "$FAILED" -eq 0 ]; then
+    echo "release rehearsal: all checks passed"
+else
+    echo "release rehearsal: FAILED"
+    exit 1
+fi

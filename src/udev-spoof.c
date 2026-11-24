@@ -42,7 +42,7 @@ static int is_virtual_sony_controller(struct udev_device *dev) {
     init_functions();
     if (!dev || !real_get_property) return 0;
     
-    struct udev_device *clean_dev = (struct udev_device *)((uintptr_t)dev & ~1);
+    struct udev_device *clean_dev = (struct udev_device *)((uintptr_t)dev & ~(uintptr_t)1);
     const char *vid = real_get_property(clean_dev, "ID_VENDOR_ID");
     const char *pid = real_get_property(clean_dev, "ID_MODEL_ID");
     const char *devpath = real_get_property(clean_dev, "DEVPATH");
@@ -66,7 +66,7 @@ struct udev_device *udev_device_get_parent_with_subsystem_devtype(struct udev_de
     }
     
     if ((uintptr_t)udev_device & 1) {
-        struct udev_device *real_dev = (struct udev_device *)((uintptr_t)udev_device & ~1);
+        struct udev_device *real_dev = (struct udev_device *)((uintptr_t)udev_device & ~(uintptr_t)1);
         if (real_get_parent) {
             return real_get_parent(real_dev, subsystem, devtype);
         }
@@ -149,7 +149,7 @@ const char *udev_device_get_sysattr_value(struct udev_device *udev_device, const
     }
 
     if (((uintptr_t)udev_device & 1) && real_get_property) {
-        struct udev_device *real_dev = (struct udev_device *)((uintptr_t)udev_device & ~1);
+        struct udev_device *real_dev = (struct udev_device *)((uintptr_t)udev_device & ~(uintptr_t)1);
         const char *pid = real_get_property(real_dev, "ID_MODEL_ID");
         int is_dualsense = pid && !strcmp(pid, "0ce6");
 
@@ -174,7 +174,7 @@ const char *udev_device_get_sysattr_value(struct udev_device *udev_device, const
     }
 
     if (real_get_sysattr) {
-        struct udev_device *clean_dev = (struct udev_device *)((uintptr_t)udev_device & ~1);
+        struct udev_device *clean_dev = (struct udev_device *)((uintptr_t)udev_device & ~(uintptr_t)1);
         return real_get_sysattr(clean_dev, sysattr);
     }
     return NULL;

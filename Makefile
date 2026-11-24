@@ -38,6 +38,21 @@ STRICT_WARNINGS = -Wall -Wextra -Werror -Wshadow -Wformat=2 -Wformat-security \
                    -Wnull-dereference -Wpointer-arith -Wcast-align -Wundef -Wwrite-strings \
                    -Wno-missing-field-initializers
 
+# Stricter again for the product's own code (the daemon, ds4-ctl and the udev
+# shim), not for the tests: gtest's macros trip several of these. Chosen by
+# measuring the tree: every flag here is clean on it, and ones that mostly flag
+# established style were left out (-Wold-style-cast: 71 C-style casts of kernel
+# and libusb types; -Wswitch-enum: switches that are meant to have a default;
+# -Wlogical-op: `errno == EAGAIN || errno == EWOULDBLOCK`, the portable idiom).
+# Narrowing and sign changes matter here: report bytes, MAC octets and bit masks
+# are exactly where an implicit conversion silently drops bits.
+PRODUCT_WARNINGS = -Wconversion -Wsign-conversion -Wcast-qual -Wduplicated-cond \
+                   -Wredundant-decls -Wimplicit-fallthrough -Walloca -Wvla \
+                   -Wformat-signedness -Wfloat-equal
+PRODUCT_WARNINGS_CXX = $(PRODUCT_WARNINGS) -Wmissing-declarations -Wextra-semi \
+                   -Wnon-virtual-dtor -Woverloaded-virtual \
+                   -Wzero-as-null-pointer-constant -Wsuggest-override
+
 BUILD_DIR = build
 UI_BUILD_DIR = ui/build
 UI_BINARY    = $(UI_BUILD_DIR)/ds4-translator-ui
@@ -92,9 +107,9 @@ HARDEN_FORTIFY     = -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=2
 HARDEN_LDFLAGS     = -pie -Wl,-z,relro,-z,now
 HARDEN_SHARED_LDFLAGS = -Wl,-z,relro,-z,now
 
-CXXFLAGS = -O3 $(STRICT_WARNINGS) $(HARDEN_FLAGS) $(HARDEN_FORTIFY) -std=c++17 -DDS4_VERSION=\"$(VERSION)\" \
+CXXFLAGS = -O3 $(STRICT_WARNINGS) $(PRODUCT_WARNINGS_CXX) $(HARDEN_FLAGS) $(HARDEN_FORTIFY) -std=c++17 -DDS4_VERSION=\"$(VERSION)\" \
            -DHID_BPF_OBJ_PATH=\"$(HIDBPF_INSTALL_PATH)\" $(UNBIND_CXXFLAGS) $(HIDBPF_CXXFLAGS)
-CFLAGS   = -O3 $(STRICT_WARNINGS) $(HARDEN_FLAGS) $(HARDEN_FORTIFY) -DDS4_VERSION=\"$(VERSION)\" $(UNBIND_CXXFLAGS)
+CFLAGS   = -O3 $(STRICT_WARNINGS) $(PRODUCT_WARNINGS) $(HARDEN_FLAGS) $(HARDEN_FORTIFY) -DDS4_VERSION=\"$(VERSION)\" $(UNBIND_CXXFLAGS)
 LDFLAGS  = -lpthread $(HARDEN_LDFLAGS) $(UNBIND_LDFLAGS) $(HIDBPF_LDFLAGS) $(ENV_LDFLAGS)
 
 TARGET_DAEMON = $(BUILD_DIR)/ds4-translator
@@ -118,9 +133,9 @@ CTL_OBJ    = $(BUILD_DIR)/ctl.o $(BUILD_DIR)/ipc-client.o
 all: $(TARGET_DAEMON) $(TARGET_CTL) $(TARGET_SPOOF) $(TARGET_SPOOF32) $(HIDBPF_BPF_OBJ)
 
 # Debug build: no optimisation, debug symbols, DS4_DEBUG enabled
-debug: CXXFLAGS = -O0 -g $(STRICT_WARNINGS) $(HARDEN_FLAGS) -std=c++17 -DDS4_DEBUG -DDS4_VERSION=\"$(VERSION)\" \
+debug: CXXFLAGS = -O0 -g $(STRICT_WARNINGS) $(PRODUCT_WARNINGS_CXX) $(HARDEN_FLAGS) -std=c++17 -DDS4_DEBUG -DDS4_VERSION=\"$(VERSION)\" \
                   -DHID_BPF_OBJ_PATH=\"$(HIDBPF_INSTALL_PATH)\" $(UNBIND_CXXFLAGS) $(HIDBPF_CXXFLAGS)
-debug: CFLAGS   = -O0 -g $(STRICT_WARNINGS) $(HARDEN_FLAGS) -DDS4_DEBUG -DDS4_VERSION=\"$(VERSION)\" $(UNBIND_CXXFLAGS)
+debug: CFLAGS   = -O0 -g $(STRICT_WARNINGS) $(PRODUCT_WARNINGS) $(HARDEN_FLAGS) -DDS4_DEBUG -DDS4_VERSION=\"$(VERSION)\" $(UNBIND_CXXFLAGS)
 debug: clean all
 
 $(BUILD_DIR):
@@ -133,10 +148,10 @@ $(TARGET_CTL): $(CTL_OBJ)
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
 
 $(TARGET_SPOOF): $(SPOOF_SRC) | $(BUILD_DIR)
-	$(CC) -O3 -fPIC -shared $(HARDEN_COMMON) $(HARDEN_FORTIFY) $(HARDEN_SHARED_LDFLAGS) $(ENV_LDFLAGS) -o $@ $< -ldl -lpthread
+	$(CC) -O3 -fPIC -shared $(STRICT_WARNINGS) $(PRODUCT_WARNINGS) $(HARDEN_COMMON) $(HARDEN_FORTIFY) $(HARDEN_SHARED_LDFLAGS) $(ENV_LDFLAGS) -o $@ $< -ldl -lpthread
 
 $(TARGET_SPOOF32): $(SPOOF_SRC) | $(BUILD_DIR)
-	$(CC) -m32 -O3 -fPIC -shared $(HARDEN_COMMON) $(HARDEN_FORTIFY) $(HARDEN_SHARED_LDFLAGS) $(ENV_LDFLAGS) -o $@ $< -ldl -lpthread
+	$(CC) -m32 -O3 -fPIC -shared $(STRICT_WARNINGS) $(PRODUCT_WARNINGS) $(HARDEN_COMMON) $(HARDEN_FORTIFY) $(HARDEN_SHARED_LDFLAGS) $(ENV_LDFLAGS) -o $@ $< -ldl -lpthread
 
 
 $(BUILD_DIR)/%.o: src/%.cpp | $(BUILD_DIR)
@@ -175,6 +190,16 @@ kernel:
 
 kernel-check:
 	$(MAKE) -C kernel check
+
+# Strict build (every warning an error), checkpatch, sparse if installed and
+# the Clang static analyzer on a Clang-built kernel.
+kernel-lint:
+	$(MAKE) -C kernel lint
+
+# Everything static, warnings as errors: the daemon's strict build (both
+# variants), clang-tidy, and the kernel module's lint. Needs the tools those
+# use (clang-tidy, kernel headers; sparse and a Clang kernel for the full set).
+lint: all debug tidy kernel-lint
 
 # Loads the module in a throwaway virtme-ng VM against a uhid fake pad.
 kernel-test: kernel
@@ -460,6 +485,15 @@ test-tsan: $(TSAN_UNIT_BIN) $(USB_TEST_BIN)-tsan
 	$(USB_TEST_BIN)-tsan $(GTEST_ARGS)
 
 # Hardening flags, systemd unit, udev rules, workflows, shell scripts, secrets.
+# clang-tidy over the daemon, the way .github/workflows/lint.yml runs it: the
+# checks and WarningsAsErrors come from .clang-tidy, so any finding fails.
+TIDY_CXXFLAGS = -std=c++17 -Isrc $(UNBIND_CXXFLAGS) $(HIDBPF_CXXFLAGS) -DDS4_VERSION=\"tidy\"
+TIDY_CFLAGS   = -Isrc $(UNBIND_CXXFLAGS) -DDS4_VERSION=\"tidy\"
+tidy:
+	@command -v clang-tidy >/dev/null || { echo "tidy: clang-tidy not found" >&2; exit 1; }
+	set -e; for f in src/*.cpp; do echo "=== $$f"; clang-tidy --quiet "$$f" -- $(TIDY_CXXFLAGS); done
+	set -e; for f in src/*.c; do echo "=== $$f"; clang-tidy --quiet "$$f" -- $(TIDY_CFLAGS); done
+
 test-security-static: all
 	tests/security/static_checks.sh $(BUILD_DIR)
 
@@ -504,5 +538,5 @@ uninstall-cli:
 
 .PHONY: all debug clean install install-cli stage-cli uninstall uninstall-cli \
         ui install-ui stage-ui uninstall-ui install-ui-user uninstall-ui-user arch-pkg arch-repo \
-        kernel kernel-check kernel-test stage-dkms \
+        kernel kernel-check kernel-lint kernel-test stage-dkms tidy lint \
         test test-unit test-perf test-fuzz test-component test-smoke test-integration test-sanitize test-tsan test-security-static test-hwtest

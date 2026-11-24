@@ -23,6 +23,7 @@ guard_no_production_daemon
 setup_scratch
 
 client() { python3 -I "$SOCKCLIENT" "$SOCK" "$@"; }
+# shellcheck disable=SC2329 # run by name through check, not called directly
 status_ok() { timeout 3 "$CTL" status 2>&1 | grep -qF "Virtual Emulation"; }
 
 # ------------------------------------------------ L2: files the daemon writes
@@ -91,6 +92,7 @@ if sudo -n true 2>/dev/null && command -v setpriv >/dev/null; then
     cp "$SOCKCLIENT" "$WORK/sockclient.py"
     chmod 644 "$WORK/sockclient.py"
     # Runs the socket client as an unprivileged uid; payload on stdin.
+    # shellcheck disable=SC2329 # run by name through check, not called directly
     nobody_raw() {
         printf '%s' "$1" | sudo -n setpriv --reuid=65534 --regid=65534 --clear-groups \
             python3 -I "$WORK/sockclient.py" "$SOCK" raw
@@ -109,7 +111,9 @@ else
 fi
 
 # ----------------------------------------- L1: set-name rejects control characters
+# shellcheck disable=SC2329 # run by name through check, not called directly
 esc_name_rejected() { raw $'set-name ds4 \x1b]0;pwn\x07' | grep -q 'Error'; }
+# shellcheck disable=SC2329 # run by name through check, not called directly
 bad_utf8_rejected() { raw $'set-name ds4 \xff\xfe' | grep -q 'Error'; }
 require "L1 set-name rejects an ESC sequence" esc_name_rejected
 require "L1 set-name rejects invalid UTF-8" bad_utf8_rejected

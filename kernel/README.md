@@ -77,6 +77,22 @@ If the module fails to load with "Key was rejected by service", the key is
 not enrolled yet. Nothing breaks in the meantime: the daemon falls back to
 the `unbind` method.
 
+## Lint and static analysis
+
+`make lint` (here) or `make kernel-lint` (repository root) runs, with every
+warning an error:
+
+- `strict`: a clean build with `W=1 KCFLAGS=-Werror`. Plain `make` stays lenient
+  because that is what DKMS runs on your machine, with your compiler, and a
+  warning a newer compiler adds must not stop the module from building.
+- `check`: `checkpatch.pl --strict`.
+- `sparse`: needs the `sparse` package; skipped by `lint` if it is missing, and
+  an error when run on its own.
+- `analyze`: the Clang static analyzer, driven through Kbuild by `analyze.sh`
+  with the module's real compiler flags. It needs a kernel built with Clang
+  (CachyOS's is), because a GCC-built kernel's flags are not Clang's, so CI,
+  which uses Arch's GCC kernels, cannot run it.
+
 ## Test without hardware
 
 `make kernel-test` boots a virtme-ng VM and runs

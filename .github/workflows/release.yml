@@ -9,8 +9,9 @@ on:
     tags:
       - 'v*'
 
+# Read-only by default; the one job that publishes the release asks for more.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   # A tag must not publish a build that fails the test suite.
@@ -20,10 +21,13 @@ jobs:
   build-and-release:
     needs: tests
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           # Full history + tags: `git describe --tags` (used as a sanity
           # check below, and by anyone rebuilding from this same checkout)
           # needs more than the tagged commit alone to resolve reliably.
@@ -89,6 +93,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           # `git describe --tags` derives the package version.
           fetch-depth: 0
 
@@ -109,7 +114,9 @@ jobs:
           # secret is not set, e.g. on a fork, everything stays unsigned.
           ARCH_GPG_PRIVATE_KEY: ${{ secrets.ARCH_GPG_PRIVATE_KEY }}
         run: |
-          sign=""
+          # POSIX sh (this job runs in an Arch container): the positional
+          # parameters stand in for an array of extra make arguments.
+          set --
           if [ -n "$ARCH_GPG_PRIVATE_KEY" ]; then
             printf '%s\n' "$ARCH_GPG_PRIVATE_KEY" | runuser -u builder -- gpg --batch --import
             fpr=$(runuser -u builder -- gpg --list-secret-keys --with-colons | awk -F: '/^fpr/ {print $10; exit}')
@@ -118,11 +125,11 @@ jobs:
             for pkg in build/arch/*.pkg.tar.zst; do
               runuser -u builder -- gpg --batch --yes --local-user "$fpr" --detach-sign --no-armor "$pkg"
             done
-            sign="ARCH_SIGN_KEY=$fpr"
+            set -- "ARCH_SIGN_KEY=$fpr"
           else
             echo "::warning::ARCH_GPG_PRIVATE_KEY is not set; publishing unsigned packages."
           fi
-          runuser -u builder -- make arch-repo $sign
+          runuser -u builder -- make arch-repo "$@"
 
       - name: Assemble the site
         run: |
@@ -131,8 +138,8 @@ jobs:
           # build was unsigned.
           mkdir site
           cd build/arch
-          cp *.pkg.tar.zst ds4-translator.db ds4-translator.files ../../site/
-          cp *.pkg.tar.zst.sig ds4-translator.db.sig ds4-translator.files.sig ../../site/ 2>/dev/null || true
+          cp -- ./*.pkg.tar.zst ds4-translator.db ds4-translator.files ../../site/
+          cp -- ./*.pkg.tar.zst.sig ds4-translator.db.sig ds4-translator.files.sig ../../site/ 2>/dev/null || true
           cp "$GITHUB_WORKSPACE/packaging/arch/ds4-translator.pub.asc" \
              "$GITHUB_WORKSPACE/packaging/arch/index.html" ../../site/
 
