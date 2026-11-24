@@ -166,6 +166,19 @@ $(HIDBPF_BPF_OBJ): src/hid-bpf/hid-bpf-transport.bpf.c src/hid-bpf/hid_bpf.h \
 clean:
 	rm -rf $(BUILD_DIR)
 	rm -rf $(UI_BUILD_DIR)
+	$(MAKE) -C kernel clean 2>/dev/null || true
+
+# Kernel module (kernel/). Deliberately kept out of `all`: it needs the
+# running kernel's headers, which the daemon itself does not.
+kernel:
+	$(MAKE) -C kernel
+
+kernel-check:
+	$(MAKE) -C kernel check
+
+# Loads the module in a throwaway virtme-ng VM against a uhid fake pad.
+kernel-test: kernel
+	tests/kernel/run-vm.sh
 
 # Qt 6 settings GUI (ui/). Deliberately kept out of `all`: it needs Qt 6 +
 # CMake, which the daemon itself does not, so a plain `make` still builds the
@@ -474,4 +487,5 @@ uninstall-cli:
 
 .PHONY: all debug clean install install-cli stage-cli uninstall uninstall-cli \
         ui install-ui stage-ui uninstall-ui install-ui-user uninstall-ui-user arch-pkg arch-repo \
+        kernel kernel-check kernel-test \
         test test-unit test-perf test-fuzz test-component test-smoke test-integration test-sanitize test-tsan test-security-static test-hwtest
