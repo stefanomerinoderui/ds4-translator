@@ -2,5 +2,6 @@
 obj-m := hid-ds4-translator.o
 hid-ds4-translator-y := ds4t-driver.o ds4t-chardev.o ds4t-control.o
 
-# include/uapi/ds4t.h is shared with the daemon.
-ccflags-y := -I$(src)/../include/uapi
+# ds4t.h is shared with the daemon: it lives in include/uapi/ in the repository
+# and is copied next to the sources in the DKMS tree (make stage-dkms).
+ccflags-y := -I$(src) -I$(src)/../include/uapi

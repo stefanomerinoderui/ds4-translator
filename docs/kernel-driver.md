@@ -401,20 +401,30 @@ access, by design. This is already true of the `unlink` method.
 The module ships as its own package so the daemon stays buildable and
 usable on systems without kernel headers.
 
-- **`ds4-translator-dkms`:** module source, `dkms.conf` (with `LLVM=1`
-  handling and MOK signing), the modprobe config, and the uapi header
-  `ds4t.h` (ioctl numbers and structs).
+- **`ds4-translator-dkms`:** module source, `dkms.conf` and the uapi header
+  `ds4t.h` (ioctl numbers and structs) copied next to the sources
+  (`make stage-dkms`). `kernel/Makefile` passes `LLVM=1` when the kernel was
+  built with Clang, and DKMS signs with the Machine Owner Key it manages, so
+  the package needs no per-distribution handling beyond the headers. No
+  modprobe configuration is needed: with the attach model (section 3.1) the
+  module's load order no longer matters, so the `softdep` this study first
+  proposed is not shipped. The service loads the module with
+  `ExecStartPre=-+/usr/bin/modprobe hid_ds4_translator` (the `-` keeps it
+  starting where the package is not installed), and there is no
+  `ExecStopPost`.
 - **Daemon:** gains only a `driver` transport that includes `ds4t.h`. It
-  probes `/dev/ds4-translator/control` and falls back to `unbind` when it
-  is absent.
-- **ABI versioning:** `DS4T_GET_INFO` returns a `DS4T_ABI_VERSION`, so a
-  daemon and module of different releases refuse each other cleanly
-  instead of misreading structs.
+  attaches through `/dev/ds4-translator/control` and falls back to `unbind`
+  when that is absent.
+- **ABI versioning:** the module reports `DS4T_ABI_VERSION` on both the
+  control and the pad nodes, so a daemon and module of different releases
+  refuse each other cleanly instead of misreading structs.
 - **Location:** start as a `kernel/` subdirectory of this repository so
   the uapi header has one source of truth; split into its own repository
   only once the ABI is stable.
-- **Decisions needed before shipping:**
-  - License. GPL-2.0 is forced for the module; the repository has no
-    `LICENSE` file at all.
-  - Minimum supported kernel (for example the 6.12 LTS), which sets the
-    size of the `LINUX_VERSION_CODE` shim layer.
+- **Decisions taken:** the module is `GPL-2.0-only` (`MODULE_LICENSE("GPL")`,
+  and the package declares it), the daemon's own license is still open and
+  does not block the module; the minimum kernel is 6.12 LTS. No
+  `LINUX_VERSION_CODE` shims have been needed so far.
+- **CI** (`.github/workflows/kernel.yml`) builds the module and the DKMS
+  tree against the Arch stable and LTS headers; `tests/kernel` needs
+  virtme-ng and is run by hand (`make kernel-test`).

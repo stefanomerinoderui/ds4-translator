@@ -1,0 +1,89 @@
+name: Kernel module
+
+# Builds kernel/ (hid-ds4-translator) against the headers of the Arch stable and
+# LTS kernels -- the LTS one is the 6.12 floor the module supports -- both as
+# the repository tree and as the DKMS tree the ds4-translator-dkms package
+# ships. The module needs real kernel headers, so this lives apart from the
+# daemon's lint and test workflows, which have no use for them.
+#
+# Not covered here: tests/kernel (needs virtme-ng and the HID modules, which
+# GitHub's runner kernel lacks; run `make kernel-test` locally) and the
+# CachyOS Clang+LTO kernel, which `kernel/Makefile` handles by detecting
+# CONFIG_CC_IS_CLANG and is only tried on a developer machine.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'kernel/**'
+      - 'include/uapi/**'
+      - 'Makefile'
+      - '.github/workflows/kernel.yml'
+  pull_request:
+    paths:
+      - 'kernel/**'
+      - 'include/uapi/**'
+      - 'Makefile'
+      - '.github/workflows/kernel.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      - name: Install toolchain and kernel headers
+        run: |
+          pacman -Syu --noconfirm --needed git clang llvm lld sparse libusb libbpf bpf \
+            linux-headers linux-lts-headers
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Build against every installed kernel
+        run: |
+          set -e
+          for kdir in /usr/lib/modules/*/build; do
+            echo "::group::$kdir"
+            make -C kernel KDIR="$kdir" W=1 all
+            make -C kernel KDIR="$kdir" clean
+            echo "::endgroup::"
+          done
+
+      - name: Build the DKMS tree against every installed kernel
+        run: |
+          set -e
+          make stage-dkms DESTDIR=/tmp/stage DKMS_VERSION=ci
+          for kdir in /usr/lib/modules/*/build; do
+            echo "::group::$kdir (DKMS tree)"
+            cp -r /tmp/stage/usr/src/ds4-translator-ci /tmp/dkms-build
+            make -C /tmp/dkms-build KDIR="$kdir" all
+            test -f /tmp/dkms-build/hid-ds4-translator.ko
+            rm -rf /tmp/dkms-build
+            echo "::endgroup::"
+          done
+
+      # The two static checkers are advisory: the kernel tree they would come
+      # from is not installed, and a checkpatch.pl newer or older than the
+      # kernel developed against reports different style rules.
+      - name: checkpatch (kernel 6.12's script, pinned)
+        continue-on-error: true
+        run: |
+          set -e
+          base=https://raw.githubusercontent.com/torvalds/linux/v6.12/scripts
+          mkdir /tmp/checkpatch
+          cd /tmp/checkpatch
+          for f in checkpatch.pl spelling.txt const_structs.checkpatch; do
+            curl -fsSL -o "$f" "$base/$f"
+          done
+          sha256sum -c - <<'SUMS'
+          18ea730514bf67d182aa70020e4a178ceafbbe45da5d41bdb358eb057e96dd51  checkpatch.pl
+          edfc6c79164193e509e8f4770b1479790961eb2f040c5865d5305ae5d438c64c  spelling.txt
+          e7ccfd007cb45570d8a2960b9f711f3e722647585860923aadc27cc291e065e3  const_structs.checkpatch
+          SUMS
+          cd "$GITHUB_WORKSPACE"
+          make -C kernel check CHECKPATCH=/tmp/checkpatch/checkpatch.pl
+
+      - name: sparse
+        continue-on-error: true
+        run: make -C kernel KDIR="$(ls -d /usr/lib/modules/*lts*/build)" sparse

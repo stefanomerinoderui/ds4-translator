@@ -1,6 +1,6 @@
 # Installing ds4-translator from the pacman repository
 
-Every tagged release publishes `ds4-translator` and `ds4-translator-ui` as a
+Every tagged release publishes `ds4-translator`, `ds4-translator-ui` and `ds4-translator-dkms` as a
 pacman repository, so on Arch Linux (and derivatives such as CachyOS or
 Manjaro) you can install and update them with pacman instead of building from
 source.
@@ -45,6 +45,7 @@ see below), use `SigLevel = Optional` instead of `Required` and skip step 1.
 ```bash
 sudo pacman -S ds4-translator
 sudo pacman -S ds4-translator-ui     # optional: Qt settings window and tray applet
+sudo pacman -S ds4-translator-dkms   # optional: kernel module for the "driver" hide method (needs your kernel's headers)
 sudo systemctl enable --now ds4-translator.service
 ```
 
@@ -89,7 +90,8 @@ succeeded:
 1. It starts an `archlinux:base-devel` container, enables `[multilib]`, and
    installs the build dependencies.
 2. It runs `make arch-pkg arch-repo` as an unprivileged user:
-   - `arch-pkg` builds both packages with `makepkg` from `packaging/arch/PKGBUILD.in`;
+   - `arch-pkg` builds all three packages with `makepkg` from `packaging/arch/PKGBUILD.in`
+     (`ds4-translator-dkms` only ships sources, which DKMS compiles on the user's machine);
    - `arch-repo` runs `repo-add` to create the `ds4-translator` database.
 3. It hands the packages, the database, their signatures and the public key
    to a second job, `deploy-arch-repo`, which publishes them on GitHub Pages.

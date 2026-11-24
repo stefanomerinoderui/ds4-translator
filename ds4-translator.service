@@ -10,6 +10,10 @@ Type=simple
 ExecStartPre=-+/usr/bin/modprobe dummy_hcd
 ExecStartPre=-+/usr/bin/modprobe libcomposite
 ExecStartPre=-+/usr/bin/modprobe usb_f_fs
+# The "driver" hide method's module (ds4-translator-dkms). Inert until the
+# daemon attaches, so loading it is harmless when that method is not in use;
+# the leading "-" lets the service start where it is not installed.
+ExecStartPre=-+/usr/bin/modprobe hid_ds4_translator
 ExecStartPre=-/usr/local/bin/rebind-unbound-controllers.sh
 ExecStart=/usr/local/bin/ds4-translator
 # /var/lib/ds4-translator holds the remembered controller MAC used by the

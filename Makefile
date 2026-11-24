@@ -267,10 +267,22 @@ stage-cli: all
 	install -D -m 644 ds4-translator.sysusers $(DESTDIR)/usr/lib/sysusers.d/ds4-translator.conf
 	install -D -m 644 $(HIDBPF_BPF_OBJ) $(DESTDIR)$(HIDBPF_INSTALL_PATH)
 
+# The kernel module's sources as a DKMS tree (the ds4-translator-dkms package).
+# Self-contained: ds4t.h is copied next to the sources, because the Kbuild
+# include path into ../include/uapi only exists in the repository.
+DKMS_VERSION ?= $(ARCH_PKGVER)
+DKMS_SRCDIR   = $(DESTDIR)/usr/src/ds4-translator-$(DKMS_VERSION)
+stage-dkms:
+	install -d $(DKMS_SRCDIR)
+	install -m 644 kernel/Kbuild kernel/Makefile kernel/ds4t-*.c kernel/ds4t-internal.h \
+	    include/uapi/ds4t.h $(DKMS_SRCDIR)/
+	sed 's|@VERSION@|$(DKMS_VERSION)|' kernel/dkms.conf.in > $(DKMS_SRCDIR)/dkms.conf
+	chmod 644 $(DKMS_SRCDIR)/dkms.conf
+
 # Installable Arch Linux package(s), built by makepkg from a snapshot of the
 # working tree (uncommitted changes included, so what you test is what you
-# package). Produces two split packages in $(ARCH_PKG_DIR): ds4-translator
-# (daemon + CLI) and ds4-translator-ui. Install with
+# package). Produces three split packages in $(ARCH_PKG_DIR): ds4-translator
+# (daemon + CLI), ds4-translator-ui and ds4-translator-dkms (kernel module). Install with
 #   sudo pacman -U build/arch/ds4-translator-*.pkg.tar.zst
 # Must run as a regular user -- makepkg refuses to run as root.
 ARCH_PKG_DIR = $(BUILD_DIR)/arch
@@ -488,5 +500,5 @@ uninstall-cli:
 
 .PHONY: all debug clean install install-cli stage-cli uninstall uninstall-cli \
         ui install-ui stage-ui uninstall-ui install-ui-user uninstall-ui-user arch-pkg arch-repo \
-        kernel kernel-check kernel-test \
+        kernel kernel-check kernel-test stage-dkms \
         test test-unit test-perf test-fuzz test-component test-smoke test-integration test-sanitize test-tsan test-security-static test-hwtest

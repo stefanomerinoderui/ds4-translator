@@ -4,6 +4,7 @@
 #   make                      build against the running kernel
 #   make KDIR=/path/to/build  build against another kernel tree
 #   make check                checkpatch.pl --strict on the sources
+#   make sparse               build with sparse's static checks (needs sparse)
 
 KVER ?= $(shell uname -r)
 KDIR ?= /lib/modules/$(KVER)/build
@@ -25,8 +26,14 @@ clean:
 # ENOSYS: hid_hw_output_report() returns -ENOSYS by contract when the
 # transport has no output endpoint, and the write path tests for it (as
 # hidraw does).
+# Not every kernel's build tree ships checkpatch.pl; CHECKPATCH overrides it.
+CHECKPATCH ?= $(KDIR)/scripts/checkpatch.pl
 check:
-	$(KDIR)/scripts/checkpatch.pl --no-tree --strict \
-		--ignore ALLOC_WITH_SIZEOF,ENOSYS -f ds4t-driver.c -f ds4t-chardev.c -f ds4t-internal.h
+	$(CHECKPATCH) --no-tree --strict \
+		--ignore ALLOC_WITH_SIZEOF,ENOSYS \
+		-f ds4t-driver.c -f ds4t-chardev.c -f ds4t-control.c -f ds4t-internal.h
 
-.PHONY: all clean check
+sparse:
+	$(MAKE) -C $(KDIR) M=$(CURDIR) $(KBUILD_ARGS) C=2 CF=-D__CHECK_ENDIAN__ modules
+
+.PHONY: all clean check sparse

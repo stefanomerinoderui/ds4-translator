@@ -70,7 +70,7 @@ sudo pacman -U build/arch/ds4-translator-*.pkg.tar.zst
 sudo systemctl enable --now ds4-translator.service
 ```
 
-This produces two packages: `ds4-translator` (daemon and `ds4-ctl`) and `ds4-translator-ui` (the Qt settings window). Install only the first if you don't want the UI. Unlike `make install`, the package installs under `/usr` (unit, udev rule and modprobe config in `/usr/lib`) and leaves enabling the service to you.
+This produces three packages: `ds4-translator` (daemon and `ds4-ctl`), `ds4-translator-ui` (the Qt settings window) and `ds4-translator-dkms` (the optional kernel module, see [the driver hide method](#the-driver-hide-method-experimental)). Install only the first if you don't want the rest. Unlike `make install`, the package installs under `/usr` (unit, udev rule and modprobe config in `/usr/lib`) and leaves enabling the service to you.
 
 By default, the service starts emulating a virtual **DualShock 4** controller.
 
@@ -167,6 +167,18 @@ Two caveats:
   suspicion in those cases.
 - Apps that read the name through libudev sysfs attributes rather than from
   the device itself still see the default Sony string.
+
+### The driver hide method (experimental)
+
+By default the daemon takes the physical pad away from the kernel's `hid-playstation` driver after it has bound, with several workarounds (see [docs/how-it-works.md](docs/how-it-works.md)). The optional `hid-ds4-translator` kernel module ([kernel/README.md](kernel/README.md), design in [docs/kernel-driver.md](docs/kernel-driver.md)) claims the pad first instead, so no other driver ever creates a battery, LED, `hidraw` or input device for it, and the daemon reads it through a private node. It also hands the pad's real IMU calibration to the emulated DualShock 4.
+
+```bash
+sudo pacman -S ds4-translator-dkms linux-headers    # builds the module with DKMS
+sudo systemctl restart ds4-translator.service       # loads it
+ds4-ctl set-hide-method driver
+```
+
+It is opt-in and falls back to the `unbind` method whenever the module is not loaded. While the daemon runs, the module holds the pad; when the daemon stops or crashes, the pad goes straight back to `hid-playstation`. On Secure Boot systems the module must be signed; see [kernel/README.md](kernel/README.md#secure-boot).
 
 ## Uninstalling
 
