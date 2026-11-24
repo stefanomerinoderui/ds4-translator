@@ -644,6 +644,7 @@ static void driver_push_ignore_mac() {
 // seconds.
 static void reconcile_driver_attachment(bool want) {
     static std::chrono::steady_clock::time_point next_attempt;
+    static bool failure_reported = false; // one explanation per episode, not one every retry
     constexpr auto kRetryInterval = std::chrono::seconds(5);
 
     if (!want) {
@@ -653,23 +654,30 @@ static void reconcile_driver_attachment(bool want) {
             std::cout << "driver: detached; the physical pad is back with its regular driver." << std::endl;
         }
         next_attempt = {};
+        failure_reported = false;
         return;
     }
     if (g_driver_control_fd >= 0 || std::chrono::steady_clock::now() < next_attempt) {
         return;
     }
-    g_driver_control_fd = driver_transport_attach();
-    if (g_driver_control_fd < 0) {
-        next_attempt = std::chrono::steady_clock::now() + kRetryInterval;
+    next_attempt = std::chrono::steady_clock::now() + kRetryInterval;
+    // Once a failure is on record, only try again when the module has shown up.
+    if (failure_reported && !driver_transport_available()) {
         return;
     }
+    g_driver_control_fd = driver_transport_attach();
+    if (g_driver_control_fd < 0) {
+        failure_reported = true;
+        return;
+    }
+    failure_reported = false;
     // The MAC first: claiming takes over every pad already on the bus, and
     // the emulated one must not be among them.
     driver_push_ignore_mac();
     if (!driver_transport_claim(g_driver_control_fd)) {
         driver_transport_detach(g_driver_control_fd);
         g_driver_control_fd = -1;
-        next_attempt = std::chrono::steady_clock::now() + kRetryInterval;
+        failure_reported = true;
         return;
     }
     std::cout << "driver: attached to hid_ds4_translator." << std::endl;

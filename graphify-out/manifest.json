@@ -144,9 +144,9 @@
     "semantic_hash": "015b45491d31f39a22d30657dcec8fd8"
   },
   "src/main.cpp": {
-    "mtime": 1795492581.706935,
-    "seen": 1795492806.5963333,
-    "ast_hash": "1d490c3a4ef72906507be1c201b95f2c",
+    "mtime": 1795493244.0010142,
+    "seen": 1795493353.378812,
+    "ast_hash": "0843a4db73f7845bd3f34c219d11ade1",
     "semantic_hash": ""
   },
   "src/paths.h": {
@@ -564,9 +564,9 @@
     "semantic_hash": ""
   },
   "docs/kernel-driver.md": {
-    "mtime": 1795492966.7417197,
-    "seen": 1795493019.7692697,
-    "ast_hash": "d0b714273d6f8abcbbe682fbfe840cdf",
+    "mtime": 1795493213.3621852,
+    "seen": 1795493353.3789153,
+    "ast_hash": "8d651597ea50531b18a0e8a20155952e",
     "semantic_hash": ""
   },
   "docs/security-findings.md": {
@@ -624,21 +624,21 @@
     "semantic_hash": "f0c9871272530025988b974d419e2cd8"
   },
   "tests/kernel/fake-pad.c": {
-    "mtime": 1795492711.3784847,
-    "seen": 1795492806.5964313,
-    "ast_hash": "ba6422b78766189b4e5bd6fab54f2c01",
+    "mtime": 1795493069.3744147,
+    "seen": 1795493353.3788435,
+    "ast_hash": "bfffa64098898213a3089e85bab557f3",
     "semantic_hash": ""
   },
   "tests/kernel/run-vm.sh": {
-    "mtime": 1795491929.1884372,
-    "seen": 1795492125.8655767,
-    "ast_hash": "1a9a54d29175724192fa358ae26be85f",
+    "mtime": 1795493147.0068004,
+    "seen": 1795493353.3788464,
+    "ast_hash": "63bfbe55fdbc45a7ea7a7d706b9d146c",
     "semantic_hash": ""
   },
   "tests/kernel/test-binder.sh": {
-    "mtime": 1795492723.2816324,
-    "seen": 1795492806.5964432,
-    "ast_hash": "fa3c7eb34be0c07d591aa0fcddd65cff",
+    "mtime": 1795493147.0069768,
+    "seen": 1795493353.3788476,
+    "ast_hash": "f1756a5cd5b92a2816e4f6d3384c5f28",
     "semantic_hash": ""
   },
   "kernel/README.md": {
@@ -660,15 +660,15 @@
     "semantic_hash": ""
   },
   "kernel/ds4t-chardev.c": {
-    "mtime": 1795492438.8761368,
-    "seen": 1795492806.5962305,
-    "ast_hash": "9e02d89c5d98a00f65310282ab10183b",
+    "mtime": 1795493238.7764375,
+    "seen": 1795493353.3787785,
+    "ast_hash": "89ca6a0cdede774e13893e15be879c95",
     "semantic_hash": ""
   },
   "kernel/ds4t-driver.c": {
-    "mtime": 1795491788.6574888,
-    "seen": 1795492125.8654597,
-    "ast_hash": "4baea299558e3994c5d21d6c5ae3d135",
+    "mtime": 1795493238.7766006,
+    "seen": 1795493353.378782,
+    "ast_hash": "6fcbfd85e4022eea6a5951c93c437189",
     "semantic_hash": ""
   },
   "kernel/ds4t-internal.h": {
@@ -696,9 +696,9 @@
     "semantic_hash": ""
   },
   "tests/kernel/pad-client.c": {
-    "mtime": 1795492656.0914354,
-    "seen": 1795492806.5964348,
-    "ast_hash": "7082677e967c01132609b1595ad1525d",
+    "mtime": 1795493062.832584,
+    "seen": 1795493353.378845,
+    "ast_hash": "f4903d57d01818e5847562bc16721e41",
     "semantic_hash": ""
   },
   "tests/kernel/transport-check.cpp": {

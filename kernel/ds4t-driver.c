@@ -285,7 +285,8 @@ static int ds4t_bus_event(struct notifier_block *nb, unsigned long action,
 	struct device *dev = data;
 	struct ds4t_steal_work *sw;
 
-	if (action != BUS_NOTIFY_BOUND_DRIVER || dev->driver == &ds4t_driver.driver)
+	if (action != BUS_NOTIFY_BOUND_DRIVER || !ds4t_attached() ||
+	    dev->driver == &ds4t_driver.driver)
 		return NOTIFY_DONE;
 	if (!hid_match_id(to_hid_device(dev), ds4t_devices))
 		return NOTIFY_DONE;

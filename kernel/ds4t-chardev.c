@@ -337,7 +337,7 @@ void ds4t_pad_unregister(struct ds4t_pad *pad)
 	/* Wait for writers inside hid_hw_*(), then keep new ones out. */
 	down_write(&pad->exist_lock);
 	spin_lock_irq(&pad->lock);
-	pad->exist = false;
+	WRITE_ONCE(pad->exist, false);
 	spin_unlock_irq(&pad->lock);
 	up_write(&pad->exist_lock);
 
