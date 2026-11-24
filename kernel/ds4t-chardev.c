@@ -15,6 +15,10 @@
 
 static struct dentry *ds4t_dbg_dir;
 
+/* Registered pads, for the virtual controller to find the one it follows. */
+static LIST_HEAD(ds4t_pads);
+static DEFINE_MUTEX(ds4t_pads_lock);
+
 /* Ring helpers: callers hold pad->lock. */
 
 static void ds4t_ring_push(struct ds4t_ring *ring, const u8 *data, int size)
@@ -50,6 +54,7 @@ struct ds4t_pad *ds4t_pad_alloc(struct hid_device *hdev)
 		return NULL;
 
 	kref_init(&pad->ref);
+	INIT_LIST_HEAD(&pad->list);
 	pad->hdev = hdev;
 	pad->exist = true;
 	init_rwsem(&pad->exist_lock);
@@ -75,9 +80,30 @@ static void ds4t_pad_free(struct kref *ref)
 	kfree(container_of(ref, struct ds4t_pad, ref));
 }
 
+void ds4t_pad_get(struct ds4t_pad *pad)
+{
+	kref_get(&pad->ref);
+}
+
 void ds4t_pad_put(struct ds4t_pad *pad)
 {
 	kref_put(&pad->ref, ds4t_pad_free);
+}
+
+struct ds4t_pad *ds4t_pad_find(const char *hid_id)
+{
+	struct ds4t_pad *pad, *found = NULL;
+
+	mutex_lock(&ds4t_pads_lock);
+	list_for_each_entry(pad, &ds4t_pads, list) {
+		if (!strcmp(pad->info.hid_id, hid_id)) {
+			ds4t_pad_get(pad);
+			found = pad;
+			break;
+		}
+	}
+	mutex_unlock(&ds4t_pads_lock);
+	return found;
 }
 
 void ds4t_pad_report(struct ds4t_pad *pad, const u8 *data, int size)
@@ -329,11 +355,26 @@ int ds4t_pad_register(struct ds4t_pad *pad)
 
 	pad->dbg_file = debugfs_create_file(pad->info.hid_id, 0400,
 					    ds4t_dbg_dir, pad, &ds4t_dbg_fops);
+
+	mutex_lock(&ds4t_pads_lock);
+	list_add_tail(&pad->list, &ds4t_pads);
+	mutex_unlock(&ds4t_pads_lock);
 	return 0;
 }
 
 void ds4t_pad_unregister(struct ds4t_pad *pad)
 {
+	/*
+	 * The virtual controller stops following the pad first: its output
+	 * worker takes exist_lock for reading, which the write lock below must
+	 * not be held against while waiting for it.
+	 */
+	ds4t_virtual_pad_gone(pad);
+
+	mutex_lock(&ds4t_pads_lock);
+	list_del_init(&pad->list);
+	mutex_unlock(&ds4t_pads_lock);
+
 	/* Wait for writers inside hid_hw_*(), then keep new ones out. */
 	down_write(&pad->exist_lock);
 	spin_lock_irq(&pad->lock);

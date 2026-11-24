@@ -307,7 +307,7 @@ DKMS_VERSION ?= $(ARCH_PKGVER)
 DKMS_SRCDIR   = $(DESTDIR)/usr/src/ds4-translator-$(DKMS_VERSION)
 stage-dkms:
 	install -d $(DKMS_SRCDIR)
-	install -m 644 kernel/Kbuild kernel/Makefile kernel/ds4t-*.c kernel/ds4t-internal.h \
+	install -m 644 kernel/Kbuild kernel/Makefile kernel/ds4t-*.c kernel/ds4t-*.h \
 	    include/uapi/ds4t.h $(DKMS_SRCDIR)/
 	sed 's|@VERSION@|$(DKMS_VERSION)|' kernel/dkms.conf.in > $(DKMS_SRCDIR)/dkms.conf
 	chmod 644 $(DKMS_SRCDIR)/dkms.conf

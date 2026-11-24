@@ -4,6 +4,7 @@
 
 #include <linux/hid.h>
 #include <linux/kref.h>
+#include <linux/list.h>
 #include <linux/miscdevice.h>
 #include <linux/rwsem.h>
 #include <linux/spinlock.h>
@@ -41,6 +42,7 @@ struct ds4t_ring {
  */
 struct ds4t_pad {
 	struct kref ref;
+	struct list_head list;		/* ds4t_pads, while registered */
 	struct hid_device *hdev;
 	struct ds4t_info info;
 	struct miscdevice misc;
@@ -67,7 +69,10 @@ struct ds4t_pad {
 };
 
 struct ds4t_pad *ds4t_pad_alloc(struct hid_device *hdev);
+void ds4t_pad_get(struct ds4t_pad *pad);
 void ds4t_pad_put(struct ds4t_pad *pad);
+/* The registered pad called hid_id, with a reference taken; NULL if none. */
+struct ds4t_pad *ds4t_pad_find(const char *hid_id);
 
 /* Creates the device node and the debugfs file; fails if the node exists. */
 int ds4t_pad_register(struct ds4t_pad *pad);
@@ -85,6 +90,24 @@ void ds4t_detach(void);
 
 /* The daemon's emulated MAC (ds4t-control.c), never to be claimed. */
 bool ds4t_mac_ignored(const char *uniq);
+
+/*
+ * The virtual controller (ds4t-virtual.c): translates a claimed pad's input
+ * into a DualShock 4 or DualSense that hid-playstation drives, and relays its
+ * output back.
+ */
+/* Whether hdev is the virtual controller itself. */
+bool ds4t_virtual_owns(struct hid_device *hdev);
+/* Called from raw_event(); atomic context. */
+void ds4t_virtual_input(struct ds4t_pad *pad, const u8 *data, int size);
+/* A pad is going away: stop following it. Called before it is unregistered. */
+void ds4t_virtual_pad_gone(struct ds4t_pad *pad);
+int ds4t_virtual_create(const struct ds4t_virtual_cfg *cfg);
+void ds4t_virtual_destroy(void);
+int ds4t_virtual_inject(const u8 *report, size_t len);
+
+/* The device the virtual controller hangs off (the control node's). */
+struct device *ds4t_control_device(void);
 
 int ds4t_control_init(void);
 void ds4t_control_exit(void);

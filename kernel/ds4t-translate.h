@@ -16,12 +16,7 @@
 #ifdef __KERNEL__
 #include <linux/types.h>
 #else
-#include <stdbool.h>
-#include <stddef.h>
-#include <stdint.h>
-typedef uint8_t u8;
-typedef uint16_t u16;
-typedef uint32_t u32;
+#include "ds4t-userspace.h"
 #endif
 
 #define DS4T_COMMON_SIZE	32	/* x..reserved3, identical on USB and BT */

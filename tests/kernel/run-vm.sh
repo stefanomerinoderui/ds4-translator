@@ -31,7 +31,9 @@ make -C "$ROOT/kernel" KDIR="$KDIR" >/dev/null
 make -C "$ROOT" build/ds4-translator build/ds4-ctl >/dev/null
 gcc -Wall -Wextra -Werror -O2 -o "$BUILD/fake-pad" "$HERE/fake-pad.c"
 gcc -Wall -Wextra -Werror -O2 -o "$BUILD/pad-client" "$HERE/pad-client.c"
+gcc -Wall -Wextra -Werror -O2 -o "$BUILD/virtual-check" "$HERE/virtual-check.c"
 g++ -std=c++17 -Wall -Wextra -Werror -O2 -I"$ROOT/src" -o "$BUILD/transport-check" \
     "$HERE/transport-check.cpp" "$ROOT/src/driver-transport.cpp"
 
-exec vng --run --append "slub_debug=FZPU kfence.sample_interval=1 modprobe.blacklist=hid_ds4_translator" --user root --exec "$HERE/test-binder.sh $ROOT/kernel/hid-ds4-translator.ko $BUILD/fake-pad $BUILD/pad-client $BUILD/transport-check $ROOT/build/ds4-translator $ROOT/build/ds4-ctl"
+# Both suites in one VM boot; the run fails if either does.
+exec vng --run --append "slub_debug=FZPU kfence.sample_interval=1 modprobe.blacklist=hid_ds4_translator" --user root --exec "$HERE/run-suites.sh $ROOT/kernel/hid-ds4-translator.ko $BUILD $ROOT/build/ds4-translator $ROOT/build/ds4-ctl"

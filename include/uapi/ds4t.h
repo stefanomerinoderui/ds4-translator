@@ -21,6 +21,13 @@
  * already holds. Closing the node (including the daemon being killed) hands
  * every pad back to the regular drivers. Until the attach, pads behave as if
  * the module were not loaded.
+ *
+ * The control node can also create one virtual controller (a DualShock 4 or a
+ * DualSense) that the module feeds itself: the claimed pad's reports are
+ * translated in the kernel and handed to the regular hid-playstation driver
+ * as a device of its own, game output (rumble, LED) is relayed back to the
+ * pad, and the virtual pad's feature reports are answered by the module.
+ * Closing the control node destroys it.
  */
 #ifndef DS4T_UAPI_H
 #define DS4T_UAPI_H
@@ -29,7 +36,7 @@
 #include <linux/types.h>
 
 /* Bumped on any incompatible change to this header. */
-#define DS4T_ABI_VERSION	3
+#define DS4T_ABI_VERSION	4
 
 /* Largest report the node transfers (the largest real one is 78 bytes). */
 #define DS4T_MAX_REPORT		128
@@ -37,6 +44,11 @@
 #define DS4T_UNIQ_LEN		64
 #define DS4T_MAC_LEN		18	/* "AA:BB:CC:DD:EE:FF" plus NUL */
 #define DS4T_HID_ID_LEN		32
+#define DS4T_NAME_LEN		128	/* the name games see; HID's own limit */
+
+/* ds4t_virtual_cfg.type */
+#define DS4T_VIRTUAL_DS4	1
+#define DS4T_VIRTUAL_DUALSENSE	2
 
 struct ds4t_info {
 	__u32 abi_version;		/* DS4T_ABI_VERSION of the module */
@@ -61,6 +73,15 @@ struct ds4t_feature {
 /* ioctl argument of DS4T_IOC_CTL_SET_IGNORE_MAC. */
 struct ds4t_mac {
 	char str[DS4T_MAC_LEN];		/* NUL-terminated; empty clears it */
+};
+
+/* ioctl argument of DS4T_IOC_CTL_CREATE_VIRTUAL. */
+struct ds4t_virtual_cfg {
+	__u32 type;			/* DS4T_VIRTUAL_* */
+	__u32 reserved;
+	char name[DS4T_NAME_LEN];	/* NUL-terminated device name */
+	char mac[DS4T_MAC_LEN];		/* the virtual pad's uniq, NUL-terminated */
+	char hid_id[DS4T_HID_ID_LEN];	/* claimed pad to follow; empty: none */
 };
 
 #define DS4T_IOC_MAGIC		0xD4
@@ -105,5 +126,24 @@ struct ds4t_mac {
  * that already exists would be claimed too. Idempotent.
  */
 #define DS4T_IOC_CTL_ATTACH	_IO(DS4T_IOC_MAGIC, 0x12)
+
+/*
+ * Creates the virtual controller. Fails with -EEXIST if there already is one
+ * and -ENODEV if hid_id names no claimed pad. With a pad linked, its input
+ * reports drive the virtual pad and the virtual pad's output reports reach it;
+ * with none, the pad only moves on DS4T_IOC_CTL_INJECT. The MAC should be the
+ * one given to DS4T_IOC_CTL_SET_IGNORE_MAC, so the module never claims it.
+ */
+#define DS4T_IOC_CTL_CREATE_VIRTUAL _IOW(DS4T_IOC_MAGIC, 0x13, struct ds4t_virtual_cfg)
+
+/* Destroys the virtual controller; harmless if there is none. */
+#define DS4T_IOC_CTL_DESTROY_VIRTUAL _IO(DS4T_IOC_MAGIC, 0x14)
+
+/*
+ * Sets the virtual pad's input from a DualShock 4 USB input report (data[0]
+ * 0x01, len 64 or more), as a daemon without a physical pad does. -ENODEV if
+ * there is no virtual controller.
+ */
+#define DS4T_IOC_CTL_INJECT	_IOW(DS4T_IOC_MAGIC, 0x15, struct ds4t_feature)
 
 #endif /* DS4T_UAPI_H */

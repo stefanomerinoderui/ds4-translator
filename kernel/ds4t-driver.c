@@ -52,6 +52,8 @@ static bool ds4t_is_emulated(struct hid_device *hdev)
 {
 	struct device *d;
 
+	if (ds4t_virtual_owns(hdev))
+		return true;
 	if (ignore_mac[0] && strcasecmp(hdev->uniq, ignore_mac) == 0)
 		return true;
 	if (ds4t_mac_ignored(hdev->uniq))
@@ -169,7 +171,10 @@ static void ds4t_remove(struct hid_device *hdev)
 static int ds4t_raw_event(struct hid_device *hdev, struct hid_report *report,
 			  u8 *data, int size)
 {
-	ds4t_pad_report(hid_get_drvdata(hdev), data, size);
+	struct ds4t_pad *pad = hid_get_drvdata(hdev);
+
+	ds4t_pad_report(pad, data, size);
+	ds4t_virtual_input(pad, data, size);
 	/* Nonzero tells the HID core the report is fully handled. */
 	return 1;
 }

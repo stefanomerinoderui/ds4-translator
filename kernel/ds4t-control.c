@@ -41,6 +41,9 @@ static int ds4t_control_open(struct inode *inode, struct file *file)
 
 static int ds4t_control_release(struct inode *inode, struct file *file)
 {
+	/* Before the pads are handed back: it holds references to them. */
+	ds4t_virtual_destroy();
+
 	if (ds4t_attached())
 		ds4t_detach();
 
@@ -67,6 +70,30 @@ static long ds4t_control_set_ignore_mac(const void __user *arg)
 	return 0;
 }
 
+static long ds4t_control_create_virtual(const void __user *arg)
+{
+	struct ds4t_virtual_cfg cfg;
+
+	if (copy_from_user(&cfg, arg, sizeof(cfg)))
+		return -EFAULT;
+	if (!memchr(cfg.name, '\0', sizeof(cfg.name)) ||
+	    !memchr(cfg.mac, '\0', sizeof(cfg.mac)) ||
+	    !memchr(cfg.hid_id, '\0', sizeof(cfg.hid_id)))
+		return -EINVAL;
+	return ds4t_virtual_create(&cfg);
+}
+
+static long ds4t_control_inject(const void __user *arg)
+{
+	struct ds4t_feature report;
+
+	if (copy_from_user(&report, arg, sizeof(report)))
+		return -EFAULT;
+	if (report.len > sizeof(report.data))
+		return -EINVAL;
+	return ds4t_virtual_inject(report.data, report.len);
+}
+
 static long ds4t_control_ioctl(struct file *file, unsigned int cmd,
 			       unsigned long arg)
 {
@@ -78,6 +105,13 @@ static long ds4t_control_ioctl(struct file *file, unsigned int cmd,
 	case DS4T_IOC_CTL_ATTACH:
 		ds4t_attach();
 		return 0;
+	case DS4T_IOC_CTL_CREATE_VIRTUAL:
+		return ds4t_control_create_virtual((const void __user *)arg);
+	case DS4T_IOC_CTL_DESTROY_VIRTUAL:
+		ds4t_virtual_destroy();
+		return 0;
+	case DS4T_IOC_CTL_INJECT:
+		return ds4t_control_inject((const void __user *)arg);
 	default:
 		return -ENOTTY;
 	}
@@ -98,6 +132,11 @@ static struct miscdevice ds4t_control_dev = {
 	.mode = 0600,
 	.fops = &ds4t_control_fops,
 };
+
+struct device *ds4t_control_device(void)
+{
+	return ds4t_control_dev.this_device;
+}
 
 int ds4t_control_init(void)
 {

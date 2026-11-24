@@ -16,86 +16,11 @@ TRANSPORT=${4:?transport-check path}
 DAEMON=${5:?ds4-translator path}
 DS4CTL=${6:?ds4-ctl path}
 EMULATED_MAC=74:e7:d6:3a:47:e8	# the daemon's default emulated MAC
-DRIVER=hid-ds4-translator
-FALLBACK=playstation   # driver name; the module is hid_playstation
 MAC_A=AA:BB:CC:00:00:01
 MAC_B=AA:BB:CC:00:00:02
 DEBUGFS=/sys/kernel/debug/ds4t
 
-pass=0
-fail=0
-pad_pids=()
-attach_pid=
-CONTROL=/dev/ds4-translator/control
-
-ok()   { echo "ok   - $1"; pass=$((pass + 1)); }
-nok()  { echo "FAIL - $1"; fail=$((fail + 1)); }
-check() { local desc=$1; shift; if "$@"; then ok "$desc"; else nok "$desc"; fi; }
-
-cleanup() {
-    kill "${pad_pids[@]}" "$attach_pid" 2>/dev/null
-    wait 2>/dev/null
-    rmmod hid_ds4_translator 2>/dev/null
-}
-trap cleanup EXIT
-
-# Prints the sysfs path of the HID device whose uniq is $1.
-hid_dev_by_mac() {
-    local dev
-    for dev in /sys/bus/hid/devices/*; do
-        grep -qi "^HID_UNIQ=$1\$" "$dev/uevent" 2>/dev/null && { echo "$dev"; return 0; }
-    done
-    return 1
-}
-
-bound_driver() {
-    local dev
-    dev=$(hid_dev_by_mac "$1") || return 1
-    [ -L "$dev/driver" ] && basename "$(readlink "$dev/driver")"
-}
-
-# Waits up to ~10 s for $1's bound driver to become $2 (a rebind after
-# rmmod takes a couple of seconds in the VM).
-wait_driver() {
-    local _
-    for _ in $(seq 100); do
-        [ "$(bound_driver "$1")" = "$2" ] && return 0
-        sleep 0.1
-    done
-    return 1
-}
-
-# Waits up to ~10 s for $1 to be bound to anything but $2 (or to nothing).
-wait_not_driver() {
-    local _
-    for _ in $(seq 100); do
-        [ "$(bound_driver "$1")" != "$2" ] && return 0
-        sleep 0.1
-    done
-    return 1
-}
-
-start_pad() { # <bus> <mac> [extra fake-pad args]
-    local bus=$1 mac=$2 log="/tmp/fake-pad.$2.log"
-    shift 2
-    rm -f "$log"
-    "$FAKE" --bus "$bus" --mac "$mac" --count 20 "$@" >"$log" 2>&1 &
-    pad_pids+=($!)
-    local _
-    for _ in $(seq 50); do
-        grep -q ready "$log" && return 0
-        sleep 0.1
-    done
-    return 1
-}
-
-# Only the fake pads: a daemon stand-in may be running on purpose.
-stop_pads() {
-    kill "${pad_pids[@]}" 2>/dev/null
-    wait "${pad_pids[@]}" 2>/dev/null
-    pad_pids=()
-    sleep 0.3
-}
+. "$(dirname "$0")/lib.sh"
 
 # Stands in for the daemon: opens the control node (optionally naming the
 # emulated pad's MAC) and stays attached until detach/kill.
@@ -149,7 +74,7 @@ check "pad stays on $FALLBACK" wait_driver "$MAC_A" "$FALLBACK"
 
 echo "# 1. attach: the pad is taken over and its nodes disappear"
 attach
-check "control open succeeded with ABI 3" grep -q 'attached abi=3' /tmp/attach.log
+check "control open succeeded with ABI 4" grep -q 'attached abi=4' /tmp/attach.log
 check "pad taken over by $DRIVER" wait_driver "$MAC_A" "$DRIVER"
 dev=$(hid_dev_by_mac "$MAC_A")
 check "no hidraw node" bash -c "! ls '$dev'/hidraw/* >/dev/null 2>&1"
@@ -224,7 +149,7 @@ check "node exists" bash -c "for _ in \$(seq 50); do [ -c '$node' ] && exit 0; s
 check "node is 0600 root" bash -c "[ \"\$(stat -c '%a %U' '$node')\" = '600 root' ]"
 info=$("$CLIENT" "$node" info)
 check "GET_INFO reports abi, ids and MAC" \
-    bash -c "grep -qi 'abi=3 bus=3 vendor=054c product=05c4 uniq=$MAC_B' <<<'$info' && grep -q 'hid_id=$hid_id' <<<'$info'"
+    bash -c "grep -qi 'abi=4 bus=3 vendor=054c product=05c4 uniq=$MAC_B' <<<'$info' && grep -q 'hid_id=$hid_id' <<<'$info'"
 reports=$("$CLIENT" "$node" read 5)
 check "read returns 5 USB input reports" \
     bash -c "[ \$(grep -c '^report id=01 len=64 ' <<<'$reports') = 5 ]"

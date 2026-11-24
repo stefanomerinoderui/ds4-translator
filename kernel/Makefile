@@ -39,7 +39,9 @@ CHECKPATCH ?= $(KDIR)/scripts/checkpatch.pl
 check:
 	$(CHECKPATCH) --no-tree --strict \
 		--ignore ALLOC_WITH_SIZEOF,ENOSYS \
-		-f ds4t-driver.c -f ds4t-chardev.c -f ds4t-control.c -f ds4t-internal.h
+		-f ds4t-driver.c -f ds4t-chardev.c -f ds4t-control.c \
+		-f ds4t-virtual.c -f ds4t-translate.c -f ds4t-translate.h \
+		-f ds4t-descriptors.h -f ds4t-internal.h
 
 # A clean build first, or Kbuild skips every file that is up to date and the
 # warnings never show. W=2 and up report on the kernel's own headers, not on
