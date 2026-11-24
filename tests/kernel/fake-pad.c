@@ -5,10 +5,13 @@
 // chosen bus, so it binds (or doesn't) exactly like a real pad.
 //
 //   fake-pad --bus usb|bt --mac AA:BB:CC:DD:EE:FF [--count N] [--hold SECONDS]
+//            [--stream 1]
 //
 // Sends N input reports (default 20, 100 Hz), answers feature-report reads
 // with a recognisable pattern, then stays alive for --hold seconds (default
-// 3600) so the test can poke at it. SIGTERM destroys the device.
+// 3600) so the test can poke at it; with --stream 1 it keeps sending input
+// reports during that time. Output reports the kernel sends are logged as
+// "output rnum=XX len=N". SIGTERM destroys the device.
 
 #include <errno.h>
 #include <fcntl.h>
@@ -130,7 +133,11 @@ static int handle_events(int fd)
 		if (ev.type == UHID_GET_REPORT &&
 		    answer_get_report(fd, &ev.u.get_report))
 			return -1;
-		else if (ev.type == UHID_SET_REPORT) {
+		else if (ev.type == UHID_OUTPUT) {
+			printf("output rnum=%02x len=%u\n", ev.u.output.data[0],
+			       ev.u.output.size);
+			fflush(stdout);
+		} else if (ev.type == UHID_SET_REPORT) {
 			struct uhid_event reply;
 
 			memset(&reply, 0, sizeof(reply));
@@ -154,13 +161,14 @@ static int usage(void)
 {
 	fprintf(stderr,
 		"usage: fake-pad --bus usb|bt --mac XX:XX:XX:XX:XX:XX "
-		"[--count N] [--hold SECONDS]\n");
+		"[--count N] [--hold SECONDS] [--stream 1]\n");
 	return 2;
 }
 
 int main(int argc, char **argv)
 {
-	int bus = 0, count = 20, hold = 3600, fd, i;
+	int bus = 0, count = 20, hold = 3600, stream = 0, fd, i;
+	uint8_t counter = 0;
 	const char *mac = NULL;
 	struct uhid_event ev;
 
@@ -174,6 +182,8 @@ int main(int argc, char **argv)
 			count = atoi(argv[i + 1]);
 		else if (!strcmp(argv[i], "--hold"))
 			hold = atoi(argv[i + 1]);
+		else if (!strcmp(argv[i], "--stream"))
+			stream = atoi(argv[i + 1]);
 		else
 			return usage();
 	}
@@ -212,7 +222,8 @@ int main(int argc, char **argv)
 
 	for (i = 0; i < hold * 100 && !g_stop; i++) {
 		sleep_ms(10);
-		if (handle_events(fd))
+		if ((stream && send_input(fd, bus, counter++)) ||
+		    handle_events(fd))
 			break;
 	}
 

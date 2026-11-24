@@ -3,61 +3,27 @@
  * hid-ds4-translator - claims a physical DualShock 4 before hid-playstation
  *
  * The pad is bound with HID_CONNECT_DRIVER only, so the HID core creates no
- * hidraw, input, battery or LED device for it. Incoming reports are kept in
- * a small ring that is dumped through debugfs (prototype stage: the char
- * device that hands them to the ds4-translator daemon comes next).
+ * hidraw, input, battery or LED device for it. Its reports are handed to the
+ * ds4-translator daemon through a private char device (ds4t-chardev.c).
  */
 
-#include <linux/debugfs.h>
 #include <linux/device.h>
-#include <linux/hid.h>
 #include <linux/module.h>
-#include <linux/seq_file.h>
 #include <linux/slab.h>
-#include <linux/spinlock.h>
 #include <linux/string.h>
 #include <linux/workqueue.h>
 
-#define DS4T_NAME		"hid-ds4-translator"
+#include "ds4t-internal.h"
 
 /* The IDs live in drivers/hid/hid-ids.h, which is not an installed header. */
 #define DS4T_VENDOR_SONY	0x054c
 #define DS4T_PRODUCT_PS4_V1	0x05c4
 #define DS4T_PRODUCT_PS4_V2	0x09cc
 
-/* Same bound the daemon uses for one report (largest is 78 bytes, Bluetooth). */
-#define DS4T_MAX_REPORT		128
-#define DS4T_RING_SIZE		16
-
-/* Feature reports that return the calibration data (and switch BT to 0x11). */
-#define DS4T_FEATURE_CAL_USB	0x02
-#define DS4T_FEATURE_CAL_USB_SZ	37
-#define DS4T_FEATURE_CAL_BT	0x05
-#define DS4T_FEATURE_CAL_BT_SZ	41
-
 static char ignore_mac[18];
 module_param_string(ignore_mac, ignore_mac, sizeof(ignore_mac), 0644);
 MODULE_PARM_DESC(ignore_mac,
 		 "MAC (hdev->uniq) of the emulated pad, never claimed");
-
-struct ds4t_report {
-	u16 len;
-	u8 data[DS4T_MAX_REPORT];
-};
-
-struct ds4t_pad {
-	struct hid_device *hdev;
-	struct dentry *dbg_file;
-
-	spinlock_t lock;		/* protects ring, head, count, total */
-	struct ds4t_report ring[DS4T_RING_SIZE];
-	unsigned int head;		/* next slot to write */
-	unsigned int count;		/* valid entries, <= DS4T_RING_SIZE */
-	u64 total;			/* reports seen since probe */
-
-	u8 calib[DS4T_FEATURE_CAL_BT_SZ];
-	int calib_len;			/* 0 when the read failed */
-};
 
 struct ds4t_steal_work {
 	struct work_struct work;
@@ -65,7 +31,6 @@ struct ds4t_steal_work {
 };
 
 static struct hid_driver ds4t_driver;
-static struct dentry *ds4t_dbg_dir;
 static struct workqueue_struct *ds4t_wq;
 
 static const struct hid_device_id ds4t_devices[] = {
@@ -98,40 +63,6 @@ static bool ds4t_is_emulated(struct hid_device *hdev)
 
 	return false;
 }
-
-static void ds4t_ring_push(struct ds4t_pad *pad, const u8 *data, int size)
-{
-	struct ds4t_report *slot;
-	unsigned long flags;
-
-	spin_lock_irqsave(&pad->lock, flags);
-	slot = &pad->ring[pad->head];
-	slot->len = min(size, DS4T_MAX_REPORT);
-	memcpy(slot->data, data, slot->len);
-	pad->head = (pad->head + 1) % DS4T_RING_SIZE;
-	pad->count = min(pad->count + 1, (unsigned int)DS4T_RING_SIZE);
-	pad->total++;
-	spin_unlock_irqrestore(&pad->lock, flags);
-}
-
-static int ds4t_ring_show(struct seq_file *m, void *unused)
-{
-	struct ds4t_pad *pad = m->private;
-	unsigned long flags;
-	unsigned int i, idx;
-
-	spin_lock_irqsave(&pad->lock, flags);
-	seq_printf(m, "total %llu\n", pad->total);
-	for (i = 0; i < pad->count; i++) {
-		idx = (pad->head + DS4T_RING_SIZE - pad->count + i) %
-		      DS4T_RING_SIZE;
-		seq_printf(m, "%u: %*phN\n", pad->ring[idx].len,
-			   pad->ring[idx].len, pad->ring[idx].data);
-	}
-	spin_unlock_irqrestore(&pad->lock, flags);
-	return 0;
-}
-DEFINE_SHOW_ATTRIBUTE(ds4t_ring);
 
 static int ds4t_read_feature(struct hid_device *hdev, u8 reportnum, u8 *buf,
 			     size_t len)
@@ -178,16 +109,14 @@ static int ds4t_probe(struct hid_device *hdev, const struct hid_device_id *id)
 	if (ds4t_is_emulated(hdev))
 		return -ENODEV;
 
-	pad = devm_kzalloc(&hdev->dev, sizeof(*pad), GFP_KERNEL);
+	pad = ds4t_pad_alloc(hdev);
 	if (!pad)
 		return -ENOMEM;
-	pad->hdev = hdev;
-	spin_lock_init(&pad->lock);
 	hid_set_drvdata(hdev, pad);
 
 	ret = hid_parse(hdev);
 	if (ret)
-		return ret;
+		goto err_put;
 
 	/*
 	 * HID_CONNECT_DRIVER alone: nothing is claimed for hidraw, input or
@@ -196,7 +125,7 @@ static int ds4t_probe(struct hid_device *hdev, const struct hid_device_id *id)
 	 */
 	ret = hid_hw_start(hdev, HID_CONNECT_DRIVER);
 	if (ret)
-		return ret;
+		goto err_put;
 
 	ret = hid_hw_open(hdev);
 	if (ret)
@@ -204,14 +133,20 @@ static int ds4t_probe(struct hid_device *hdev, const struct hid_device_id *id)
 
 	ds4t_read_calibration(pad);
 
-	pad->dbg_file = debugfs_create_file(dev_name(&hdev->dev), 0400,
-					    ds4t_dbg_dir, pad, &ds4t_ring_fops);
+	ret = ds4t_pad_register(pad);
+	if (ret)
+		goto err_close;
+
 	hid_info(hdev, "claimed %s pad %s\n",
 		 hdev->bus == BUS_BLUETOOTH ? "Bluetooth" : "USB", hdev->uniq);
 	return 0;
 
+err_close:
+	hid_hw_close(hdev);
 err_stop:
 	hid_hw_stop(hdev);
+err_put:
+	ds4t_pad_put(pad);
 	return ret;
 }
 
@@ -219,17 +154,18 @@ static void ds4t_remove(struct hid_device *hdev)
 {
 	struct ds4t_pad *pad = hid_get_drvdata(hdev);
 
-	debugfs_remove(pad->dbg_file);
+	/* Before the hid_hw_* teardown: no write() may be inside it. */
+	ds4t_pad_unregister(pad);
 	hid_hw_close(hdev);
 	hid_hw_stop(hdev);
+	/* Open files keep the pad alive until they are closed. */
+	ds4t_pad_put(pad);
 }
 
 static int ds4t_raw_event(struct hid_device *hdev, struct hid_report *report,
 			  u8 *data, int size)
 {
-	struct ds4t_pad *pad = hid_get_drvdata(hdev);
-
-	ds4t_ring_push(pad, data, size);
+	ds4t_pad_report(hid_get_drvdata(hdev), data, size);
 	/* Nonzero tells the HID core the report is fully handled. */
 	return 1;
 }
@@ -317,7 +253,7 @@ static int __init ds4t_init(void)
 	if (!ds4t_wq)
 		return -ENOMEM;
 
-	ds4t_dbg_dir = debugfs_create_dir("ds4t", NULL);
+	ds4t_debugfs_init();
 
 	ret = hid_register_driver(&ds4t_driver);
 	if (ret)
@@ -333,7 +269,7 @@ static int __init ds4t_init(void)
 err_unregister:
 	hid_unregister_driver(&ds4t_driver);
 err_dbg:
-	debugfs_remove_recursive(ds4t_dbg_dir);
+	ds4t_debugfs_exit();
 	destroy_workqueue(ds4t_wq);
 	return ret;
 }
@@ -346,7 +282,7 @@ static void __exit ds4t_exit(void)
 	/* Unbinding does not reprobe, so give every freed pad back. */
 	if (bus_rescan_devices(&hid_bus_type))
 		pr_warn(DS4T_NAME ": rescan after unload failed\n");
-	debugfs_remove_recursive(ds4t_dbg_dir);
+	ds4t_debugfs_exit();
 }
 
 module_init(ds4t_init);

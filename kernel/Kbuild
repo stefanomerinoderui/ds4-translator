@@ -1,2 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-only
 obj-m := hid-ds4-translator.o
+hid-ds4-translator-y := ds4t-driver.o ds4t-chardev.o
+
+# include/uapi/ds4t.h is shared with the daemon.
+ccflags-y := -I$(src)/../include/uapi

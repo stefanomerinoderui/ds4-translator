@@ -22,8 +22,11 @@ clean:
 
 # ALLOC_WITH_SIZEOF: kmalloc_obj() only exists in recent kernels, and the
 # driver has to build back to 6.12.
+# ENOSYS: hid_hw_output_report() returns -ENOSYS by contract when the
+# transport has no output endpoint, and the write path tests for it (as
+# hidraw does).
 check:
 	$(KDIR)/scripts/checkpatch.pl --no-tree --strict \
-		--ignore ALLOC_WITH_SIZEOF -f hid-ds4-translator.c
+		--ignore ALLOC_WITH_SIZEOF,ENOSYS -f ds4t-driver.c -f ds4t-chardev.c -f ds4t-internal.h
 
 .PHONY: all clean check

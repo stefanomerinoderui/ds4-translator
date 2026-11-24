@@ -21,5 +21,6 @@ KDIR=${KERNEL_DIR:-/lib/modules/$(uname -r)/build}
 mkdir -p "$BUILD"
 make -C "$ROOT/kernel" KDIR="$KDIR" >/dev/null
 gcc -Wall -Wextra -Werror -O2 -o "$BUILD/fake-pad" "$HERE/fake-pad.c"
+gcc -Wall -Wextra -Werror -O2 -o "$BUILD/pad-client" "$HERE/pad-client.c"
 
-exec vng --run --user root --exec "$HERE/test-binder.sh $ROOT/kernel/hid-ds4-translator.ko $BUILD/fake-pad"
+exec vng --run --user root --exec "$HERE/test-binder.sh $ROOT/kernel/hid-ds4-translator.ko $BUILD/fake-pad $BUILD/pad-client"
