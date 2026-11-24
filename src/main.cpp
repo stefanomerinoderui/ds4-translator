@@ -35,6 +35,7 @@
 #include "hid-unbind-detect.h"
 #include "usb-hid-transport.h"
 #include "hid-bpf-transport.h"
+#include "driver-transport.h"
 #include "ipc-client.h"
 #include "fs-util.h"
 #include "paths.h"
@@ -412,6 +413,12 @@ static void background_delayed_udevadm_trigger() {
 // Bluetooth side has no replacement transport (see
 // open_and_hide_physical_unbind()'s bus 0x0005 branch).
 //
+// HIDE_METHOD_DRIVER replaces both transports with the hid-ds4-translator
+// kernel module (see driver-transport.h): the module binds the pad before any
+// other driver, so there is nothing to unbind, intercept or hide. It is
+// opt-in, and every connection falls back to plain unbind behavior when the
+// module is not loaded or not bound to the pad.
+//
 // HIDE_METHOD_UNLINK is HIDE_METHOD_UNBIND plus one extra step, and only
 // on the Bluetooth side: the hidraw/input/js nodes that the still-bound
 // kernel driver creates (unbind's Bluetooth branch can't get rid of the
@@ -423,22 +430,36 @@ static void background_delayed_udevadm_trigger() {
 enum HideMethod {
     HIDE_METHOD_LEGACY,
     HIDE_METHOD_UNBIND,
-    HIDE_METHOD_UNLINK
+    HIDE_METHOD_UNLINK,
+    HIDE_METHOD_DRIVER
 };
 
 // True for every method that behaves like unbind (real transports, HID-bus
 // uevent monitor, no chmod-based hiding on the USB side) -- i.e. everything
 // except legacy. Keeps the call sites from having to list each variant.
 static bool hide_method_is_unbind_family(HideMethod method) {
-    return method == HIDE_METHOD_UNBIND || method == HIDE_METHOD_UNLINK;
+    return method == HIDE_METHOD_UNBIND || method == HIDE_METHOD_UNLINK ||
+           method == HIDE_METHOD_DRIVER;
 }
 
 const char* hide_method_config_str(HideMethod method) {
     switch (method) {
         case HIDE_METHOD_UNBIND: return "unbind";
         case HIDE_METHOD_UNLINK: return "unlink";
+        case HIDE_METHOD_DRIVER: return "driver";
         default: return "legacy";
     }
+}
+
+// Inverse of hide_method_config_str(); false (out untouched) for anything else.
+static bool hide_method_from_str(const std::string& name, HideMethod& out) {
+    for (HideMethod method : {HIDE_METHOD_LEGACY, HIDE_METHOD_UNBIND, HIDE_METHOD_UNLINK, HIDE_METHOD_DRIVER}) {
+        if (name == hide_method_config_str(method)) {
+            out = method;
+            return true;
+        }
+    }
+    return false;
 }
 
 HideMethod read_hide_method_config(HideMethod default_method) {
@@ -453,12 +474,9 @@ HideMethod read_hide_method_config(HideMethod default_method) {
             while (!val.empty() && (val.back() == '\n' || val.back() == '\r' || val.back() == ' ')) {
                 val.pop_back();
             }
-            if (val == "unbind") {
-                return HIDE_METHOD_UNBIND;
-            } else if (val == "unlink") {
-                return HIDE_METHOD_UNLINK;
-            } else if (val == "legacy") {
-                return HIDE_METHOD_LEGACY;
+            HideMethod parsed = default_method;
+            if (hide_method_from_str(val, parsed)) {
+                return parsed;
             }
         }
     }
@@ -1025,6 +1043,21 @@ int open_and_hide_physical_unbind(const std::string& hid_id, std::vector<Physica
     unsigned bus = 0, vendor = 0, product = 0;
     if (!parse_hid_id(hid_id, bus, vendor, product)) {
         return -1;
+    }
+
+    // The kernel module, when it is loaded and holds this pad, replaces
+    // everything below. Its fd needs no teardown beyond close(), which is
+    // what release_physical_connection() already does for a plain fd.
+    if (g_hide_method == HIDE_METHOD_DRIVER) {
+        if (driver_transport_available()) {
+            const int fd = driver_transport_open(hid_id);
+            if (fd >= 0) {
+                return fd;
+            }
+            std::cerr << "driver: falling back to the unbind method for " << hid_id << "." << std::endl;
+        } else {
+            std::cerr << "driver: hid_ds4_translator is not loaded; using the unbind method." << std::endl;
+        }
     }
 
     if (bus == 0x0005) {
@@ -2370,7 +2403,7 @@ int main(int argc, char* argv[]) {
             std::cout << "  -t, --type <ds4|dualsense|xbox360|xboxone|xboxseries|none|hidden>   Target virtual controller type (default: ds4)" << std::endl;
             std::cout << "  -h, --help                  Show this help message" << std::endl;
             std::cout << "Backend (uhid/functionfs) is config/set-backend only -- see 'ds4-ctl set-backend' (the Xbox types are always functionfs)." << std::endl;
-            std::cout << "Hide method (legacy/unbind) is config/set-hide-method only -- see 'ds4-ctl set-hide-method'." << std::endl;
+            std::cout << "Hide method (legacy/unbind/unlink/driver) is config/set-hide-method only -- see 'ds4-ctl set-hide-method'." << std::endl;
             return 0;
         }
     }
@@ -3187,6 +3220,7 @@ int main(int argc, char* argv[]) {
                 ssize_t bytes_read = read(client_fd, rx_buf, sizeof(rx_buf) - 1);
                 if (bytes_read > 0) {
                     std::string cmd(rx_buf);
+                    HideMethod want_method = HIDE_METHOD_LEGACY; // set by the set-hide-method branch below
                     while (!cmd.empty() && (cmd.back() == '\n' || cmd.back() == '\r' || cmd.back() == ' ')) {
                         cmd.pop_back();
                     }
@@ -3439,14 +3473,8 @@ int main(int argc, char* argv[]) {
                                 }
                             }
                         }
-                    } else if (cmd == "set-hide-method legacy" || cmd == "set-hide-method unbind" ||
-                               cmd == "set-hide-method unlink") {
-                        HideMethod want_method = HIDE_METHOD_LEGACY;
-                        if (cmd == "set-hide-method unbind") {
-                            want_method = HIDE_METHOD_UNBIND;
-                        } else if (cmd == "set-hide-method unlink") {
-                            want_method = HIDE_METHOD_UNLINK;
-                        }
+                    } else if (cmd.rfind("set-hide-method ", 0) == 0 &&
+                               hide_method_from_str(cmd.substr(strlen("set-hide-method ")), want_method)) {
                         if (g_hide_method == want_method) {
                             response = "Hide method already set to " + std::string(hide_method_config_str(want_method));
                         } else {

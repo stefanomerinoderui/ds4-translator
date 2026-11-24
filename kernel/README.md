@@ -4,8 +4,10 @@ HID driver that claims a physical DualShock 4 before `hid-playstation`, so
 no other driver creates a hidraw, input, battery or LED device for it. See
 [docs/kernel-driver.md](../docs/kernel-driver.md) for the design.
 
-**Status: M1 prototype.** The module binds the pad and dumps incoming reports
-to debugfs. The char device the daemon will read from is not implemented yet.
+**Status: prototype (M2).** The module binds the pad, dumps incoming reports
+to debugfs, and exposes each pad as `/dev/ds4-translator/<hid_id>` for the
+daemon's `driver` hide method (`ds4-ctl set-hide-method driver`). Not yet:
+the control device, release-on-close, and feature-report ioctls.
 
 ## Build
 
@@ -23,7 +25,8 @@ Loading a module needs root, so these are shown, not run for you:
 
 ```
 sudo insmod kernel/hid-ds4-translator.ko
-sudo cat /sys/kernel/debug/ds4t/*      # last 16 reports of each claimed pad
+sudo cat /sys/kernel/debug/ds4t/*      # last 32 reports of each claimed pad
+ls -l /dev/ds4-translator/             # one 0600 node per claimed pad
 sudo rmmod hid_ds4_translator          # pads go back to hid-playstation
 ```
 
@@ -36,4 +39,5 @@ connect later and lose the load-order race, are taken over.
 
 `make kernel-test` boots a virtme-ng VM and runs
 `tests/kernel/test-binder.sh` against `tests/kernel/fake-pad.c`, a DS4 built
-on `/dev/uhid`. Install virtme-ng with `uv tool install virtme-ng`.
+on `/dev/uhid`, with `pad-client.c` and `transport-check.cpp` (the daemon's
+own `src/driver-transport.cpp`) as the node's users. Install virtme-ng with `uv tool install virtme-ng`.

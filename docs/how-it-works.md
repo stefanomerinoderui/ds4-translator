@@ -39,7 +39,7 @@ To prevent games and launchers (like Steam) from receiving double-input or regis
 ### 2a. Hide Methods (`ds4-ctl set-hide-method`)
 
 Which of the mechanisms above actually runs is selected by `hide_method=` in
-`/etc/ds4-translator.conf` (`ds4-ctl set-hide-method <legacy|unbind|unlink>`).
+`/etc/ds4-translator.conf` (`ds4-ctl set-hide-method <legacy|unbind|unlink|driver>`).
 It applies on the next physical (re)connection.
 
 | Method | USB | Bluetooth |
@@ -47,6 +47,7 @@ It applies on the next physical (re)connection.
 | `legacy` | `chmod 0600` + `setfacl -b` + `EVIOCGRAB`; nodes exist, permission-blocked | same |
 | `unbind` (default) | kernel HID driver fully unbound, **no node ever created**; read via libusb | driver stays bound, nodes exist but are inert (HID-BPF swallows every report); siblings also chmod'd + grabbed |
 | `unlink` | identical to `unbind` — there is no node to unlink | `unbind`, plus the pad is moved onto `hid-generic`, the leftover `hidraw`/`event*`/`js*` `/dev` entries are deleted outright, and the emulated device squats the pad's MAC so `hid-playstation` refuses it to begin with |
+| `driver` (opt-in) | the `hid-ds4-translator` kernel module claims the pad before `hid-playstation`: **no node, battery or LED is ever created**; read via `/dev/ds4-translator/<hid_id>` | same, over `bluetoothd`'s `uhid` session (so the output pacer still applies) |
 
 The asymmetry is forced by BlueZ: the Bluetooth `hid_device` is created by
 `bluetoothd`'s input plugin writing into `/dev/uhid`, and taking the L2CAP
@@ -54,6 +55,13 @@ session away from `bluetoothd` requires dropping the device's ACL link
 entirely — so the driver cannot simply be unbound the way the USB side is.
 `unbind` therefore neutralizes the nodes instead of removing them; `unlink`
 removes them.
+
+`driver` replaces both transports with the out-of-tree module in `kernel/`
+(design: [kernel-driver.md](kernel-driver.md)). When the module is not loaded,
+or does not hold the pad, a connection falls back to `unbind`. **Known gap:**
+`ds4-ctl release-physical` and a stopped daemon only close the node; the
+module keeps the pad until it is unloaded or the pad is replugged (the
+release-on-close behavior is still to come).
 
 **How `unlink` works.** `/dev` is `devtmpfs`, where root can `unlink()` a
 device node like any other file. The unlink drops only the *path*: the

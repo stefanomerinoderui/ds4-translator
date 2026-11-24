@@ -202,11 +202,19 @@ same contract: pollable, one input report per `read()`, one output report
 per `write()`, EOF or `POLLHUP` on disconnect. The module exposes exactly
 that, so the daemon swaps transports without touching the report path.
 
-One character device per pad, created with `0600 root:root`:
+One character device per pad, created with `0600 root:root` and named
+after the HID device's sysfs name, so the daemon can open it from the
+`hid_id` it already has from the uevent monitor without any lookup:
 
 ```
-/dev/ds4-translator/pad0
+/dev/ds4-translator/0003:054C:05C4.0007
 ```
+
+It is a `misc` device (so no class or `cdev` bookkeeping) and only one
+process may have it open (`-EBUSY` otherwise). Reports queued before an
+`open()` are discarded, and a full queue drops its oldest report, since
+input reports are state snapshots. The interface is defined in
+`include/uapi/ds4t.h`, which carries an ABI version.
 
 The name deliberately is not `hidraw*` and carries no input properties,
 so SDL, Steam, browsers and Wine never enumerate it.

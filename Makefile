@@ -57,8 +57,8 @@ ifeq ($(shell pkg-config --exists libusb-1.0 && echo yes),)
 endif
 UNBIND_CXXFLAGS := $(shell pkg-config --cflags libusb-1.0)
 UNBIND_LDFLAGS  := $(shell pkg-config --libs libusb-1.0)
-UNBIND_SRC      := src/hid-unbind-detect.cpp src/usb-hid-transport.cpp
-UNBIND_OBJ      := $(BUILD_DIR)/hid-unbind-detect.o $(BUILD_DIR)/usb-hid-transport.o
+UNBIND_SRC      := src/hid-unbind-detect.cpp src/usb-hid-transport.cpp src/driver-transport.cpp
+UNBIND_OBJ      := $(BUILD_DIR)/hid-unbind-detect.o $(BUILD_DIR)/usb-hid-transport.o $(BUILD_DIR)/driver-transport.o
 
 # HID-BPF replacement transport for the unbind hide method's Bluetooth
 # side (see src/hid-bpf-transport.h and src/hid-bpf/hid-bpf-transport.bpf.c)
@@ -364,10 +364,11 @@ test-sanitize: $(SAN_TEST_BIN) $(USB_TEST_BIN)-san
 	$(USB_TEST_BIN)-san $(GTEST_ARGS)
 
 COMPONENT_TEST_BIN = $(TEST_BUILD_DIR)/component-tests
-COMPONENT_TEST_SRC = tests/component/test_ipc_transport.cpp
-$(COMPONENT_TEST_BIN): $(COMPONENT_TEST_SRC) src/ipc-client.cpp $(wildcard src/*.h)
+COMPONENT_TEST_SRC = tests/component/test_ipc_transport.cpp tests/component/test_driver_transport.cpp
+COMPONENT_LIB_SRC  = src/ipc-client.cpp src/driver-transport.cpp
+$(COMPONENT_TEST_BIN): $(COMPONENT_TEST_SRC) $(COMPONENT_LIB_SRC) $(wildcard src/*.h include/uapi/*.h)
 	@mkdir -p $(TEST_BUILD_DIR)
-	$(CXX) $(TEST_CXXFLAGS) -o $@ $(COMPONENT_TEST_SRC) src/ipc-client.cpp $(GTEST_LDFLAGS) -lpthread
+	$(CXX) $(TEST_CXXFLAGS) -o $@ $(COMPONENT_TEST_SRC) $(COMPONENT_LIB_SRC) $(GTEST_LDFLAGS) -lpthread
 
 # udev-spoof.so against a stub libudev (see tests/stubs/libudev_stub.c): the
 # shim dlopen()s libudev.so.1, so the stub is put first on LD_LIBRARY_PATH.

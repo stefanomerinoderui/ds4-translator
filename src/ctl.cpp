@@ -67,7 +67,7 @@ void print_usage() {
     std::cout << "  led --reset                      Hand the light bar and motors straight back to the" << std::endl;
     std::cout << "                                   emulated device" << std::endl;
     std::cout << "  set-hide-method                  Change how the physical controller is hidden from other" << std::endl;
-    std::cout << "    <legacy|unbind|unlink>         apps (applies on the next physical (re)connection). unbind" << std::endl;
+    std::cout << "    <legacy|unbind|unlink|driver>  apps (applies on the next physical (re)connection). unbind" << std::endl;
     std::cout << "                                   (default) hides it before any other app can see it, with" << std::endl;
     std::cout << "                                   live translation either way: USB fully unbinds the kernel" << std::endl;
     std::cout << "                                   HID driver (no hidraw/input node exists at all) and reads" << std::endl;
@@ -82,6 +82,10 @@ void print_usage() {
     std::cout << "                                   ENOENT instead of a permission error on a live node." << std::endl;
     std::cout << "                                   legacy is the older chmod/setfacl/EVIOCGRAB method --" << std::endl;
     std::cout << "                                   node exists but permission-blocked, USB and Bluetooth." << std::endl;
+    std::cout << "                                   driver uses the hid-ds4-translator kernel module, which" << std::endl;
+    std::cout << "                                   claims the pad before any other driver so no hidraw," << std::endl;
+    std::cout << "                                   input, battery or LED device ever exists for it. Falls" << std::endl;
+    std::cout << "                                   back to unbind when the module is not loaded." << std::endl;
     std::cout << "  set-mac-squat <on|off>           unlink method only. On (default), the emulated device" << std::endl;
     std::cout << "                                   advertises the physical pad's own MAC address, which" << std::endl;
     std::cout << "                                   makes the kernel's hid-playstation driver refuse the" << std::endl;
@@ -204,7 +208,7 @@ static const CommandSpec kCommands[] = {
     {"test",             nullptr},
     {"identify",         nullptr},
     {"led",              "--reset"},
-    {"set-hide-method",  "legacy unbind unlink"},
+    {"set-hide-method",  "legacy unbind unlink driver"},
     {"set-mac-squat",    "on off"},
     {"forget-mac",       nullptr},
 };

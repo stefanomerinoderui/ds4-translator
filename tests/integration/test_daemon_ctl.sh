@@ -22,6 +22,10 @@ check "status reflects hide method" "Hide Method: unlink" "$CTL" status
 grep -q '^hide_method=unlink$' "$DS4_CONFIG_PATH" && pass "config file written to override path" \
     || fail "config file written to override path"
 
+check "set-hide-method accepts driver" "Hide method set to driver" "$CTL" set-hide-method driver
+check "status reflects the driver method" "Hide Method: driver" "$CTL" status
+check "daemon rejects an unknown hide method" "Unknown command" raw "set-hide-method bogus"
+
 check "set-name stores a custom name" "Test Pad" "$CTL" set-name ds4 "Test Pad"
 check "status reflects the name" "DS4 Name: Test Pad" "$CTL" status
 check "set-name --reset restores the default" "Sony Computer Entertainment Wireless Controller" "$CTL" set-name ds4 --reset

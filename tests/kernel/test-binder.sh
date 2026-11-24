@@ -5,12 +5,13 @@
 # (see fake-pad.c). Meant to run inside a throwaway VM (run-vm.sh): it loads
 # and unloads kernel modules.
 #
-#   test-binder.sh <hid-ds4-translator.ko> <fake-pad> <pad-client>
+#   test-binder.sh <hid-ds4-translator.ko> <fake-pad> <pad-client> <transport-check>
 
 set -u
 KO=${1:?module path}
 FAKE=${2:?fake-pad path}
 CLIENT=${3:?pad-client path}
+TRANSPORT=${4:?transport-check path}
 DRIVER=hid-ds4-translator
 FALLBACK=playstation   # driver name; the module is hid_playstation
 MAC_A=AA:BB:CC:00:00:01
@@ -161,7 +162,22 @@ check "blocked reader gets ENODEV/HUP when the pad is removed" \
 check "reader saw the disconnect" grep -Eq 'read error: No such device|poll hangup' /tmp/pad-client.hold.log
 check "node removed with the pad" bash -c "[ ! -e '$node' ]"
 
-echo "# 7. no kernel splats across the whole run"
+echo "# 7. the daemon's transport (src/driver-transport.cpp) against the module"
+start_pad usb "$MAC_B" --stream 1
+wait_driver "$MAC_B" "$DRIVER"
+hid_id=$(basename "$(hid_dev_by_mac "$MAC_B")")
+"$TRANSPORT" "$hid_id" >/tmp/transport-check.log 2>&1 &
+checker=$!
+check "daemon transport opens, reads and writes" \
+    bash -c "for _ in \$(seq 100); do grep -q 'waiting for disconnect' /tmp/transport-check.log && exit 0; sleep 0.1; done; exit 1"
+check "output report from the daemon reaches the pad" \
+    bash -c "sleep 0.3; grep -q '^output rnum=05 len=32' /tmp/fake-pad.$MAC_B.log"
+stop_pads
+check "daemon transport sees the disconnect" \
+    bash -c "for _ in \$(seq 50); do grep -q 'disconnect detected' /tmp/transport-check.log && exit 0; sleep 0.1; done; exit 1"
+check "transport-check exited after the disconnect" bash -c "! kill -0 $checker 2>/dev/null"
+
+echo "# 8. no kernel splats across the whole run"
 check "no BUG/KASAN/lockdep in dmesg" \
     bash -c "! dmesg | grep -Eq 'BUG:|KASAN|WARNING: .*lock|possible circular'"
 

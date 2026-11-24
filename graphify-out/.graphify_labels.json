@@ -10,7 +10,6 @@
   "11": "Hardware verify.sh",
   "12": "DaemonController (UI)",
   "13": "ds4-ctl CLI",
-  "14": "IPC client tests",
   "15": "UI IPC client",
   "16": "libudev stub tests",
   "18": "HID-BPF programs",
