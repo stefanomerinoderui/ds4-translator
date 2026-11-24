@@ -5,13 +5,15 @@
 // chosen bus, so it binds (or doesn't) exactly like a real pad.
 //
 //   fake-pad --bus usb|bt --mac AA:BB:CC:DD:EE:FF [--count N] [--hold SECONDS]
-//            [--stream 1]
+//            [--stream 1] [--slow-feature MS]
 //
 // Sends N input reports (default 20, 100 Hz), answers feature-report reads
 // with a recognisable pattern, then stays alive for --hold seconds (default
 // 3600) so the test can poke at it; with --stream 1 it keeps sending input
-// reports during that time. Output reports the kernel sends are logged as
-// "output rnum=XX len=N". SIGTERM destroys the device.
+// reports during that time. --slow-feature delays the answer to feature report
+// 0x02 by MS milliseconds once the pad is ready, so a test can unplug it while
+// the kernel is blocked waiting for it. Output reports the kernel sends are
+// logged as "output rnum=XX len=N". SIGTERM destroys the device.
 
 #include <errno.h>
 #include <fcntl.h>
@@ -70,6 +72,8 @@ static const uint8_t g_bt_calibration[36] = {
 };
 
 static volatile sig_atomic_t g_stop;
+static int g_slow_feature_ms;	// delay for report 0x02; 0 until the pad is ready
+static int g_slow_feature_arg;
 static uint8_t g_mac[6];	// as sent in the pairing report: least significant byte first
 
 static void on_signal(int sig)
@@ -115,6 +119,12 @@ static int answer_get_report(int fd, const struct uhid_get_report_req *req)
 
 	printf("get_report rnum=%02x id=%u\n", req->rnum, req->id);
 	fflush(stdout);
+	if (req->rnum == FEATURE_CAL_USB && g_slow_feature_ms) {
+		struct timespec ts = { g_slow_feature_ms / 1000,
+				       (g_slow_feature_ms % 1000) * 1000000L };
+
+		nanosleep(&ts, NULL);
+	}
 
 	memset(&ev, 0, sizeof(ev));
 	ev.type = UHID_GET_REPORT_REPLY;
@@ -209,7 +219,7 @@ static int usage(void)
 {
 	fprintf(stderr,
 		"usage: fake-pad --bus usb|bt --mac XX:XX:XX:XX:XX:XX "
-		"[--count N] [--hold SECONDS] [--stream 1]\n");
+		"[--count N] [--hold SECONDS] [--stream 1] [--slow-feature MS]\n");
 	return 2;
 }
 
@@ -232,6 +242,8 @@ int main(int argc, char **argv)
 			hold = atoi(argv[i + 1]);
 		else if (!strcmp(argv[i], "--stream"))
 			stream = atoi(argv[i + 1]);
+		else if (!strcmp(argv[i], "--slow-feature"))
+			g_slow_feature_arg = atoi(argv[i + 1]);
 		else
 			return usage();
 	}
@@ -265,6 +277,7 @@ int main(int argc, char **argv)
 			return 1;
 		sleep_ms(10);
 	}
+	g_slow_feature_ms = g_slow_feature_arg;
 	puts("fake-pad: ready");
 	fflush(stdout);
 

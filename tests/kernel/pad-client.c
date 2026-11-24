@@ -12,6 +12,8 @@
 //   pad-client NODE calibration          GET_CALIBRATION; prints "len=N hex"
 //   pad-client HIDRAW hidraw-feature ID LEN
 //                                 HIDIOCGFEATURE on an ordinary hidraw node
+//   pad-client NODE stress        hammer the node (info, write, feature get,
+//                                 read) until the pad goes away; print how
 //   pad-client CONTROL control [MAC]
 //                                 attach through the control node (optionally
 //                                 naming the emulated pad's MAC), then stay
@@ -174,6 +176,42 @@ static int do_hidraw_feature(int fd, const char *id, const char *len)
 	return 0;
 }
 
+// What a daemon that is unlucky with timing does: keep using every operation
+// of the node while the pad is being unplugged.
+static int do_stress(int fd)
+{
+	unsigned char buf[DS4T_MAX_REPORT];
+	unsigned char out[32] = { 0x05, 0xff };
+	struct pollfd pfd = { .fd = fd, .events = POLLIN };
+	unsigned long ops = 0;
+
+	puts("stressing");
+	fflush(stdout);
+	for (;;) {
+		struct ds4t_feature feat = { .len = 37 };
+		struct ds4t_info info;
+		int err = 0;
+
+		feat.data[0] = 0x02;
+		if (ioctl(fd, DS4T_IOC_GET_INFO, &info))
+			err = errno;
+		else if (write(fd, out, sizeof(out)) < 0)
+			err = errno;
+		else if (ioctl(fd, DS4T_IOC_GET_FEATURE, &feat))
+			err = errno;
+		else if (poll(&pfd, 1, 5) > 0 && (pfd.revents & POLLIN) &&
+			 read(fd, buf, sizeof(buf)) < 0 && errno != EAGAIN)
+			err = errno;
+		else if (pfd.revents & (POLLHUP | POLLERR))
+			err = ENODEV;
+		if (err) {
+			printf("stress: %lu ops, ended: %s\n", ops, strerror(err));
+			return 0;
+		}
+		ops++;
+	}
+}
+
 static int do_control(int fd, const char *mac)
 {
 	struct ds4t_mac arg = { { 0 } };
@@ -206,7 +244,7 @@ int main(int argc, char **argv)
 
 	if (argc < 3) {
 		fprintf(stderr, "usage: pad-client NODE info|read N|write HEX|hold|feature-get ID LEN|"
-			"feature-set HEX|calibration|hidraw-feature ID LEN|control [MAC]\n");
+			"feature-set HEX|calibration|hidraw-feature ID LEN|stress|control [MAC]\n");
 		return 2;
 	}
 	fd = open(argv[1], O_RDWR | O_CLOEXEC);
@@ -231,6 +269,8 @@ int main(int argc, char **argv)
 		ret = do_hidraw_feature(fd, argv[3], argv[4]);
 	else if (!strcmp(argv[2], "calibration"))
 		ret = do_calibration(fd);
+	else if (!strcmp(argv[2], "stress"))
+		ret = do_stress(fd);
 	else if (!strcmp(argv[2], "control") && argc <= 4)
 		ret = do_control(fd, argc == 4 ? argv[3] : NULL);
 	else

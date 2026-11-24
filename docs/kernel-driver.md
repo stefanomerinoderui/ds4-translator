@@ -1,11 +1,15 @@
 # Design Study: A ds4-translator Kernel Module
 
-This document describes how `ds4-translator` could ship its own Linux kernel
-module, what it would replace, what it would cost, and a suggested plan. It
-is a design study, not a commitment: nothing here is implemented.
+This document describes how `ds4-translator` ships its own Linux kernel
+module, what it replaces, what it costs, and the plan it was built from.
+It started as a design study; sections 3 to 5 now describe what is
+implemented in `kernel/` (see its [README](../kernel/README.md)), and
+section 8 records where each step of the plan stands.
 
 Statements about kernel behavior that have not been checked against real
-hardware or the current kernel source are marked **(verify)**.
+hardware or the current kernel source are marked **(verify)**. What was
+checked in a virtual machine, against the real `hid-playstation`, is said
+so; nothing has run on a physical controller yet.
 
 ## 1. Why consider a kernel module
 
@@ -377,24 +381,44 @@ access, by design. This is already true of the `unlink` method.
   module is worth it only if maintaining the workarounds costs more than
   maintaining kernel code and DKMS packaging.
 
-## 8. Suggested plan
+## 8. Plan and status
 
-1. **Prototype** the binder with `hid_hw_start(hdev, HID_CONNECT_DRIVER)`
-   and a debugfs dump of incoming reports, tested first against a `uhid`
-   fake pad in a VM (section 6). Verify the open questions marked above, in
-   this order: that `HID_CONNECT_DRIVER` binds with no `hidraw`/`input`
-   nodes, rebinding a pad from `hid-playstation` and `hid-sony`, declining
-   the emulated device, and disconnect while `read()` is blocked.
-2. **Character device** with the read/write/poll contract, plus a new
-   daemon transport behind `hide_method=driver`, falling back to `unbind`
-   when the module is absent.
-3. **Feature-report ioctls**, then calibration passthrough (Part 1, item 4
-   of the unimplemented-features doc).
-4. **Packaging** (section 9): DKMS, modprobe `softdep`, service
-   `ExecStartPre=-modprobe` (no `ExecStopPost` needed), Secure Boot
-   instructions in the README.
-5. **Remove** the workarounds in section 4 only after the module has run
-   as the default for a release, keeping `unbind` as the fallback.
+1. **Prototype the binder.** Done. `HID_CONNECT_DRIVER` binds with no
+   `hidraw`, `input` or `power_supply` node; a pad that another driver holds
+   is taken over, and one that loses the load-order race too; the emulated
+   device is declined; `hid-sony` has no DS4 aliases on kernel 7.3.5.
+2. **Character device and daemon transport** (`hide_method=driver`, falling
+   back to `unbind`). Done, plus the control node (attach, ignore MAC,
+   release on close) that section 3.1 describes.
+3. **Feature-report ioctls and calibration passthrough.** Done for the
+   emulated DualShock 4 (section 3.3); nothing in the daemon uses
+   `SET_FEATURE` yet.
+4. **Packaging.** Done: DKMS package, service integration, CI build, Secure
+   Boot instructions (section 9).
+5. **Hardening, then the default.** The hardening that a VM allows is done:
+   attach/detach churn, unplugging under load and while the kernel waits on
+   the pad, and unload/load cycles, with SLUB poisoning, red zones and
+   aggressive KFENCE sampling enabled. Everything below is still open.
+6. **Remove** the workarounds in section 4 only after the module has run as
+   the default for a release, keeping `unbind` as the fallback.
+
+### Not yet validated, and deliberately not decided
+
+- **Real hardware.** Nothing has run on a physical pad: USB, Bluetooth over
+  `bluetoothd`'s `uhid` session (probe timing, the calibration read, output
+  report pacing), and unplugging or dropping the link under load.
+- **A debug kernel.** The host kernel has no KASAN or lockdep. The slab
+  debugging above covers memory errors, not lock ordering.
+- **Making `driver` the default.** It stays opt-in until the two points
+  above are settled; flipping a default is a decision for the maintainer,
+  not something this work can justify with a fake pad.
+- **Bluetooth to USB upgrade.** The daemon's hot-swap (unbind Bluetooth so
+  the kernel binds USB) is not done for this method. The module claims both
+  interfaces of a pad, so nothing is refused and nothing needs unbinding, but
+  the daemon keeps the Bluetooth connection while a cable is plugged in and
+  only moves to USB when Bluetooth drops. It was left out because the VM
+  cannot exercise it: the daemon deliberately ignores USB-bus `uhid`
+  devices, which is all a fake can be.
 
 ## 9. Packaging as a separate package
 

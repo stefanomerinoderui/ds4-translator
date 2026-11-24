@@ -121,6 +121,9 @@ has_node() { # <hid device path> <name under it>
     [ -e "$1/$2" ]
 }
 
+# Only what the kernel logs from here on counts as ours.
+dmesg_mark=$(dmesg | wc -l)
+
 mount | grep -q debugfs || mount -t debugfs none /sys/kernel/debug
 modprobe uhid || { echo "uhid unavailable"; exit 1; }
 modprobe hid_playstation || { echo "hid_playstation unavailable"; exit 1; }
@@ -320,9 +323,74 @@ check "a killed daemon releases the pad" wait_not_driver "$MAC_A" "$DRIVER"
 stop_pads
 unset DS4_RUNTIME_DIR DS4_STATE_DIR DS4_CONFIG_PATH
 
-echo "# 10. no kernel splats across the whole run"
-check "no BUG/KASAN/lockdep in dmesg" \
-    bash -c "! dmesg | grep -Eq 'BUG:|KASAN|WARNING: .*lock|possible circular'"
+echo "# 10. hardening: churn, unplugging under load, unloading"
+start_pad usb "$MAC_A" --stream 1
+cycles_ok=1
+for _ in $(seq 8); do
+    attach
+    wait_driver "$MAC_A" "$DRIVER" || cycles_ok=0
+    detach
+    wait_driver "$MAC_A" "$FALLBACK" || cycles_ok=0
+done
+check "8 attach/detach cycles each end on $FALLBACK" test $cycles_ok = 1
+stop_pads
+
+# A client using every operation of the node while the pad is unplugged.
+unplug_ok=1
+attach
+for _ in $(seq 8); do
+    start_pad usb "$MAC_B" --stream 1
+    wait_driver "$MAC_B" "$DRIVER" || unplug_ok=0
+    node=/dev/ds4-translator/$(basename "$(hid_dev_by_mac "$MAC_B")")
+    "$CLIENT" "$node" stress >/tmp/stress.log 2>&1 &
+    stressor=$!
+    sleep 0.4
+    stop_pads
+    for _ in $(seq 50); do kill -0 "$stressor" 2>/dev/null || break; sleep 0.1; done
+    if kill -0 "$stressor" 2>/dev/null; then unplug_ok=0; kill -KILL "$stressor"; fi
+    wait "$stressor" 2>/dev/null
+    grep -q 'stress: .* ops, ended:' /tmp/stress.log || unplug_ok=0
+done
+check "8 unplugs under load: the client always ended" test $unplug_ok = 1
+check "no pad node left behind" \
+    bash -c "[ -z \"\$(ls /dev/ds4-translator | grep -v '^control\$')\" ]"
+
+# Unplugging while the kernel waits on the pad: the fake sits on its answer to
+# a feature request for four seconds and is killed meanwhile (its /dev/uhid
+# closing is what destroys the device, as a USB unplug would).
+start_pad usb "$MAC_B" --stream 1 --slow-feature 4000
+wait_driver "$MAC_B" "$DRIVER"
+node=/dev/ds4-translator/$(basename "$(hid_dev_by_mac "$MAC_B")")
+"$CLIENT" "$node" feature-get 02 37 >/tmp/slow.log 2>&1 &
+blocked=$!
+sleep 0.7
+kill -KILL "${pad_pids[@]}"
+wait "${pad_pids[@]}" 2>/dev/null
+pad_pids=()
+check "a feature request blocked on the pad returns when it is unplugged" \
+    bash -c "for _ in \$(seq 25); do kill -0 $blocked 2>/dev/null || exit 0; sleep 0.1; done; exit 1"
+check "it reports an error and not data" grep -Eq 'Input/output error|No such device' /tmp/slow.log
+check "the node is gone" bash -c "for _ in \$(seq 30); do [ ! -e '$node' ] && exit 0; sleep 0.1; done; exit 1"
+detach
+
+start_pad usb "$MAC_A" --stream 1
+wait_driver "$MAC_A" "$FALLBACK"
+reload_ok=1
+for _ in $(seq 5); do
+    rmmod hid_ds4_translator || reload_ok=0
+    insmod "$KO" || reload_ok=0
+done
+check "5 unload/load cycles with a pad present" test $reload_ok = 1
+check "the pad is untouched by them" wait_driver "$MAC_A" "$FALLBACK"
+attach
+check "and the reloaded module still takes it over" wait_driver "$MAC_A" "$DRIVER"
+detach
+check "and gives it back" wait_driver "$MAC_A" "$FALLBACK"
+stop_pads
+
+echo "# 11. no kernel splats across the whole run"
+check "no oops, KASAN/KFENCE report, slab corruption or lockdep splat in dmesg" \
+    bash -c "! dmesg | tail -n +$((dmesg_mark + 1)) | grep -Eq 'BUG:|Oops|KASAN|KFENCE|Poison overwritten|Redzone|Object already free|WARNING: CPU|WARNING: .*lock|possible circular'"
 
 echo
 echo "$pass passed, $fail failed"

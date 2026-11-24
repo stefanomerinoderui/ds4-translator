@@ -7,8 +7,11 @@
 #
 #   tests/kernel/run-vm.sh
 #
-# The host kernel has no KASAN/lockdep; for those, build a debug kernel and
-# pass its tree as KERNEL_DIR (the module is built against it).
+# The host kernel has no KASAN or lockdep, so the VM boots it with SLUB
+# poisoning and red zones (slub_debug=FZPU) and aggressive KFENCE sampling,
+# which catch most use-after-free and out-of-bounds writes in slab memory. For
+# the full set, build a debug kernel and pass its tree as KERNEL_DIR (the
+# module is built against it).
 
 set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -26,4 +29,4 @@ gcc -Wall -Wextra -Werror -O2 -o "$BUILD/pad-client" "$HERE/pad-client.c"
 g++ -std=c++17 -Wall -Wextra -Werror -O2 -I"$ROOT/src" -o "$BUILD/transport-check" \
     "$HERE/transport-check.cpp" "$ROOT/src/driver-transport.cpp"
 
-exec vng --run --user root --exec "$HERE/test-binder.sh $ROOT/kernel/hid-ds4-translator.ko $BUILD/fake-pad $BUILD/pad-client $BUILD/transport-check $ROOT/build/ds4-translator $ROOT/build/ds4-ctl"
+exec vng --run --append "slub_debug=FZPU kfence.sample_interval=1" --user root --exec "$HERE/test-binder.sh $ROOT/kernel/hid-ds4-translator.ko $BUILD/fake-pad $BUILD/pad-client $BUILD/transport-check $ROOT/build/ds4-translator $ROOT/build/ds4-ctl"
