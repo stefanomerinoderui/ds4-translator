@@ -38,7 +38,7 @@ package_ds4-translator() {
     pkgdesc="Maps a physical DualShock 4 to a virtual DualShock 4, DualSense or Xbox controller (daemon and ds4-ctl)"
     depends=(glibc gcc-libs libusb libbpf systemd kmod)
     optdepends=('lib32-glibc: udev spoof shim for 32-bit games'
-                'ds4-translator-dkms: the "driver" hide method, which claims the pad before any other driver')
+                'ds4-translator-dkms: the "driver" hide method (claims the pad before any other driver) and the "kernel" emulation backend')
     install=ds4-translator.install
 
     cd "$pkgbase-$pkgver"
