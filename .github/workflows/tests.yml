@@ -28,6 +28,8 @@ jobs:
         run: make all
       - name: Smoke tests
         run: make test-smoke
+      - name: Shell completion tests
+        run: make test-completion
       - name: Sanity tests
         run: make test-unit test-component GTEST_FILTER='*Sanity*:*Golden*:Regression.*'
 

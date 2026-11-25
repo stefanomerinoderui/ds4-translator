@@ -10,8 +10,10 @@ runs:
       run: |
         sudo apt-get update
         # gcc/g++-multilib: -m32 for libudev-sony-spoof32.so.
+        # fish/zsh: make test-completion drives their completion scripts.
         sudo apt-get install -y build-essential gcc-multilib g++-multilib \
-          libusb-1.0-0-dev libbpf-dev clang pkg-config libgtest-dev binutils
+          libusb-1.0-0-dev libbpf-dev clang pkg-config libgtest-dev binutils \
+          fish zsh
 
     - name: Install bpftool
       shell: bash

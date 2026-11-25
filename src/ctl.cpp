@@ -142,9 +142,9 @@ enum {
 };
 
 // Single source of truth for `tap`'s button/dpad names, shared by run_tap(),
-// usage text, and `--complete-args tap` (queried live by
-// ds4-ctl-completion.bash) so a new button here shows up in completion
-// automatically instead of needing the bash script hand-edited too.
+// usage text, and `--complete-args tap` (queried live by the bash, fish and
+// zsh completion scripts) so a new button here shows up in completion
+// automatically instead of needing the scripts hand-edited too.
 struct ButtonSpec {
     const char *name;
     uint16_t bit;
@@ -182,9 +182,9 @@ static std::string button_names_joined() {
 
 // Single source of truth for top-level commands and their valid next
 // argument, shared by main()'s dispatch/validation and `--commands`/
-// `--complete-args` (queried live by ds4-ctl-completion.bash). `tap`'s
-// completions come from kButtons instead, since they're a longer, separate
-// list (see --complete-args handling in main()).
+// `--complete-args` (queried live by the bash/fish/zsh completion scripts).
+// `tap`'s completions come from kButtons instead, since they're a longer,
+// separate list (see --complete-args handling in main()).
 struct CommandSpec {
     const char *name;
     const char *arg_completions; // space-separated tokens, or nullptr
@@ -226,6 +226,21 @@ static bool is_in_list(const std::string& word, const char *space_separated) {
         start = sp + 1;
     }
     return false;
+}
+
+// Output contract of `--complete-args`: one candidate per line. fish command
+// substitution and zsh's ${(f)...} split only on newlines, so printing the
+// space-separated list as-is made them offer the whole line (e.g.
+// "ds4 dualsense") as a single candidate. bash's compgen -W splits on any
+// whitespace, so it works either way.
+static void print_completions(const std::string& space_separated) {
+    size_t start = 0;
+    while (start < space_separated.size()) {
+        size_t sp = space_separated.find(' ', start);
+        if (sp == std::string::npos) sp = space_separated.size();
+        if (sp > start) std::cout << space_separated.substr(start, sp - start) << "\n";
+        start = sp + 1;
+    }
 }
 
 struct UiState {
@@ -705,9 +720,10 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    // Hidden, machine-readable queries used by ds4-ctl-completion.bash. The
-    // bash script asks the binary for its command list / per-command
-    // argument list at completion time instead of hardcoding them, so
+    // Hidden, machine-readable queries used by the bash/fish/zsh completion
+    // scripts (one token per line). They ask the binary for its command
+    // list / per-command argument list at completion time instead of
+    // hardcoding them, so
     // adding a command to kCommands (or a button to kButtons) is all that's
     // needed to keep tab-completion in sync — no separate file to edit.
     if (cmd == "--commands") {
@@ -718,29 +734,29 @@ int main(int argc, char* argv[]) {
         if (argc < 3) return 0;
         std::string target = argv[2];
         if (target == "tap") {
-            std::cout << button_names_joined() << std::endl;
+            print_completions(button_names_joined());
         } else if (target == "set-backend") {
             // Position-aware (unlike every other command here): argv[3], if
             // present, is the controller word already typed -- offer
             // ds4/dualsense first, then uhid/functionfs once one of those is
-            // picked. argv[3:] wasn't passed at all until
-            // ds4-ctl-completion.bash started forwarding every prior word
-            // instead of just the command name.
+            // picked. argv[3:] wasn't passed at all until the completion
+            // scripts started forwarding every prior word instead of just
+            // the command name.
             if (argc <= 3) {
-                std::cout << "ds4 dualsense" << std::endl;
+                print_completions("ds4 dualsense");
             } else if (argc == 4) {
-                std::cout << "uhid functionfs" << std::endl;
+                print_completions("uhid functionfs");
             }
         } else if (target == "set-name") {
             // Same shape as set-backend for the first argument; the second
             // is a free-text name, so there's nothing useful to complete.
             if (argc <= 3) {
-                std::cout << "ds4 dualsense" << std::endl;
+                print_completions("ds4 dualsense");
             } else if (argc == 4) {
-                std::cout << "--reset" << std::endl;
+                print_completions("--reset");
             }
         } else if (const CommandSpec *spec = find_command(target)) {
-            if (spec->arg_completions) std::cout << spec->arg_completions << std::endl;
+            if (spec->arg_completions) print_completions(spec->arg_completions);
         }
         return 0;
     }
