@@ -1,17 +1,23 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-2.0-only
 #
-# Helpers shared by the VM test scripts (test-binder.sh, test-virtual.sh):
-# result counting, fake pads and finding what the kernel bound them to.
-# Sourced, not run. The including script sets FAKE and may set attach_pid.
+# Helpers shared by the VM test scripts (test-binder.sh, test-virtual.sh,
+# test-hotswap.sh): result counting, fake pads and finding what the kernel
+# bound them to. Sourced, not run. The including script sets FAKE and may set
+# attach_pid.
 
-DRIVER=hid-ds4-translator
-FALLBACK=playstation   # driver name; the module is hid_playstation
+# For the scripts that source this file; checked on its own, shellcheck cannot
+# see them used.
+# shellcheck disable=SC2034
+{
+    DRIVER=hid-ds4-translator
+    FALLBACK=playstation   # driver name; the module is hid_playstation
+    CONTROL=/dev/ds4-translator/control
+}
 pass=0
 fail=0
 pad_pids=()
 attach_pid=
-CONTROL=/dev/ds4-translator/control
 
 ok()   { echo "ok   - $1"; pass=$((pass + 1)); }
 nok()  { echo "FAIL - $1"; fail=$((fail + 1)); }

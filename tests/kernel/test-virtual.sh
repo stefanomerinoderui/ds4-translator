@@ -18,6 +18,7 @@ DS4CTL=${5:?ds4-ctl path}
 MAC_PAD=AA:BB:CC:00:00:11
 MAC_VIRT=74:e7:d6:3a:47:e8	# the daemon's default emulated MAC
 
+# shellcheck source=lib.sh
 . "$(dirname "$0")/lib.sh"
 
 # Runs virtual-check in the background; its output goes to /tmp/virtual.log.

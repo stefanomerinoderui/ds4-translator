@@ -69,6 +69,7 @@ int driver_transport_attach() {
     if (abi != DS4T_ABI_VERSION) {
         report_abi_mismatch(abi);
         close(fd);
+        errno = EPROTO; // only another build of the module fixes this
         return -1;
     }
     return fd;
@@ -196,6 +197,14 @@ bool driver_transport_get_calibration(int pad_fd, std::vector<uint8_t>& report) 
 bool driver_transport_available() {
     struct stat st;
     return stat(ds4paths::driver_module_dir().c_str(), &st) == 0;
+}
+
+unsigned long driver_transport_module_instance() {
+    struct stat st;
+    if (stat(ds4paths::driver_module_dir().c_str(), &st) != 0) {
+        return 0;
+    }
+    return static_cast<unsigned long>(st.st_ino);
 }
 
 int driver_transport_open(const std::string& hid_id, std::chrono::milliseconds wait) {

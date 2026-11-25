@@ -25,7 +25,7 @@
 //
 // Opens the control node and checks the module's ABI. The module still claims
 // nothing at this point. Returns the control fd, or -1 (module not loaded,
-// another daemon attached, ABI mismatch).
+// another daemon attached, ABI mismatch -- the last with errno EPROTO).
 int driver_transport_attach();
 
 // Names the emulated controller's MAC so the module never claims it. Must be
@@ -69,6 +69,13 @@ bool driver_transport_get_calibration(int pad_fd, std::vector<uint8_t>& report);
 // unbind method without paying driver_transport_open()'s wait for a node
 // that will never appear.
 bool driver_transport_available();
+
+// Identifies the loaded instance of the module (its sysfs directory's inode),
+// 0 when it is not loaded. Changes when the module is unloaded and loaded
+// again, e.g. after an update, so a caller can retry an attach that failed
+// for a reason only a different module fixes (an ABI mismatch) without
+// retrying -- and logging -- every few seconds in between.
+unsigned long driver_transport_module_instance();
 
 // Opens the node for hid_id (the HID device's sysfs name, as found by the
 // uevent monitor), waiting up to `wait` for it: the HID-bus "add" uevent

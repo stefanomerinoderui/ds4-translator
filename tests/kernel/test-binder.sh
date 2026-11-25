@@ -20,6 +20,7 @@ MAC_A=AA:BB:CC:00:00:01
 MAC_B=AA:BB:CC:00:00:02
 DEBUGFS=/sys/kernel/debug/ds4t
 
+# shellcheck source=lib.sh
 . "$(dirname "$0")/lib.sh"
 
 # Stands in for the daemon: opens the control node (optionally naming the

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-2.0-only
 #
-# Runs both VM suites in one guest boot (called by run-vm.sh inside the VM) and
-# fails if either does.
+# Runs the VM suites in one guest boot (called by run-vm.sh inside the VM) and
+# fails if any does.
 #
 #   run-suites.sh <module> <build dir of the test tools> <ds4-translator> <ds4-ctl>
 
@@ -17,5 +17,7 @@ rc=0
 "$HERE/test-binder.sh" "$KO" "$BUILD/fake-pad" "$BUILD/pad-client" "$BUILD/transport-check" \
     "$DAEMON" "$DS4CTL" || rc=1
 "$HERE/test-virtual.sh" "$KO" "$BUILD/fake-pad" "$BUILD/virtual-check" \
+    "$DAEMON" "$DS4CTL" || rc=1
+"$HERE/test-hotswap.sh" "$KO" "$BUILD/fake-pad" "$BUILD/virtual-check" \
     "$DAEMON" "$DS4CTL" || rc=1
 exit "$rc"

@@ -35,5 +35,5 @@ gcc -Wall -Wextra -Werror -O2 -o "$BUILD/virtual-check" "$HERE/virtual-check.c"
 g++ -std=c++17 -Wall -Wextra -Werror -O2 -I"$ROOT/src" -o "$BUILD/transport-check" \
     "$HERE/transport-check.cpp" "$ROOT/src/driver-transport.cpp"
 
-# Both suites in one VM boot; the run fails if either does.
+# Every suite in one VM boot (run-suites.sh); the run fails if any does.
 exec vng --run --append "slub_debug=FZPU kfence.sample_interval=1 modprobe.blacklist=hid_ds4_translator" --user root --exec "$HERE/run-suites.sh $ROOT/kernel/hid-ds4-translator.ko $BUILD $ROOT/build/ds4-translator $ROOT/build/ds4-ctl"

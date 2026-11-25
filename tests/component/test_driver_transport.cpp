@@ -91,6 +91,25 @@ TEST_F(DriverTransportTest, AttachRejectsAControlNodeThatIsNotTheModule) {
     EXPECT_EQ(driver_transport_attach(), -1); // ENOTTY on the ABI ioctl
 }
 
+TEST_F(DriverTransportTest, ModuleInstanceChangesWithEachLoad) {
+    EXPECT_EQ(driver_transport_module_instance(), 0UL);
+    ASSERT_EQ(mkdir(module_dir_.c_str(), 0700), 0);
+    const unsigned long first = driver_transport_module_instance();
+    EXPECT_NE(first, 0UL);
+    EXPECT_EQ(driver_transport_module_instance(), first);
+    // Unloading and loading again: sysfs gives the new directory a new inode.
+    // A file held open keeps the old inode from being reused here.
+    const std::string keep = module_dir_ + "/keep";
+    const int fd = open(keep.c_str(), O_CREAT | O_WRONLY, 0600);
+    ASSERT_GE(fd, 0);
+    ASSERT_EQ(rename(module_dir_.c_str(), (module_dir_ + ".old").c_str()), 0);
+    ASSERT_EQ(mkdir(module_dir_.c_str(), 0700), 0);
+    EXPECT_NE(driver_transport_module_instance(), first);
+    close(fd);
+    unlink((module_dir_ + ".old/keep").c_str());
+    rmdir((module_dir_ + ".old").c_str());
+}
+
 TEST_F(DriverTransportTest, AttachFailsWithoutAControlNode) {
     ASSERT_EQ(mkdir(module_dir_.c_str(), 0700), 0);
     EXPECT_EQ(driver_transport_attach(), -1);

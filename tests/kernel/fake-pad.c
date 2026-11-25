@@ -5,7 +5,7 @@
 // chosen bus, so it binds (or doesn't) exactly like a real pad.
 //
 //   fake-pad --bus usb|bt --mac AA:BB:CC:DD:EE:FF [--count N] [--hold SECONDS]
-//            [--stream 1] [--fixed 1] [--slow-feature MS]
+//            [--stream 1] [--fixed N] [--slow-feature MS]
 //
 // Sends N input reports (default 20, 100 Hz), answers feature-report reads
 // with a recognisable pattern, then stays alive for --hold seconds (default
@@ -13,8 +13,9 @@
 // reports during that time. --slow-feature delays the answer to feature report
 // 0x02 by MS milliseconds once the pad is ready, so a test can unplug it while
 // the kernel is blocked waiting for it. Output reports the kernel sends are
-// logged as "output rnum=XX len=N". With --fixed 1 every input report carries
-// the known state of the FIXED_* values below instead of a counter, so a test can
+// logged as "output rnum=XX len=N". With --fixed N every input report carries
+// the known state of the FIXED_* values below instead of a counter, with the
+// left stick's X moved by N - 1 so two pads can be told apart, and a test can
 // check what a translating consumer makes of it. SIGTERM destroys the device.
 
 #include <errno.h>
@@ -189,7 +190,7 @@ static int send_input(int fd, uint8_t counter)
 	ev.u.input2.data[0] = 0x01;
 	ev.u.input2.data[1] = counter;
 	if (g_fixed) {
-		ev.u.input2.data[1] = FIXED_X;
+		ev.u.input2.data[1] = (uint8_t)(FIXED_X + g_fixed - 1);
 		ev.u.input2.data[2] = FIXED_Y;
 		ev.u.input2.data[3] = FIXED_RX;
 		ev.u.input2.data[4] = FIXED_RY;
@@ -254,7 +255,7 @@ static int usage(void)
 {
 	fprintf(stderr,
 		"usage: fake-pad --bus usb|bt --mac XX:XX:XX:XX:XX:XX "
-		"[--count N] [--hold SECONDS] [--stream 1] [--fixed 1] [--slow-feature MS]\n");
+		"[--count N] [--hold SECONDS] [--stream 1] [--fixed N] [--slow-feature MS]\n");
 	return 2;
 }
 

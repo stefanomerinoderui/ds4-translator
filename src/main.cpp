@@ -32,6 +32,7 @@
 #include "descriptors.h"
 #include "functionfs-backend.h"
 #include "hid-driver-sysfs.h"
+#include "bt-suppression.h"
 #include "hid-unbind-detect.h"
 #include "usb-hid-transport.h"
 #include "hid-bpf-transport.h"
@@ -132,10 +133,7 @@ static bool is_own_virtual_hidraw(const std::string& hidraw_name, uint32_t busty
     std::error_code ec;
     fs::path resolved = fs::canonical("/sys/class/hidraw/" + hidraw_name + "/device", ec);
     if (ec) return false;
-    std::string devpath = resolved.string();
-    if (devpath.find("dummy_hcd") != std::string::npos) return true;
-    if (bustype != 0x05 && devpath.find("/devices/virtual/misc/uhid/") != std::string::npos) return true;
-    return false;
+    return hid_devpath_is_own_virtual(bustype != 0x05, resolved.string());
 }
 
 // Scan /dev/ for physical DualShock 4. USB is always preferred over
@@ -687,15 +685,22 @@ static void reconcile_driver_attachment(bool want) {
         return;
     }
     next_attempt = std::chrono::steady_clock::now() + kRetryInterval;
-    // Once a failure is on record, only try again when the module has shown up.
-    if (failure_reported && !driver_transport_available()) {
+    // Once a failure is on record, only try again when the module has shown
+    // up -- and after an ABI mismatch, only once a different instance of it
+    // has (a reload after an update): the same one fails the same way, and
+    // used to log it every five seconds.
+    static unsigned long abi_mismatch_instance = 0;
+    const unsigned long instance = driver_transport_module_instance();
+    if (failure_reported && (instance == 0 || instance == abi_mismatch_instance)) {
         return;
     }
     g_driver_control_fd = driver_transport_attach();
     if (g_driver_control_fd < 0) {
+        abi_mismatch_instance = (errno == EPROTO) ? instance : 0;
         failure_reported = true;
         return;
     }
+    abi_mismatch_instance = 0;
     failure_reported = false;
     // The MAC first: claiming takes over every pad already on the bus, and
     // the emulated one must not be among them.
@@ -1411,9 +1416,7 @@ static std::string find_usb_ds4_hid_id() {
             // bus, and the uhid backend registers under
             // /devices/virtual/misc/uhid/* with bus forced to BUS_USB (0003)
             // -- both need excluding here the same way.
-            std::string devpath = resolved.string();
-            if (devpath.find("dummy_hcd") != std::string::npos) continue;
-            if (devpath.find("/devices/virtual/misc/uhid/") != std::string::npos) continue;
+            if (hid_devpath_is_own_virtual(true, resolved.string())) continue;
             return id;
         }
     }
@@ -1439,11 +1442,7 @@ static bool scan_for_physical_pad(bool require_playstation) {
 
         fs::path resolved = fs::canonical(entry.path(), ec);
         if (ec) { ec.clear(); continue; }
-        if (is_usb) {
-            const std::string devpath = resolved.string();
-            if (devpath.find("dummy_hcd") != std::string::npos) continue;
-            if (devpath.find("/devices/virtual/misc/uhid/") != std::string::npos) continue;
-        }
+        if (is_usb && hid_devpath_is_own_virtual(true, resolved.string())) continue;
 
         if (!require_playstation) return true;
 
@@ -2123,9 +2122,7 @@ static bool own_virtual_hid_bound(int timeout_ms) {
             fs::path resolved = fs::canonical(entry.path(), ec);
             if (ec) { ec.clear(); continue; }
             const std::string devpath = resolved.string();
-            const bool is_ours = (devpath.find("dummy_hcd") != std::string::npos) ||
-                                 (devpath.find("/devices/virtual/misc/uhid/") != std::string::npos);
-            if (!is_ours) continue;
+            if (!hid_devpath_is_own_virtual(true, devpath)) continue;
 
             fs::path driver = fs::read_symlink(entry.path() / "driver", ec);
             if (ec) { ec.clear(); continue; }
@@ -2588,27 +2585,28 @@ int main(int argc, char* argv[]) {
     std::string phy_path = "";
     mode_t orig_mode = 0660;
 
-    // Set when a Bluetooth-bound physical controller is force-unbound from
-    // the playstation driver to let a just-plugged-in USB connection for the
-    // same hardware take over (see the hot-swap check below for why this is
-    // necessary: the kernel driver itself refuses to bind USB while the same
-    // MAC is already bound over Bluetooth, so there's nothing to detect or
-    // switch between at the /dev/hidraw level -- the driver has to be told
-    // to let go first). Holds the Bluetooth hid_device's sysfs bus id (e.g.
-    // "0005:054C:05C4.002E") so it can be handed back to the driver once the
-    // USB connection actually disconnects, restoring Bluetooth input.
-    std::string suppressed_bt_hid_id;
-
-    // Hands a previously-unbound Bluetooth connection back to the driver so
-    // it can reconnect, wherever the USB connection that preempted it gets
-    // torn down (a real disconnect, or a forced release/type/backend change
-    // on our side). No-op if nothing is currently suppressed.
-    auto restore_suppressed_bluetooth = [&]() {
-        if (!suppressed_bt_hid_id.empty()) {
-            write_hid_driver_sysfs("bind", suppressed_bt_hid_id);
-            suppressed_bt_hid_id.clear();
-        }
-    };
+    // The Bluetooth connection unbound so a just-plugged-in USB connection
+    // of the same pad could bind (the kernel driver refuses USB while the
+    // same MAC is bound over Bluetooth; see the hot-swap check below). It is
+    // handed back once no USB connection is left -- see bt-suppression.h for
+    // why not earlier.
+    BtSuppression suppressed_bt({
+        [] { return !find_usb_ds4_hid_id().empty(); },
+        [](const std::string& hid_id) {
+            std::error_code ec;
+            return fs::exists("/sys/bus/hid/devices/" + hid_id, ec);
+        },
+        [](const std::string& hid_id) {
+            write_hid_driver_sysfs("bind", hid_id);
+            std::error_code ec;
+            const bool bound = fs::exists("/sys/bus/hid/devices/" + hid_id + "/driver", ec);
+            if (bound) {
+                std::cout << "Bluetooth connection " << hid_id << " handed back to its driver." << std::endl;
+            }
+            return bound;
+        },
+    });
+    auto last_bt_suppression_poll = std::chrono::steady_clock::now();
 
     bool device_open = false;
 
@@ -2964,6 +2962,14 @@ int main(int argc, char* argv[]) {
                                     controller_type_hides_physical(target_type) &&
                                     !ignore_physical && !standalone_virtual);
 
+        // A suppressed Bluetooth connection whose USB counterpart has gone
+        // while nothing of ours was connected to notice (see BtSuppression).
+        if (suppressed_bt.pending() &&
+            std::chrono::steady_clock::now() - last_bt_suppression_poll >= std::chrono::seconds(1)) {
+            last_bt_suppression_poll = std::chrono::steady_clock::now();
+            suppressed_bt.poll();
+        }
+
         // If physical controller disconnected, scan & setup. Skipped while a
         // standalone virtual controller (created via `ds4-ctl virtual`, no
         // physical hardware involved) is active, so plugging in real
@@ -3219,7 +3225,7 @@ int main(int argc, char* argv[]) {
                         }
                         write_hid_driver_sysfs("unbind", bt_hid_id);
                         write_hid_driver_sysfs("bind", usb_hid_id);
-                        suppressed_bt_hid_id = bt_hid_id;
+                        suppressed_bt.suppress(bt_hid_id);
                         // For the legacy method (the g_phy_is_bpf_transport
                         // branch above already released everything for the
                         // BPF case): don't touch phy_fd/hidden_nodes here,
@@ -3399,7 +3405,7 @@ int main(int argc, char* argv[]) {
                         response += "Physical Auto-Scan Disabled (release-physical): " + std::string(ignore_physical ? "Yes" : "No") + "\n";
                         if (phy_fd >= 0 && !is_bluetooth) {
                             response += "Bluetooth Fallback if USB Disconnects: "
-                                + std::string(!suppressed_bt_hid_id.empty() ? "Yes (will re-bind automatically)" : "Unknown")
+                                + std::string(suppressed_bt.pending() ? "Yes (will re-bind automatically)" : "Unknown")
                                 + "\n";
                         }
                         if (phy_disconnect_pending_destroy) {
@@ -3459,7 +3465,7 @@ int main(int argc, char* argv[]) {
                             release_physical_connection(phy_fd, phy_path, orig_mode, hidden_nodes);
                             phy_fd = -1;
                             phy_name = "";
-                            restore_suppressed_bluetooth();
+                            suppressed_bt.release();
                             phy_disconnect_pending_destroy = false;
                             device_open = false;
                             ignore_physical = true;
@@ -3907,7 +3913,9 @@ int main(int argc, char* argv[]) {
                 phy_fd = -1;
                 phy_name = "";
             }
-            restore_suppressed_bluetooth();
+            // Only if USB is gone too; otherwise the poll below does it once
+            // the cable is pulled.
+            suppressed_bt.release();
 
             // `udevadm trigger` (no args) replays a "change" event for
             // *every* device on the system, which existing comments here
@@ -4006,7 +4014,7 @@ int main(int argc, char* argv[]) {
             phy_name = "";
 
             if (!was_bluetooth) {
-                restore_suppressed_bluetooth();
+                suppressed_bt.release();
             }
 
             // Don't tear the virtual device down yet — clear its input state
@@ -4449,7 +4457,7 @@ int main(int argc, char* argv[]) {
     // After the virtual device is gone (see the player-slot note above), so
     // the pad is handed back to hid-playstation only now.
     reconcile_driver_attachment(false);
-    restore_suppressed_bluetooth();
+    suppressed_bt.restore_now();
     // The release above may have recreated nodes for a device that's
     // already gone; without the main loop left to sweep, this is the last
     // chance to not leave an orphan behind.
