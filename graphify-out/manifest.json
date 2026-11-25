@@ -1,9 +1,9 @@
 {
   ".github/actions/setup-deps/action.yml": {
-    "mtime": 1795478903.6025894,
-    "seen": 1795485245.5632646,
-    "ast_hash": "58ad08fc3f915d71a8bfa1f8724ea9f9",
-    "semantic_hash": "58ad08fc3f915d71a8bfa1f8724ea9f9"
+    "mtime": 1795629267.6038659,
+    "seen": 1795629280.3065195,
+    "ast_hash": "3075ead996e0edf24855e3f70049818a",
+    "semantic_hash": ""
   },
   ".github/workflows/codeql.yml": {
     "mtime": 1795532347.878798,
@@ -24,9 +24,9 @@
     "semantic_hash": ""
   },
   ".github/workflows/tests.yml": {
-    "mtime": 1795532347.8798122,
-    "seen": 1795532751.8970046,
-    "ast_hash": "1b43b7e27299de57f73f690ae06dfc51",
+    "mtime": 1795629267.6038659,
+    "seen": 1795629280.3065495,
+    "ast_hash": "424aabdbc408dcf618c14f96e524b4b0",
     "semantic_hash": ""
   },
   "ds4-ctl-completion.bash": {
@@ -42,9 +42,9 @@
     "semantic_hash": "c3cfd18ae05a94fe79277ca079d5dbfc"
   },
   "src/ctl.cpp": {
-    "mtime": 1795553325.4495068,
-    "seen": 1795554315.0506887,
-    "ast_hash": "7d84c51a8dc703515e1a6e430fc03051",
+    "mtime": 1795629273.7924573,
+    "seen": 1795629280.3066196,
+    "ast_hash": "526d6aba99d29707f39749584137bed8",
     "semantic_hash": ""
   },
   "src/descriptors.h": {
@@ -552,9 +552,9 @@
     "semantic_hash": "2d215fb8a6c72dea9ad8ffd3125053c5"
   },
   "README.md": {
-    "mtime": 1795616140.6631083,
-    "seen": 1795616337.8866677,
-    "ast_hash": "bbc143910099dfad5041965f49459760",
+    "mtime": 1795629267.6048658,
+    "seen": 1795629280.3070028,
+    "ast_hash": "62bf955645d99c9230751f374a2c70dd",
     "semantic_hash": ""
   },
   "docs/how-it-works.md": {
@@ -816,9 +816,21 @@
     "semantic_hash": ""
   },
   "tests/kernel/sdl-rumble.c": {
-    "mtime": 1795615909.9113429,
-    "seen": 1795616337.8863583,
-    "ast_hash": "70f11330b8061ec5031fde9dd87b9eb4",
+    "mtime": 1795619648.5295494,
+    "seen": 1795629280.3068538,
+    "ast_hash": "54724ba005bdb86f03e4e08c13d7b0a3",
+    "semantic_hash": ""
+  },
+  "tests/completion/test_completion.sh": {
+    "mtime": 1795629277.577456,
+    "seen": 1795629280.3067312,
+    "ast_hash": "628614be6af7ec9f698ba3a492a41b36",
+    "semantic_hash": ""
+  },
+  "tests/hardware/rumble-check.py": {
+    "mtime": 1795619803.64173,
+    "seen": 1795629280.30677,
+    "ast_hash": "3c0e2ffcbe62eecc387d0742da6055fe",
     "semantic_hash": ""
   }
 }

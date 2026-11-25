@@ -199,6 +199,7 @@ make test              # unit + component + smoke + integration + hwtest
 make test-unit         # protocol, translation core, parsers   (tests/unit)
 make test-component    # IPC transport against a fake daemon   (tests/component)
 make test-smoke        # built binaries start and reject bad input (tests/smoke)
+make test-completion   # bash/fish/zsh tab-completion of ds4-ctl (tests/completion)
 make test-integration  # real daemon + ds4-ctl on a scratch dir (tests/integration)
 make test-sanitize     # unit suite under ASan + UBSan
 make test-perf         # per-report hot-path time budgets (tests/perf)
