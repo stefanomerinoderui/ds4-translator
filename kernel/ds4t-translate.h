@@ -66,6 +66,27 @@ void ds4t_decode_ds4_battery(u8 status0, int *percent,
 			     enum ds4t_battery_state *state);
 u8 ds4t_encode_dualsense_battery(int percent, enum ds4t_battery_state state);
 
+/* What ds4t_parse_output() found in a report (bit mask). */
+#define DS4T_OUT_RUMBLE		0x1
+#define DS4T_OUT_LED		0x2
+
+/* Rumble and light bar, as a game asks the emulated pad for them. */
+struct ds4t_output {
+	u8 motor_left, motor_right;
+	u8 red, green, blue;
+};
+
+/*
+ * Reads an output report sent to the emulated pad: a DualShock 4's 0x05 (USB)
+ * or 0x11 (Bluetooth layout), a DualSense's 0x02 (USB) or 0x31 (Bluetooth
+ * layout). A game that does not take the pad for a USB one sends the
+ * Bluetooth layout. DualSense rumble counts with either "compatible
+ * vibration" flag (the second is what firmware 2.21 and later use). Fills
+ * only the fields it returns a bit for; 0 for anything else.
+ */
+unsigned int ds4t_parse_output(bool dualsense, const u8 *data, size_t len,
+			       struct ds4t_output *out);
+
 /*
  * The calibration payload (USB layout) out of a pad's feature report: 0x02,
  * 37 bytes, or 0x05, 41 bytes with a CRC. Returns 0, or -1 for a wrong ID,

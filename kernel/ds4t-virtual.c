@@ -220,42 +220,26 @@ static bool ds4t_virt_take_led(struct ds4t_virtual *v)
 static bool ds4t_virt_parse_output(struct ds4t_virtual *v, const u8 *data,
 				   size_t len)
 {
+	struct ds4t_output req = {
+		.motor_left = v->out.motor_left,
+		.motor_right = v->out.motor_right,
+		.red = v->out.red,
+		.green = v->out.green,
+		.blue = v->out.blue,
+	};
 	struct ds4t_out_state next = v->out;
+	unsigned int found;
 
-	if (!len)
-		return false;
-
-	if (v->type == DS4T_VIRTUAL_DS4) {
-		if (data[0] != 0x05 || len < 9)
-			return false;
-		if (data[1] & 0x01) {
-			next.motor_right = data[4];
-			next.motor_left = data[5];
-		}
-		if ((data[1] & 0x02) && ds4t_virt_take_led(v)) {
-			next.red = data[6];
-			next.green = data[7];
-			next.blue = data[8];
-		}
-	} else {
-		if (data[0] != 0x02 || len < 48)
-			return false;
-		if (data[1] & 0x01) {
-			next.motor_right = data[3];
-			next.motor_left = data[4];
-			/*
-			 * With haptics also selected, running both motors lets
-			 * the big one drown out the light one.
-			 */
-			if ((data[1] & 0x02) && next.motor_right &&
-			    next.motor_left)
-				next.motor_left = 0;
-		}
-		if ((data[2] & 0x04) && ds4t_virt_take_led(v)) {
-			next.red = data[45];
-			next.green = data[46];
-			next.blue = data[47];
-		}
+	found = ds4t_parse_output(v->type == DS4T_VIRTUAL_DUALSENSE, data, len,
+				  &req);
+	if (found & DS4T_OUT_RUMBLE) {
+		next.motor_left = req.motor_left;
+		next.motor_right = req.motor_right;
+	}
+	if ((found & DS4T_OUT_LED) && ds4t_virt_take_led(v)) {
+		next.red = req.red;
+		next.green = req.green;
+		next.blue = req.blue;
 	}
 
 	if (!memcmp(&next, &v->out, sizeof(next)))
@@ -377,20 +361,6 @@ static void ds4t_virt_ll_close(struct hid_device *hdev)
 {
 }
 
-static int ds4t_virt_ll_raw_request(struct hid_device *hdev,
-				    unsigned char reportnum, __u8 *buf,
-				    size_t len, unsigned char rtype, int reqtype)
-{
-	struct ds4t_virtual *v = ds4t_virt_of(hdev);
-
-	if (rtype == HID_FEATURE_REPORT && reqtype == HID_REQ_GET_REPORT)
-		return ds4t_virt_feature(v, reportnum, buf, len);
-	/* Everything else is accepted and ignored, as the daemon's uhid does. */
-	if (reqtype == HID_REQ_SET_REPORT)
-		return len;
-	return -EINVAL;
-}
-
 static int ds4t_virt_ll_output_report(struct hid_device *hdev, __u8 *buf,
 				      size_t len)
 {
@@ -404,6 +374,23 @@ static int ds4t_virt_ll_output_report(struct hid_device *hdev, __u8 *buf,
 	if (changed)
 		ds4t_virt_queue_output(v);
 	return len;
+}
+
+static int ds4t_virt_ll_raw_request(struct hid_device *hdev,
+				    unsigned char reportnum, __u8 *buf,
+				    size_t len, unsigned char rtype, int reqtype)
+{
+	struct ds4t_virtual *v = ds4t_virt_of(hdev);
+
+	if (rtype == HID_FEATURE_REPORT && reqtype == HID_REQ_GET_REPORT)
+		return ds4t_virt_feature(v, reportnum, buf, len);
+	/* An output report sent as SET_REPORT is still rumble and LED. */
+	if (rtype == HID_OUTPUT_REPORT && reqtype == HID_REQ_SET_REPORT)
+		return ds4t_virt_ll_output_report(hdev, buf, len);
+	/* Everything else is accepted and ignored, as the daemon's uhid does. */
+	if (reqtype == HID_REQ_SET_REPORT)
+		return len;
+	return -EINVAL;
 }
 
 static const struct hid_ll_driver ds4t_virt_ll_template = {

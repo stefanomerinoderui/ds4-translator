@@ -83,6 +83,22 @@ for type in 1 2; do
     stop_pads
 done
 
+# What a game writes to the emulated pad's hidraw node, USB or Bluetooth
+# layout, has to reach the pad as rumble (strong 0x40 = 64, weak 0x20 = 32).
+for type in 1 2; do
+    for layout in usb bt; do
+        name=$([ "$type" = 1 ] && echo DS4 || echo DualSense)
+        echo "# $name: rumble written to hidraw in the $layout layout"
+        start_pad bt "$MAC_PAD" --fixed 1 --stream 1 || nok "fake pad did not become ready"
+        start_virtual --type "$type" --mac "$MAC_VIRT" --pad-mac "$MAC_PAD" --hidraw-rumble "$layout" --hold 3
+        check "the report was written" wait_virtual "^hidraw rumble ($layout) sent"
+        check "it reaches the pad" bash -c \
+            "for _ in \$(seq 50); do grep -q 'output rnum=11 len=78 crc=ok motor_right=32 motor_left=64' /tmp/fake-pad.$MAC_PAD.log && exit 0; sleep 0.1; done; exit 1"
+        stop_virtual
+        stop_pads
+    done
+done
+
 echo "# a virtual controller with no pad moves on injected input"
 start_virtual --type 1 --mac "$MAC_VIRT" --inject --hold 2
 check "created without a pad" wait_virtual '^created following=-'

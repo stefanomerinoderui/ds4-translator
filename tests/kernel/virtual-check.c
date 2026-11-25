@@ -6,7 +6,7 @@
 // script to check.
 //
 //   virtual-check --type 1|2 --mac XX:.. [--pad-mac XX:..] [--inject]
-//                 [--rumble] [--hold SECONDS]
+//                 [--rumble] [--hidraw-rumble usb|bt] [--hold SECONDS]
 //   virtual-check --observe --name NAME [--hold SECONDS] [--watch]
 //
 // With --observe it touches nothing: it only reads the state of the gamepad
@@ -14,6 +14,8 @@
 // --watch it prints every change of the left stick's X ("abs_x=N") instead of
 // sampling the state, so a value that lasts a single report is seen too.
 //
+// --hidraw-rumble writes a rumble report straight to the virtual pad's hidraw
+// node, the way Steam and SDL do, in the USB or the Bluetooth layout.
 // --pad-mac names the fake pad to follow (its HID id is found through sysfs);
 // without it nothing is followed and --inject sets the input instead. Dies, and
 // with it the virtual controller, on SIGTERM or when --hold runs out.
@@ -166,6 +168,52 @@ static int rumble(int fd)
 	return write(fd, &play, sizeof(play)) == sizeof(play) ? 0 : -1;
 }
 
+// The hidraw node of the HID device whose uniq is mac.
+static int open_hidraw_by_mac(const char *mac)
+{
+	char hid_id[64], path[512];
+	DIR *dir;
+	struct dirent *de;
+	int fd = -1;
+
+	if (hid_id_by_mac(mac, hid_id, sizeof(hid_id)))
+		return -1;
+	snprintf(path, sizeof(path), "/sys/bus/hid/devices/%s/hidraw", hid_id);
+	dir = opendir(path);
+	while (dir && (de = readdir(dir)) && fd < 0) {
+		if (strncmp(de->d_name, "hidraw", 6))
+			continue;
+		snprintf(path, sizeof(path), "/dev/%s", de->d_name);
+		fd = open(path, O_RDWR);
+	}
+	if (dir)
+		closedir(dir);
+	return fd;
+}
+
+// A rumble report for the emulated pad (strong motor 0x40, weak 0x20) in the
+// layout a game uses for a USB or a Bluetooth pad.
+static ssize_t hidraw_rumble(int fd, int type, int bluetooth)
+{
+	unsigned char r[78] = { 0 };
+	size_t c = bluetooth ? 3 : 1, len;
+
+	if (type == DS4T_VIRTUAL_DS4) {
+		r[0] = bluetooth ? 0x11 : 0x05;
+		r[c] = 0x01;		// motors valid
+		r[c + 3] = 0x20;	// right, weak
+		r[c + 4] = 0x40;	// left, strong
+		len = bluetooth ? 78 : 32;
+	} else {
+		r[0] = bluetooth ? 0x31 : 0x02;
+		r[c + 38] = 0x04;	// "compatible vibration 2", newer firmware
+		r[c + 2] = 0x20;
+		r[c + 3] = 0x40;
+		len = bluetooth ? 78 : 48;
+	}
+	return write(fd, r, len);
+}
+
 // A DualShock 4 input report with a known state, for DS4T_IOC_CTL_INJECT.
 static void fill_injected(struct ds4t_feature *report)
 {
@@ -187,6 +235,7 @@ int main(int argc, char **argv)
 	struct ds4t_mac ignore;
 	const char *mac = NULL, *pad_mac = NULL;
 	int type = 0, inject = 0, do_rumble = 0, observe = 0, watch = 0, hold = 3, fd, ev;
+	const char *hidraw_layout = NULL;
 	char path[64];
 
 	for (int i = 1; i < argc; i++) {
@@ -200,6 +249,8 @@ int main(int argc, char **argv)
 			hold = atoi(argv[++i]);
 		else if (!strcmp(argv[i], "--name") && i + 1 < argc)
 			g_event_name = argv[++i];
+		else if (!strcmp(argv[i], "--hidraw-rumble") && i + 1 < argc)
+			hidraw_layout = argv[++i];
 		else if (!strcmp(argv[i], "--watch"))
 			watch = 1;
 		else if (!strcmp(argv[i], "--observe"))
@@ -283,6 +334,16 @@ int main(int argc, char **argv)
 		printf("rumble %s\n", rumble(ev) ? "failed" : "sent");
 		fflush(stdout);
 	}
+	if (hidraw_layout) {
+		int raw = open_hidraw_by_mac(mac);
+
+		printf("hidraw rumble (%s) %s\n", hidraw_layout,
+		       raw >= 0 && hidraw_rumble(raw, type, !strcmp(hidraw_layout, "bt")) > 0 ?
+		       "sent" : "failed");
+		fflush(stdout);
+		if (raw >= 0)
+			close(raw);
+	}
 
 	for (int i = 0; i < hold * 10 && !g_stop; i++)
 		sleep_ms(100);
@@ -292,7 +353,7 @@ int main(int argc, char **argv)
 
 usage:
 	fprintf(stderr, "usage: virtual-check --type 1|2 --mac MAC [--pad-mac MAC] "
-			"[--inject] [--rumble] [--hold S]\n"
+			"[--inject] [--rumble] [--hidraw-rumble usb|bt] [--hold S]\n"
 			"       virtual-check --observe --name NAME [--hold S] [--watch]\n");
 	return 2;
 }

@@ -266,3 +266,81 @@ int ds4t_calibration_to_usb_layout(const u8 *report, size_t len,
 		       report + 1 + gyro_words + bt_word_for_usb_word[i] * 2, 2);
 	return 0;
 }
+
+/*
+ * Output report layouts (hid-playstation's dualshock4_output_report_* and
+ * dualsense_output_report_*): the common block starts right after the report
+ * ID on USB, three bytes in on Bluetooth.
+ */
+#define DS4_OUT_FLAG0		0	/* bit 0 motors, bit 1 LED */
+#define DS4_OUT_MOTOR_RIGHT	3
+#define DS4_OUT_MOTOR_LEFT	4
+#define DS4_OUT_RGB		5
+#define DS4_OUT_COMMON_SIZE	8
+
+#define DS5_OUT_FLAG0		0	/* bit 0 vibration, bit 1 haptics select */
+#define DS5_OUT_FLAG1		1	/* bit 2 light bar */
+#define DS5_OUT_MOTOR_RIGHT	2
+#define DS5_OUT_MOTOR_LEFT	3
+#define DS5_OUT_FLAG2		38	/* bit 2 vibration, newer firmware */
+#define DS5_OUT_RGB		44
+#define DS5_OUT_COMMON_SIZE	47
+
+static size_t output_common_offset(bool dualsense, u8 report_id)
+{
+	if (dualsense)
+		return report_id == 0x02 ? 1 : report_id == 0x31 ? 3 : 0;
+	return report_id == 0x05 ? 1 : report_id == 0x11 ? 3 : 0;
+}
+
+unsigned int ds4t_parse_output(bool dualsense, const u8 *data, size_t len,
+			       struct ds4t_output *out)
+{
+	const size_t common_size = dualsense ? DS5_OUT_COMMON_SIZE
+					     : DS4_OUT_COMMON_SIZE;
+	unsigned int found = 0;
+	size_t base;
+	const u8 *c;
+
+	if (!len)
+		return 0;
+	base = output_common_offset(dualsense, data[0]);
+	if (!base || len < base + common_size)
+		return 0;
+	c = data + base;
+
+	if (!dualsense) {
+		if (c[DS4_OUT_FLAG0] & 0x01) {
+			out->motor_right = c[DS4_OUT_MOTOR_RIGHT];
+			out->motor_left = c[DS4_OUT_MOTOR_LEFT];
+			found |= DS4T_OUT_RUMBLE;
+		}
+		if (c[DS4_OUT_FLAG0] & 0x02) {
+			out->red = c[DS4_OUT_RGB];
+			out->green = c[DS4_OUT_RGB + 1];
+			out->blue = c[DS4_OUT_RGB + 2];
+			found |= DS4T_OUT_LED;
+		}
+		return found;
+	}
+
+	if ((c[DS5_OUT_FLAG0] & 0x01) || (c[DS5_OUT_FLAG2] & 0x04)) {
+		out->motor_right = c[DS5_OUT_MOTOR_RIGHT];
+		out->motor_left = c[DS5_OUT_MOTOR_LEFT];
+		/*
+		 * With haptics also selected, running both motors lets the big
+		 * one drown out the light one (as the daemon's uhid path does).
+		 */
+		if ((c[DS5_OUT_FLAG0] & 0x02) && out->motor_right &&
+		    out->motor_left)
+			out->motor_left = 0;
+		found |= DS4T_OUT_RUMBLE;
+	}
+	if (c[DS5_OUT_FLAG1] & 0x04) {
+		out->red = c[DS5_OUT_RGB];
+		out->green = c[DS5_OUT_RGB + 1];
+		out->blue = c[DS5_OUT_RGB + 2];
+		found |= DS4T_OUT_LED;
+	}
+	return found;
+}

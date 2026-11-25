@@ -168,9 +168,9 @@
     "semantic_hash": ""
   },
   "src/udev-spoof.c": {
-    "mtime": 1795532080.5476668,
-    "seen": 1795532751.8971374,
-    "ast_hash": "d00639e46b2a8973690603662613f39e",
+    "mtime": 1795584454.6551423,
+    "seen": 1795584872.1755514,
+    "ast_hash": "6ebe5a5fbfc4d0f74b7fb09dd175d1e1",
     "semantic_hash": ""
   },
   "src/usb-hid-transport.cpp": {
@@ -192,10 +192,10 @@
     "semantic_hash": "de686f2f98ce97d7ca3b0887f5651f7f"
   },
   "tests/component/test_udev_spoof.cpp": {
-    "mtime": 1795478903.6089535,
-    "seen": 1795485245.563388,
-    "ast_hash": "84a3483b60bfa70c4a5ade72ddbf1718",
-    "semantic_hash": "84a3483b60bfa70c4a5ade72ddbf1718"
+    "mtime": 1795584471.1547406,
+    "seen": 1795584872.1755724,
+    "ast_hash": "1dc15e7329a9a3a34cde5b33bd0c3fb7",
+    "semantic_hash": ""
   },
   "tests/component/test_usb_transport.cpp": {
     "mtime": 1795478903.6089535,
@@ -738,15 +738,15 @@
     "semantic_hash": ""
   },
   "kernel/ds4t-translate.c": {
-    "mtime": 1795549193.8332453,
-    "seen": 1795554315.0506704,
-    "ast_hash": "3a1361e70f19ce6153d577b7953e7378",
+    "mtime": 1795584424.4164896,
+    "seen": 1795584872.1754284,
+    "ast_hash": "382639b34a239ca0bb2b8a5feb19555e",
     "semantic_hash": ""
   },
   "kernel/ds4t-translate.h": {
-    "mtime": 1795549601.4756265,
-    "seen": 1795554315.050674,
-    "ast_hash": "dd8910b25047c2c6ce4200c9608d3d0b",
+    "mtime": 1795584424.4160051,
+    "seen": 1795584872.1754327,
+    "ast_hash": "14d317ed554a83a49835eb44112e3e12",
     "semantic_hash": ""
   },
   "kernel/ds4t-userspace.h": {
@@ -756,9 +756,9 @@
     "semantic_hash": ""
   },
   "kernel/ds4t-virtual.c": {
-    "mtime": 1795582427.2721782,
-    "seen": 1795582638.0043821,
-    "ast_hash": "fb94cce0db52fce89907e9ad1da126f1",
+    "mtime": 1795584427.7635539,
+    "seen": 1795584872.1754408,
+    "ast_hash": "1e119cebc00bd823b37eeaddb5076a05",
     "semantic_hash": ""
   },
   "tests/kernel/lib.sh": {
@@ -774,15 +774,15 @@
     "semantic_hash": ""
   },
   "tests/kernel/test-virtual.sh": {
-    "mtime": 1795580945.3159893,
-    "seen": 1795581000.9561293,
-    "ast_hash": "7808a65157d218e12b654aa4cb00030b",
+    "mtime": 1795584576.7395818,
+    "seen": 1795584872.175662,
+    "ast_hash": "e729e2bcb73fa21a197411264b59ae60",
     "semantic_hash": ""
   },
   "tests/kernel/virtual-check.c": {
-    "mtime": 1795582443.2417219,
-    "seen": 1795582638.0044575,
-    "ast_hash": "a2eea4b6f24badb211cc1cd5d7f779f0",
+    "mtime": 1795584576.7394059,
+    "seen": 1795584872.17567,
+    "ast_hash": "e39b43f04fc153754a797162b10b4ceb",
     "semantic_hash": ""
   },
   "tests/unit/test_kernel_translate.cpp": {
@@ -807,6 +807,12 @@
     "mtime": 1795580018.8274584,
     "seen": 1795581000.9561493,
     "ast_hash": "762247555c8b2fe462595d1a230aa4ff",
+    "semantic_hash": ""
+  },
+  "tests/unit/test_output_parse.cpp": {
+    "mtime": 1795584471.1597028,
+    "seen": 1795584872.1757438,
+    "ast_hash": "19f98a94ef8d28d772605955d0e80aef",
     "semantic_hash": ""
   }
 }

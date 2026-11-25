@@ -47,7 +47,11 @@ static int is_virtual_sony_controller(struct udev_device *dev) {
     const char *pid = real_get_property(clean_dev, "ID_MODEL_ID");
     const char *devpath = real_get_property(clean_dev, "DEVPATH");
     
-    int is_virtual = devpath && strstr(devpath, "/devices/virtual/misc/uhid/") != NULL;
+    // The uhid backend's pad, or the kernel backend's (it hangs off the
+    // hid-ds4-translator module's control node). Both have bus 0003 with no
+    // USB device above them, which is what this shim papers over.
+    int is_virtual = devpath && (strstr(devpath, "/devices/virtual/misc/uhid/") != NULL ||
+                                 strstr(devpath, "/devices/virtual/misc/ds4t-control/") != NULL);
     
     if (is_virtual && vid && !strcmp(vid, "054c")) {
         if (pid && (!strcmp(pid, "05c4") || !strcmp(pid, "0ce6"))) {
