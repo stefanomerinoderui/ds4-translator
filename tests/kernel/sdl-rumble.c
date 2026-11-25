@@ -5,7 +5,10 @@
 // what SDL made of the device, for the VM tests to compare with the fake pad's
 // log of what arrived.
 //
-//   sdl-rumble hidapi|evdev VENDOR-ID-HEX
+//   sdl-rumble hidapi|evdev VENDOR-ID-HEX [defaults]
+//
+// "defaults" leaves out the hints that force rumble on for pads SDL does not
+// take for genuine ones, which is how a game (or Steam) runs it.
 
 #include <SDL2/SDL.h>
 #include <stdio.h>
@@ -16,12 +19,14 @@ int main(int argc, char **argv)
 {
 	int hidapi, found = -1;
 
-	if (argc != 3)
+	if (argc != 3 && argc != 4)
 		return 2;
 	hidapi = !strcmp(argv[1], "hidapi");
 	SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI, hidapi ? "1" : "0");
-	SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS4_RUMBLE, "1");
-	SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS5_RUMBLE, "1");
+	if (argc == 3) {
+		SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS4_RUMBLE, "1");
+		SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS5_RUMBLE, "1");
+	}
 	SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
 	if (SDL_Init(SDL_INIT_JOYSTICK | SDL_INIT_EVENTS)) {
 		printf("sdl init failed: %s\n", SDL_GetError());
