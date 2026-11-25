@@ -4,8 +4,6 @@
   "3": "Translation unit tests",
   "4": "DS4 report decoding & mapping",
   "5": "Release workflow (CI)",
-  "6": "hwtest runtime (process/broker)",
-  "7": "Uevent filter tests",
   "8": "Emulation backends",
   "11": "Hardware verify.sh",
   "12": "DaemonController (UI)",

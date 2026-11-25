@@ -440,6 +440,11 @@ test-security-static: all
 test-smoke: all
 	tests/smoke/smoke.sh $(BUILD_DIR)
 
+# bash/fish/zsh completion scripts against the built ds4-ctl; a shell that is
+# not installed is skipped.
+test-completion: all
+	tests/completion/test_completion.sh $(BUILD_DIR)
+
 # Real daemon + ds4-ctl against a scratch dir (see paths.h); skips itself if a
 # production daemon is running on this machine.
 test-integration: all
@@ -451,7 +456,7 @@ test-integration: all
 test-hwtest:
 	python3 -m unittest discover -s tests/hwtest
 
-test: test-unit test-component test-smoke test-integration test-security-static test-hwtest
+test: test-unit test-component test-smoke test-completion test-integration test-security-static test-hwtest
 
 # Mirrors install: removes the UI too. uninstall-cli leaves it in place.
 uninstall: uninstall-ui uninstall-cli
@@ -478,4 +483,4 @@ uninstall-cli:
 
 .PHONY: all debug clean install install-cli stage-cli uninstall uninstall-cli \
         ui install-ui stage-ui uninstall-ui install-ui-user uninstall-ui-user arch-pkg arch-repo \
-        test test-unit test-perf test-fuzz test-component test-smoke test-integration test-sanitize test-tsan test-security-static test-hwtest
+        test test-unit test-perf test-fuzz test-component test-smoke test-completion test-integration test-sanitize test-tsan test-security-static test-hwtest
