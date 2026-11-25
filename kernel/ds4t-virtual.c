@@ -530,14 +530,21 @@ int ds4t_virtual_link(const char *hid_id)
 		}
 	}
 
-	old = ds4t_virt_unfollow(v);
-	if (old)
-		ds4t_pad_put(old);
 	if (pad) {
+		/*
+		 * Straight from one pad to the other (a Bluetooth/USB switch):
+		 * the next report comes from the new pad, with no neutral input
+		 * in between for a game to see as every button let go.
+		 */
 		spin_lock_irq(&v->lock);
+		old = v->src;
 		WRITE_ONCE(v->src, pad);	/* the reference moves to v */
 		spin_unlock_irq(&v->lock);
+	} else {
+		old = ds4t_virt_unfollow(v);
 	}
+	if (old)
+		ds4t_pad_put(old);
 out:
 	mutex_unlock(&ds4t_virt_mutex);
 	return ret;

@@ -12,7 +12,6 @@
   "16": "libudev stub tests",
   "18": "HID-BPF programs",
   "19": "USB HID transport (libusb)",
-  "21": "Report building & IPC client",
   "23": "Bluetooth output pacer",
   "24": "AppController (UI)"
 }

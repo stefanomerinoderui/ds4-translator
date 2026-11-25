@@ -1322,8 +1322,11 @@ static void release_physical_connection(int fd, const std::string& path, mode_t 
     // The next pad has its own calibration (or none, on another method).
     set_physical_calibration(nullptr);
     g_phy_is_driver_transport = false;
+    // The module's virtual pad keeps following the pad until the daemon links
+    // it to another one, or the pad leaves the module (unplugged, or handed
+    // back on detach), which unlinks it there. Unlinking here instead would
+    // show neutral input in the middle of a Bluetooth/USB switch.
     g_phy_hid_id.clear();
-    kernel_link_virtual();
 
     // Before fd is closed: a Bluetooth rumble/LED report may still be
     // queued for it, and the pacer's flush thread must not write to a
@@ -3068,6 +3071,12 @@ int main(int argc, char* argv[]) {
                 if (phy_fd < 0) {
                     std::cerr << "Failed to open physical controller: " << strerror(errno) << std::endl;
                     phy_fd = -1;
+                    // A switch that skipped the neutral report (see the USB
+                    // upgrade below) must not leave buttons held down.
+                    if (phy_disconnect_pending_destroy && controller_type_emulates(target_type) &&
+                        vdev_configured()) {
+                        emit_neutral_report(target_type);
+                    }
                     last_open_failure_id = phy_name;
                     last_open_failure_time = std::chrono::steady_clock::now();
                     phy_name = "";
@@ -3177,14 +3186,18 @@ int main(int argc, char* argv[]) {
                         phy_name = "";
                         // Same as the HID-BPF upgrade below: keep the virtual
                         // device for the reconnect instead of recreating it.
+                        // No neutral report: the USB node is already there and
+                        // is opened right away, so the game never sees the
+                        // buttons let go (it does if that open fails, below).
                         if (controller_type_emulates(target_type) && vdev_configured()) {
-                            emit_neutral_report(target_type);
                             phy_disconnect_pending_destroy = true;
                             phy_disconnect_time = std::chrono::steady_clock::now();
                         }
                         // The reconnect at the top of the loop opens this one,
-                        // not whichever pad the bus scan happens to list first.
+                        // not whichever pad the bus scan happens to list first
+                        // -- now, rather than after the next poll() timeout.
                         g_pending_unbind_hid_id = usb_hid_id;
+                        continue;
                     }
                 } else if (!usb_hid_id.empty()) {
                     // Under the BPF transport, phy_name already *is* the

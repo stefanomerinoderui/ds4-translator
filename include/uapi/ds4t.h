@@ -148,7 +148,8 @@ struct ds4t_virtual_cfg {
  * Makes the virtual controller follow another claimed pad, or none (empty
  * hid_id), e.g. when a pad is plugged in or unplugged while it exists. -ENODEV
  * if hid_id names no claimed pad or there is no virtual controller. The pad it
- * followed before is released (the virtual pad shows neutral input).
+ * followed before is released; with no new pad the virtual pad shows neutral
+ * input, while a switch to another pad goes straight to its reports.
  */
 #define DS4T_IOC_CTL_LINK_VIRTUAL _IOW(DS4T_IOC_MAGIC, 0x16, struct ds4t_link)
 

@@ -7,10 +7,12 @@
 //
 //   virtual-check --type 1|2 --mac XX:.. [--pad-mac XX:..] [--inject]
 //                 [--rumble] [--hold SECONDS]
-//   virtual-check --observe --name NAME [--hold SECONDS]
+//   virtual-check --observe --name NAME [--hold SECONDS] [--watch]
 //
 // With --observe it touches nothing: it only reads the state of the gamepad
-// called NAME (a virtual pad someone else made, such as the daemon).
+// called NAME (a virtual pad someone else made, such as the daemon). With
+// --watch it prints every change of the left stick's X ("abs_x=N") instead of
+// sampling the state, so a value that lasts a single report is seen too.
 //
 // --pad-mac names the fake pad to follow (its HID id is found through sysfs);
 // without it nothing is followed and --inject sets the input instead. Dies, and
@@ -129,6 +131,29 @@ static void print_state(int fd, const char *tag)
 	fflush(stdout);
 }
 
+// Prints each ABS_X event for `seconds`, starting with the current value.
+static int watch_x(int fd, int seconds)
+{
+	struct timespec start, now;
+
+	printf("abs_x=%d\n", abs_value(fd, ABS_X));
+	clock_gettime(CLOCK_MONOTONIC, &start);
+	do {
+		struct pollfd p = { .fd = fd, .events = POLLIN };
+		struct input_event e;
+
+		if (poll(&p, 1, 100) > 0) {
+			while (read(fd, &e, sizeof(e)) == sizeof(e)) {
+				if (e.type == EV_ABS && e.code == ABS_X)
+					printf("abs_x=%d\n", e.value);
+			}
+			fflush(stdout);
+		}
+		clock_gettime(CLOCK_MONOTONIC, &now);
+	} while (!g_stop && now.tv_sec - start.tv_sec < seconds);
+	return 0;
+}
+
 static int rumble(int fd)
 {
 	struct ff_effect effect = { .type = FF_RUMBLE, .id = -1 };
@@ -161,7 +186,7 @@ int main(int argc, char **argv)
 	struct ds4t_virtual_cfg cfg;
 	struct ds4t_mac ignore;
 	const char *mac = NULL, *pad_mac = NULL;
-	int type = 0, inject = 0, do_rumble = 0, observe = 0, hold = 3, fd, ev;
+	int type = 0, inject = 0, do_rumble = 0, observe = 0, watch = 0, hold = 3, fd, ev;
 	char path[64];
 
 	for (int i = 1; i < argc; i++) {
@@ -175,6 +200,8 @@ int main(int argc, char **argv)
 			hold = atoi(argv[++i]);
 		else if (!strcmp(argv[i], "--name") && i + 1 < argc)
 			g_event_name = argv[++i];
+		else if (!strcmp(argv[i], "--watch"))
+			watch = 1;
 		else if (!strcmp(argv[i], "--observe"))
 			observe = 1;
 		else if (!strcmp(argv[i], "--inject"))
@@ -196,6 +223,9 @@ int main(int argc, char **argv)
 			return 1;
 		}
 		printf("evdev found\n");
+		fflush(stdout);
+		if (watch)
+			return watch_x(ev, hold);
 		for (int i = 0; i < hold * 10 && !g_stop; i++) {
 			print_state(ev, "state");
 			sleep_ms(100);
@@ -263,6 +293,6 @@ int main(int argc, char **argv)
 usage:
 	fprintf(stderr, "usage: virtual-check --type 1|2 --mac MAC [--pad-mac MAC] "
 			"[--inject] [--rumble] [--hold S]\n"
-			"       virtual-check --observe --name NAME [--hold S]\n");
+			"       virtual-check --observe --name NAME [--hold S] [--watch]\n");
 	return 2;
 }

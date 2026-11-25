@@ -96,9 +96,16 @@ scenario() { # <title> <backend> [ds4-ctl command...]
     daemon_pid=$!
     check "the emulated pad follows Bluetooth" pad_shows "$DS4_NAME" "$BT_STATE"
 
+    # Every X the game sees across the switch: 16 (Bluetooth), then 17 (USB),
+    # never 128, the centred stick of a neutral report.
+    "$VCHECK" --observe --name "$DS4_NAME" --watch --hold 8 >/tmp/watch.log 2>&1 &
+    local watcher=$!
     start_usb
     check "plugging the cable switches to USB" wait_log 'switching from Bluetooth'
     check "the emulated pad follows USB" pad_shows "$DS4_NAME" "$USB_STATE"
+    wait "$watcher"
+    check "the switch reaches the game" grep -qx 'abs_x=17' /tmp/watch.log
+    check "with no neutral input in between" bash -c "! grep -qx 'abs_x=128' /tmp/watch.log"
 
     local name=$DS4_NAME
     if [ $# -gt 0 ]; then

@@ -81,7 +81,7 @@ jobs:
           mkdir /tmp/checkpatch
           cd /tmp/checkpatch
           for f in checkpatch.pl spelling.txt const_structs.checkpatch; do
-            curl -fsSL -o "$f" "$base/$f"
+            curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 -o "$f" "$base/$f"
           done
           sha256sum -c - <<'SUMS'
           18ea730514bf67d182aa70020e4a178ceafbbe45da5d41bdb358eb057e96dd51  checkpatch.pl

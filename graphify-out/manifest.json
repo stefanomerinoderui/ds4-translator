@@ -144,9 +144,9 @@
     "semantic_hash": "015b45491d31f39a22d30657dcec8fd8"
   },
   "src/main.cpp": {
-    "mtime": 1795580126.6163483,
-    "seen": 1795581000.9560885,
-    "ast_hash": "d7a7386fd498e8b06c7b053e2197b9e5",
+    "mtime": 1795582427.2718098,
+    "seen": 1795582638.0044124,
+    "ast_hash": "0032b60f620e5f677b0406ff3b27b101",
     "semantic_hash": ""
   },
   "src/paths.h": {
@@ -228,9 +228,9 @@
     "semantic_hash": "46067aea3801010bad433fc260f6f217"
   },
   "tests/hardware/verify.sh": {
-    "mtime": 1795532401.992614,
-    "seen": 1795532751.8971832,
-    "ast_hash": "3b5cd823404376288a36604df0901356",
+    "mtime": 1795581882.305041,
+    "seen": 1795582638.0044336,
+    "ast_hash": "ae940e4c7343903c64ea8a9e6abcf364",
     "semantic_hash": ""
   },
   "tests/hwtest/helpers.py": {
@@ -270,9 +270,9 @@
     "semantic_hash": ""
   },
   "tests/integration/test_daemon_security.sh": {
-    "mtime": 1795532401.9934986,
-    "seen": 1795532751.8972125,
-    "ast_hash": "6f0bf5c1a4e85d4d8e5f376235af3b4f",
+    "mtime": 1795581882.3052394,
+    "seen": 1795582638.004443,
+    "ast_hash": "a25b5cdf19ec3f68d8d931db0675c74e",
     "semantic_hash": ""
   },
   "tests/lib/assert.sh": {
@@ -282,10 +282,10 @@
     "semantic_hash": "fe8bf1f146515133178d37b2cc5724aa"
   },
   "tests/lib/daemon.sh": {
-    "mtime": 1795478903.609596,
-    "seen": 1795485245.5634422,
-    "ast_hash": "142d08f7a1aa8ab94fff632ed2e60ccf",
-    "semantic_hash": "142d08f7a1aa8ab94fff632ed2e60ccf"
+    "mtime": 1795581875.5558994,
+    "seen": 1795582638.00446,
+    "ast_hash": "ec1a9ec404824aec2b06c5e9e8e8fdbf",
+    "semantic_hash": ""
   },
   "tests/lib/sockclient.py": {
     "mtime": 1795478903.609596,
@@ -306,9 +306,9 @@
     "semantic_hash": ""
   },
   "tests/security/static_checks.sh": {
-    "mtime": 1795532401.9936733,
-    "seen": 1795532751.8972576,
-    "ast_hash": "166a686281d4713a9b86eca04ca79d7e",
+    "mtime": 1795581882.3053808,
+    "seen": 1795582638.0044656,
+    "ast_hash": "7e6fa7518888baa56c9aa3a0a3fee865",
     "semantic_hash": ""
   },
   "tests/smoke/smoke.sh": {
@@ -654,9 +654,9 @@
     "semantic_hash": ""
   },
   "include/uapi/ds4t.h": {
-    "mtime": 1795553234.3665864,
-    "seen": 1795554315.0506437,
-    "ast_hash": "d58827fe445534ffe299fcf301e08bbf",
+    "mtime": 1795582427.2723136,
+    "seen": 1795582638.0043674,
+    "ast_hash": "a56a3d107dfb529f35f995e500432f5c",
     "semantic_hash": ""
   },
   "kernel/ds4t-chardev.c": {
@@ -714,9 +714,9 @@
     "semantic_hash": ""
   },
   ".github/workflows/kernel.yml": {
-    "mtime": 1795532482.0980203,
-    "seen": 1795532751.8969924,
-    "ast_hash": "e7b6e93ef0e4c59efddf78cf321dd180",
+    "mtime": 1795582572.6132193,
+    "seen": 1795582638.0043561,
+    "ast_hash": "2c4b7c0ad08dc277a7772621e14ea6ed",
     "semantic_hash": ""
   },
   ".github/zizmor.yml": {
@@ -756,9 +756,9 @@
     "semantic_hash": ""
   },
   "kernel/ds4t-virtual.c": {
-    "mtime": 1795553234.3673031,
-    "seen": 1795554315.0506809,
-    "ast_hash": "09bed53155551c77a63597329698613c",
+    "mtime": 1795582427.2721782,
+    "seen": 1795582638.0043821,
+    "ast_hash": "fb94cce0db52fce89907e9ad1da126f1",
     "semantic_hash": ""
   },
   "tests/kernel/lib.sh": {
@@ -780,9 +780,9 @@
     "semantic_hash": ""
   },
   "tests/kernel/virtual-check.c": {
-    "mtime": 1795553586.3698826,
-    "seen": 1795554315.0507898,
-    "ast_hash": "19629d925f16d1cae87e5e2f76b3ef33",
+    "mtime": 1795582443.2417219,
+    "seen": 1795582638.0044575,
+    "ast_hash": "a2eea4b6f24badb211cc1cd5d7f779f0",
     "semantic_hash": ""
   },
   "tests/unit/test_kernel_translate.cpp": {
@@ -798,9 +798,9 @@
     "semantic_hash": ""
   },
   "tests/kernel/test-hotswap.sh": {
-    "mtime": 1795580945.3160946,
-    "seen": 1795581000.9561276,
-    "ast_hash": "1876867f64127e1b2922b56f48a4a643",
+    "mtime": 1795582443.2418814,
+    "seen": 1795582638.0044534,
+    "ast_hash": "33efde2d64392408de0ef286d6eb867e",
     "semantic_hash": ""
   },
   "tests/unit/test_bt_suppression.cpp": {
