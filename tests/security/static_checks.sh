@@ -24,7 +24,7 @@ require "Makefile links PIE" grep -q -- '-pie' Makefile
 require "Makefile requests full RELRO (-z now)" grep -q 'z,relro,-z,now' Makefile
 
 # hardening_status <binary> <PIE|RELRO|BIND_NOW|CANARY|FORTIFY>
-# shellcheck disable=SC2329 # run by name through require, not called directly
+# shellcheck disable=SC2317,SC2329 # run by name through require, not called directly (SC2317 before shellcheck 0.10)
 hardening_status() {
     local bin="$1"
     case "$2" in
@@ -68,7 +68,7 @@ require "no udev rule makes a node world-accessible (MODE 0666)" bash -c "! grep
 
 # ------------------------------------------------------ L7: CI supply chain
 workflow_files=$(ls .github/workflows/*.yml .github/actions/*/action.yml)
-# shellcheck disable=SC2329 # run by name through require, not called directly
+# shellcheck disable=SC2317,SC2329 # run by name through require, not called directly (SC2317 before shellcheck 0.10)
 unpinned() {
     # shellcheck disable=SC2086 # intentional word splitting over the file list
     ! grep -hE '^\s*-?\s*uses:\s+[^.[:space:]]' $workflow_files | grep -vE '@[0-9a-f]{40}(\s|$)' | grep -q .

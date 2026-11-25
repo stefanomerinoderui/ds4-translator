@@ -46,10 +46,22 @@ STRICT_WARNINGS = -Wall -Wextra -Werror -Wshadow -Wformat=2 -Wformat-security \
 # -Wlogical-op: `errno == EAGAIN || errno == EWOULDBLOCK`, the portable idiom).
 # Narrowing and sign changes matter here: report bytes, MAC octets and bit masks
 # are exactly where an implicit conversion silently drops bits.
-PRODUCT_WARNINGS = -Wconversion -Wsign-conversion -Wcast-qual -Wduplicated-cond \
-                   -Wredundant-decls -Wimplicit-fallthrough -Walloca -Wvla \
-                   -Wformat-signedness -Wfloat-equal
-PRODUCT_WARNINGS_CXX = $(PRODUCT_WARNINGS) -Wmissing-declarations -Wextra-semi \
+#
+# -Wduplicated-cond is GCC's alone and -Wformat-signedness only reached Clang in
+# version 19, so those two are kept when the compiler in use accepts them; an
+# unknown -W option is itself an error under -Werror, which broke
+# CXX=clang++ builds on older Clang.
+# $(call warning_if_supported,<compiler>,<c|c++>,<flag>)
+warning_if_supported = $(shell echo 'int main(void){return 0;}' | \
+    $(1) -x $(2) -Werror $(3) -fsyntax-only - >/dev/null 2>&1 && echo $(3))
+OPTIONAL_WARNINGS = -Wduplicated-cond -Wformat-signedness
+PRODUCT_WARNINGS_BASE = -Wconversion -Wsign-conversion -Wcast-qual \
+                   -Wredundant-decls -Wimplicit-fallthrough -Walloca -Wvla -Wfloat-equal
+PRODUCT_WARNINGS := $(PRODUCT_WARNINGS_BASE) \
+                   $(foreach w,$(OPTIONAL_WARNINGS),$(call warning_if_supported,$(CC),c,$(w)))
+PRODUCT_WARNINGS_CXX := $(PRODUCT_WARNINGS_BASE) \
+                   $(foreach w,$(OPTIONAL_WARNINGS),$(call warning_if_supported,$(CXX),c++,$(w))) \
+                   -Wmissing-declarations -Wextra-semi \
                    -Wnon-virtual-dtor -Woverloaded-virtual \
                    -Wzero-as-null-pointer-constant -Wsuggest-override
 
@@ -493,10 +505,11 @@ test-fuzz: $(addprefix $(TEST_BUILD_DIR)/fuzz-,$(FUZZ_TARGETS))
 # client code against data races (the udev shim and daemon are covered by
 # docs/security-findings.md instead).
 TSAN_UNIT_BIN = $(TEST_BUILD_DIR)/unit-tests-tsan
-$(TSAN_UNIT_BIN): $(UNIT_TEST_SRC) tests/component/test_ipc_transport.cpp $(UNIT_LIB_SRC) $(wildcard src/*.h)
+$(TSAN_UNIT_BIN): $(UNIT_TEST_SRC) tests/component/test_ipc_transport.cpp $(UNIT_LIB_SRC) $(KTRANSLATE_SRC) $(wildcard src/*.h)
 	@mkdir -p $(TEST_BUILD_DIR)
-	$(CXX) $(TEST_CXXFLAGS) -fsanitize=thread -o $@ $(UNIT_TEST_SRC) tests/component/test_ipc_transport.cpp \
-	    $(UNIT_LIB_SRC) $(GTEST_LDFLAGS) -lpthread
+	$(CC) -O1 -g $(PRODUCT_WARNINGS) -fsanitize=thread -c -o $(TEST_BUILD_DIR)/ds4t-translate-tsan.o $(KTRANSLATE_SRC)
+	$(CXX) $(TEST_CXXFLAGS) -Ikernel -fsanitize=thread -o $@ $(UNIT_TEST_SRC) tests/component/test_ipc_transport.cpp \
+	    $(UNIT_LIB_SRC) $(TEST_BUILD_DIR)/ds4t-translate-tsan.o $(GTEST_LDFLAGS) -lpthread
 
 test-tsan: $(TSAN_UNIT_BIN) $(USB_TEST_BIN)-tsan
 	$(TSAN_UNIT_BIN) $(GTEST_ARGS)

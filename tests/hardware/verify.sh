@@ -105,7 +105,7 @@ find_virtual_hidraw() {
 }
 
 # physical_pad_hidraw: hidraw nodes of a real (non-uhid) DualShock 4.
-# shellcheck disable=SC2329 # run by name through check/require, not called directly
+# shellcheck disable=SC2317,SC2329 # run by name through check/require, not called directly (SC2317 before shellcheck 0.10)
 physical_pad_hidraw() {
     local uevent
     for uevent in /sys/class/hidraw/hidraw*/device/uevent; do

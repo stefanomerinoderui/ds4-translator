@@ -89,7 +89,8 @@ jobs:
           e7ccfd007cb45570d8a2960b9f711f3e722647585860923aadc27cc291e065e3  const_structs.checkpatch
           SUMS
           cd "$GITHUB_WORKSPACE"
-          make -C kernel check CHECKPATCH=/tmp/checkpatch/checkpatch.pl
+          # curl does not set the execute bit, so run it through perl.
+          make -C kernel check CHECKPATCH="perl /tmp/checkpatch/checkpatch.pl"
 
       - name: sparse (findings are errors)
         run: make -C kernel KDIR="$(ls -d /usr/lib/modules/*lts*/build)" sparse
