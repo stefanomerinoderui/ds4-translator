@@ -421,10 +421,13 @@ access, by design. This is already true of the `unlink` method.
 
 ### Not yet validated, and deliberately not decided
 
-- **The `kernel` backend on real hardware and in games.** Its virtual pad has
-  no USB parent, like `uhid`'s, so Wine/Proton titles that never detected a
-  `uhid` DualShock 4 are expected to behave the same; that is the reason
-  `functionfs` stays the DS4 default and `kernel` stays opt-in. The daemon's
+- **The `kernel` backend in games.** Rumble and input work in a browser
+  (evdev) and in the VM through SDL's HIDAPI and evdev drivers. Its virtual pad
+  has no USB parent, like `uhid`'s, and Satisfactory (the known case) does not
+  detect it as a DualShock 4 -- reported on real hardware -- so `functionfs`
+  stays the DS4 default and `kernel` stays opt-in. Not yet known: whether the
+  DualSense type, which `uhid` never had trouble with, is detected, and why
+  Rocket League gets no rumble from the DS4. The daemon's
   `ds4-ctl led`/`identify` write to the physical pad directly and are
   overwritten by the module's next output report, which it builds from the
   game's own rumble and LED state.

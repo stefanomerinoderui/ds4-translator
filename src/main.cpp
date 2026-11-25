@@ -3576,6 +3576,10 @@ int main(int argc, char* argv[]) {
                                 pending_backend_change = want_backend;
                                 backend_change_requested = true;
                                 response = "OK: Changing DS4 backend to " + std::string(backend_type_name(want_backend)) + "...";
+                                if (want_backend != BACKEND_FUNCTIONFS) {
+                                    response += "\nNote: some Wine/Proton games never detect a DS4 on this backend "
+                                                "(no real USB enumeration); functionfs is the one that does.";
+                                }
                             } else {
                                 response = "OK: DS4 backend set to " + std::string(backend_type_name(want_backend)) +
                                             " (applies next time emulation type is switched to ds4)";

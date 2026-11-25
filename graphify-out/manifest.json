@@ -144,9 +144,9 @@
     "semantic_hash": "015b45491d31f39a22d30657dcec8fd8"
   },
   "src/main.cpp": {
-    "mtime": 1795582427.2718098,
-    "seen": 1795582638.0044124,
-    "ast_hash": "0032b60f620e5f677b0406ff3b27b101",
+    "mtime": 1795616140.6624703,
+    "seen": 1795616337.886233,
+    "ast_hash": "9c39b5ed8e5d81423a091e34ef2e969d",
     "semantic_hash": ""
   },
   "src/paths.h": {
@@ -552,9 +552,9 @@
     "semantic_hash": "2d215fb8a6c72dea9ad8ffd3125053c5"
   },
   "README.md": {
-    "mtime": 1795554136.1766307,
-    "seen": 1795554315.0508556,
-    "ast_hash": "d597fc226ff0ab12514548b0544863e6",
+    "mtime": 1795616140.6631083,
+    "seen": 1795616337.8866677,
+    "ast_hash": "bbc143910099dfad5041965f49459760",
     "semantic_hash": ""
   },
   "docs/how-it-works.md": {
@@ -564,9 +564,9 @@
     "semantic_hash": ""
   },
   "docs/kernel-driver.md": {
-    "mtime": 1795554136.176249,
-    "seen": 1795554315.0508585,
-    "ast_hash": "aa4e46042d911df5b5f7c7662e8e5a61",
+    "mtime": 1795616140.6634285,
+    "seen": 1795616337.8866796,
+    "ast_hash": "de876ae2f76705e97497a921b719e330",
     "semantic_hash": ""
   },
   "docs/security-findings.md": {
@@ -630,9 +630,9 @@
     "semantic_hash": ""
   },
   "tests/kernel/run-vm.sh": {
-    "mtime": 1795580170.2598896,
-    "seen": 1795581000.9561253,
-    "ast_hash": "ccdf7acfda16afc637409e865654ccec",
+    "mtime": 1795615996.5124285,
+    "seen": 1795616337.8863528,
+    "ast_hash": "d5f259742f42093972a11c1170750e32",
     "semantic_hash": ""
   },
   "tests/kernel/test-binder.sh": {
@@ -774,9 +774,9 @@
     "semantic_hash": ""
   },
   "tests/kernel/test-virtual.sh": {
-    "mtime": 1795584576.7395818,
-    "seen": 1795584872.175662,
-    "ast_hash": "e729e2bcb73fa21a197411264b59ae60",
+    "mtime": 1795615996.5131865,
+    "seen": 1795616337.8863733,
+    "ast_hash": "b8a7137eb03d296ba0889df49293363a",
     "semantic_hash": ""
   },
   "tests/kernel/virtual-check.c": {
@@ -813,6 +813,12 @@
     "mtime": 1795584471.1597028,
     "seen": 1795584872.1757438,
     "ast_hash": "19f98a94ef8d28d772605955d0e80aef",
+    "semantic_hash": ""
+  },
+  "tests/kernel/sdl-rumble.c": {
+    "mtime": 1795615909.9113429,
+    "seen": 1795616337.8863583,
+    "ast_hash": "70f11330b8061ec5031fde9dd87b9eb4",
     "semantic_hash": ""
   }
 }

@@ -32,6 +32,12 @@ make -C "$ROOT" build/ds4-translator build/ds4-ctl >/dev/null
 gcc -Wall -Wextra -Werror -O2 -o "$BUILD/fake-pad" "$HERE/fake-pad.c"
 gcc -Wall -Wextra -Werror -O2 -o "$BUILD/pad-client" "$HERE/pad-client.c"
 gcc -Wall -Wextra -Werror -O2 -o "$BUILD/virtual-check" "$HERE/virtual-check.c"
+# Optional: SDL's view of the emulated pad (what most games are built on).
+rm -f "$BUILD/sdl-rumble"
+if pkg-config --exists sdl2 2>/dev/null; then
+    # shellcheck disable=SC2046 # flags, one per word
+    gcc -Wall -Wextra -Werror -O2 -o "$BUILD/sdl-rumble" "$HERE/sdl-rumble.c" $(pkg-config --cflags --libs sdl2)
+fi
 g++ -std=c++17 -Wall -Wextra -Werror -O2 -I"$ROOT/src" -o "$BUILD/transport-check" \
     "$HERE/transport-check.cpp" "$ROOT/src/driver-transport.cpp"
 

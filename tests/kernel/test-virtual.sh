@@ -99,6 +99,32 @@ for type in 1 2; do
     done
 done
 
+# SDL, which most games sit on, through its HIDAPI driver (hidraw) and its evdev
+# one: it must find the emulated pad as the Sony pad it is, and a rumble it
+# plays must reach the pad.
+SDL_RUMBLE="$(dirname "$VCHECK")/sdl-rumble"
+if [ -x "$SDL_RUMBLE" ]; then
+    for type in 1 2; do
+        for mode in hidapi evdev; do
+            name=$([ "$type" = 1 ] && echo DS4 || echo DualSense)
+            echo "# $name through SDL's $mode driver"
+            start_pad bt "$MAC_PAD" --fixed 1 --stream 1 || nok "fake pad did not become ready"
+            start_virtual --type "$type" --mac "$MAC_VIRT" --pad-mac "$MAC_PAD" --hold 12
+            wait_virtual '^evdev found'
+            before=$(grep -c '^output' "/tmp/fake-pad.$MAC_PAD.log")
+            "$SDL_RUMBLE" "$mode" 054c >/tmp/sdl.log 2>&1
+            check "SDL finds and opens it as a Sony pad" grep -q "vendor=054c product=$([ "$type" = 1 ] && echo 05c4 || echo 0ce6)" /tmp/sdl.log
+            check "SDL accepts the rumble" grep -q '^sdl rumble: accepted' /tmp/sdl.log
+            check "it reaches the pad" bash -c \
+                "[ \$(grep -c '^output.*motor_right=[1-9]\|^output.*motor_left=[1-9]' /tmp/fake-pad.$MAC_PAD.log) -gt 0 ] && [ \$(grep -c '^output' /tmp/fake-pad.$MAC_PAD.log) -gt $before ]"
+            stop_virtual
+            stop_pads
+        done
+    done
+else
+    echo "# SDL checks skipped: no SDL2 development files when the tools were built"
+fi
+
 echo "# a virtual controller with no pad moves on injected input"
 start_virtual --type 1 --mac "$MAC_VIRT" --inject --hold 2
 check "created without a pad" wait_virtual '^created following=-'
