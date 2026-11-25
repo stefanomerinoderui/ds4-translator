@@ -645,7 +645,7 @@ static void load_physical_calibration(int pad_fd) {
     if (driver_transport_get_calibration(pad_fd, report) &&
         ds4_calibration_to_usb_layout(report.data(), report.size(), cal)) {
         set_physical_calibration(cal);
-        std::cout << "driver: serving the physical pad's IMU calibration to the emulated DS4." << std::endl;
+        std::cout << "driver: read the physical pad's IMU calibration (served by an emulated DS4)." << std::endl;
     } else {
         set_physical_calibration(nullptr);
     }
@@ -2529,12 +2529,17 @@ int main(int argc, char* argv[]) {
 
     g_hide_method = read_hide_method_config(HIDE_METHOD_UNBIND);
     if (hide_method_is_unbind_family(g_hide_method)) {
-        std::cout << "Using full-unbind hide method (USB: real transport via libusb; "
-                      "Bluetooth: real transport via HID-BPF"
-                  << (g_hide_method == HIDE_METHOD_UNLINK
-                          ? ", with its /dev nodes unlinked outright"
-                          : "")
-                  << " -- see set-hide-method)." << std::endl;
+        if (g_hide_method == HIDE_METHOD_DRIVER) {
+            std::cout << "Using driver hide method (the hid-ds4-translator module claims the pad; "
+                         "falls back to full-unbind without it -- see set-hide-method)." << std::endl;
+        } else {
+            std::cout << "Using full-unbind hide method (USB: real transport via libusb; "
+                          "Bluetooth: real transport via HID-BPF"
+                      << (g_hide_method == HIDE_METHOD_UNLINK
+                              ? ", with its /dev nodes unlinked outright"
+                              : "")
+                      << " -- see set-hide-method)." << std::endl;
+        }
         g_hid_uevent_fd = hid_uevent_monitor_open();
         if (g_hid_uevent_fd < 0) {
             std::cerr << "hid-unbind: failed to open HID-bus uevent monitor; "
@@ -3030,7 +3035,7 @@ int main(int argc, char* argv[]) {
             if (!name.empty()) {
                 std::cout << "Found physical DualShock 4: "
                           << (via_unbind ? name : ("/dev/" + name))
-                          << " (Connection: " << (via_unbind ? (via_unbind_is_bt ? "Bluetooth, unbind method" : "USB, unbind method") : (bt ? "Bluetooth" : "USB")) << ")" << std::endl;
+                          << " (Connection: " << (via_unbind ? (via_unbind_is_bt ? "Bluetooth, HID bus" : "USB, HID bus") : (bt ? "Bluetooth" : "USB")) << ")" << std::endl;
 
                 phy_name = name;
                 is_bluetooth = via_unbind ? via_unbind_is_bt : bt;
