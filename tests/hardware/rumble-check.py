@@ -24,6 +24,11 @@ EVIOCSFF = 0x40304580  # _IOW('E', 0x80, struct ff_effect) on 64-bit
 EVIOCRMFF = 0x40044581  # _IOW('E', 0x81, int)
 
 
+def read_text(path):
+    with open(path) as f:
+        return f.read().strip()
+
+
 def sysfs_nodes():
     """(hidraw path, event path) of the emulated pad: the Sony pad on the
     translator's own bus (dummy_hcd, uhid or the kernel module's control node)."""
@@ -35,7 +40,7 @@ def sysfs_nodes():
         for h in glob.glob(dev + "/hidraw/hidraw*"):
             hidraw = "/dev/" + os.path.basename(h)
         for e in glob.glob(dev + "/input/input*/event*"):
-            name = open(os.path.dirname(e) + "/name").read().strip()
+            name = read_text(os.path.dirname(e) + "/name")
             if "Motion" not in name and "Touchpad" not in name:
                 event = "/dev/input/" + os.path.basename(e)
     return hidraw, event
@@ -44,7 +49,7 @@ def sysfs_nodes():
 def steam_pad():
     for e in glob.glob("/sys/class/input/event*"):
         try:
-            if open(e + "/device/name").read().strip().startswith("Microsoft X-Box 360 pad"):
+            if read_text(e + "/device/name").startswith("Microsoft X-Box 360 pad"):
                 return "/dev/input/" + os.path.basename(e)
         except OSError:
             pass
