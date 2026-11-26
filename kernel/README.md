@@ -16,7 +16,7 @@ It can also create the virtual controller itself (`ds4-ctl set-backend ds4
 kernel`): a DualShock 4 or DualSense that `hid-playstation` binds, fed by the
 claimed pad's translated reports (`ds4t-translate.c`, also built in user space
 for the unit tests) with output and feature reports handled in the module
-(`ds4t-virtual.c`). Closing the control node destroys it.
+(`ds4t-vcore.c`, `ds4t-vhid.c`). Closing the control node destroys it.
 
 ## Build
 

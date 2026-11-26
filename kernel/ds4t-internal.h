@@ -92,9 +92,9 @@ void ds4t_detach(void);
 bool ds4t_mac_ignored(const char *uniq);
 
 /*
- * The virtual controller (ds4t-virtual.c): translates a claimed pad's input
- * into a DualShock 4 or DualSense that hid-playstation drives, and relays its
- * output back.
+ * The virtual controller (ds4t-vcore.c, ds4t-vhid.c): translates a claimed
+ * pad's input into a DualShock 4 or DualSense that hid-playstation drives, and
+ * relays its output back.
  */
 /* Whether hdev is the virtual controller itself. */
 bool ds4t_virtual_owns(struct hid_device *hdev);

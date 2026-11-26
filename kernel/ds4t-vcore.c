@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * The virtual controller of the "kernel" emulation backend.
+ * The core of the virtual controller (the "kernel" and "kernel-usb" emulation
+ * backends), whatever frontend shows it to the host (ds4t-vcore.h).
  *
- * A hid_device with its own low-level driver, like uhid's, that the regular
- * hid-playstation driver binds as if it were a real DualShock 4 or DualSense.
  * The claimed pad's input reports are translated here (ds4t-translate.c) and
- * handed to it; what hid-playstation sends back (rumble, LED) is relayed to
- * the pad, and the feature reports it asks for at probe are answered from the
- * tables below, with the pad's own IMU calibration when there is one.
+ * handed to the frontend; what the host sends back (rumble, LED) is relayed to
+ * the pad, and feature reports are answered from the tables below, with the
+ * pad's own IMU calibration when there is one, or from a cache of what a USB
+ * pad answers itself.
  */
 
 #include <linux/crc32.h>
@@ -24,11 +24,7 @@
 #include "ds4t-descriptors.h"
 #include "ds4t-internal.h"
 #include "ds4t-translate.h"
-
-#define VIRT_VENDOR		0x054c
-#define VIRT_PRODUCT_DS4	0x05c4
-#define VIRT_PRODUCT_DUALSENSE	0x0ce6
-#define VIRT_VERSION		0x8111
+#include "ds4t-vcore.h"
 
 /*
  * Over Bluetooth the pad's own link cannot take output at input-report rate:
@@ -36,33 +32,6 @@
  * is sent at most once per interval there, always the newest state.
  */
 #define BT_OUTPUT_INTERVAL	msecs_to_jiffies(25)
-
-/* What the pad is told to do: rumble and the light bar. */
-struct ds4t_out_state {
-	u8 motor_left, motor_right;
-	u8 red, green, blue;
-};
-
-struct ds4t_virtual {
-	struct hid_device *hdev;
-	struct hid_ll_driver ll;
-	u32 type;
-	u8 mac_le[6];		/* the pad's address, byte-reversed as on the wire */
-
-	/* Set once hid_add_device() has returned; input is dropped before. */
-	bool live;
-
-	spinlock_t lock;	/* everything below */
-	struct ds4t_pad *src;	/* followed pad, holds a reference; or NULL */
-	u8 seq;			/* DualSense report counter */
-	u8 inbuf[DS4T_VIRT_REPORT_SIZE];
-
-	struct ds4t_out_state out;
-	/* hid-playstation pushes a default LED colour at probe; drop that one. */
-	bool skip_next_led;
-	unsigned long last_sent;
-	struct delayed_work output_work;
-};
 
 static struct ds4t_virtual __rcu *ds4t_virt;
 static DEFINE_MUTEX(ds4t_virt_mutex);	/* create/destroy */
@@ -110,22 +79,23 @@ static void ds4_calibration_report(struct ds4t_virtual *v, u8 reportnum,
 {
 	u8 cal[DS4T_CALIBRATION_SIZE];
 	struct ds4t_pad *pad;
+	unsigned long flags;
 
 	memcpy(cal, ds4_default_calibration, sizeof(cal));
-	spin_lock_irq(&v->lock);
+	spin_lock_irqsave(&v->lock, flags);
 	pad = v->src;
 	if (pad && pad->calib_len)
 		ds4t_calibration_to_usb_layout(pad->calib, pad->calib_len, cal);
-	spin_unlock_irq(&v->lock);
+	spin_unlock_irqrestore(&v->lock, flags);
 
 	buf[0] = reportnum;
 	memcpy(buf + 1, cal, sizeof(cal));
 }
 
 /*
- * Fills buf with the feature report hid-playstation asks for; returns its
- * size, -ENOENT for a DS4 one left to the pad (ds4t_virt_get_feature()), or
- * -EINVAL for one a DualSense does not have. len is the room.
+ * Fills buf with a feature report the core builds; returns its size, -ENOENT
+ * for a DS4 one left to the pad (ds4t_virt_cached_feature()), or -EPIPE for
+ * one a DualSense does not have. len is the room.
  */
 static int ds4t_virt_feature(struct ds4t_virtual *v, u8 reportnum, u8 *buf,
 			     size_t len)
@@ -191,7 +161,7 @@ static int ds4t_virt_feature(struct ds4t_virtual *v, u8 reportnum, u8 *buf,
 			report[15] = 0xbc;
 			break;
 		default:
-			return -EINVAL;
+			return -EPIPE;
 		}
 	}
 
@@ -204,26 +174,43 @@ static int ds4t_virt_feature(struct ds4t_virtual *v, u8 reportnum, u8 *buf,
 #define DS4_FEATURE_MAC		0x81
 
 /*
- * A feature report the emulated DS4 does not build itself, read from the
- * followed pad. Sony's own pad library (Unreal's WinDualShock, for one) reads
+ * The feature reports a real USB DualShock 4 declares beyond those the core
+ * builds itself. Sony's own pad library (Unreal's WinDualShock, for one) reads
  * more of them than hid-playstation does, and takes a pad that fails them for
- * something else. Only a pad on USB has them in the layout a USB DS4 is asked
- * for, so one on Bluetooth gets -EPIPE, a stalled request, as before.
+ * something else, so the emulated DS4 answers them with what the followed pad
+ * does. Only a pad on USB has them in the layout a USB DS4 is asked for.
  */
-static int ds4t_virt_forward_feature(struct ds4t_virtual *v, u8 reportnum,
-				     u8 *buf, size_t len)
+static const u8 ds4_forwarded_features[] = {
+	0x04, 0x08, 0x11, 0x13, 0x14, 0x15, 0x80, 0x81, 0x82, 0x83, 0x84,
+	0x85, 0x86, 0x87, 0x88, 0x89, 0x90, 0x91, 0x92, 0x93, 0xa0, 0xa1,
+	0xa2, 0xa4, 0xa5, 0xa6, 0xa7, 0xa8, 0xa9, 0xaa, 0xab, 0xac, 0xad,
+	0xae, 0xaf, 0xb0, 0xb1, 0xb2, 0xb3, 0xb4, 0xf0, 0xf1, 0xf2,
+};
+
+static_assert(ARRAY_SIZE(ds4_forwarded_features) <= DS4T_FCACHE_MAX);
+
+/* The followed pad with a reference taken, or NULL. */
+static struct ds4t_pad *ds4t_virt_get_src(struct ds4t_virtual *v)
 {
 	struct ds4t_pad *pad;
-	int ret;
+	unsigned long flags;
 
-	spin_lock_irq(&v->lock);
+	spin_lock_irqsave(&v->lock, flags);
 	pad = v->src;
 	if (pad)
 		ds4t_pad_get(pad);
-	spin_unlock_irq(&v->lock);
-	if (!pad)
-		return -EPIPE;
+	spin_unlock_irqrestore(&v->lock, flags);
+	return pad;
+}
 
+/* Sleeps. Reads one feature report from pad; its size or a negative errno. */
+static int ds4t_virt_read_pad_feature(struct ds4t_virtual *v,
+				      struct ds4t_pad *pad, u8 reportnum,
+				      u8 *buf, size_t len)
+{
+	int ret;
+
+	might_sleep();
 	down_read(&pad->exist_lock);
 	if (!pad->exist || pad->hdev->bus != BUS_USB)
 		ret = -EPIPE;
@@ -231,7 +218,6 @@ static int ds4t_virt_forward_feature(struct ds4t_virtual *v, u8 reportnum,
 		ret = hid_hw_raw_request(pad->hdev, reportnum, buf, len,
 					 HID_FEATURE_REPORT, HID_REQ_GET_REPORT);
 	up_read(&pad->exist_lock);
-	ds4t_pad_put(pad);
 
 	if (ret > 0 && reportnum == DS4_FEATURE_MAC)
 		memcpy(buf + 1, v->mac_le,
@@ -239,16 +225,120 @@ static int ds4t_virt_forward_feature(struct ds4t_virtual *v, u8 reportnum,
 	return ret;
 }
 
-static int ds4t_virt_get_feature(struct ds4t_virtual *v, u8 reportnum,
-				 u8 *buf, size_t len)
+/*
+ * Fills the cache from the followed pad. Runs on the system workqueue, so a
+ * frontend answering a request in interrupt context never has to wait for the
+ * pad; a pad that changed meanwhile gets a fresh run of its own.
+ */
+static void ds4t_virt_fcache_workfn(struct work_struct *work)
+{
+	struct ds4t_virtual *v = container_of(work, struct ds4t_virtual,
+					      fcache_work);
+	struct ds4t_fcache *cache, *old = NULL;
+	struct ds4t_pad *pad;
+	unsigned long flags;
+	unsigned int i;
+	int ret;
+
+	pad = ds4t_virt_get_src(v);
+	if (!pad)
+		return;
+
+	cache = kzalloc(sizeof(*cache), GFP_KERNEL);
+	if (!cache)
+		goto out;
+	for (i = 0; i < ARRAY_SIZE(ds4_forwarded_features); i++) {
+		u8 *data = cache->e[cache->count].data;
+
+		data[0] = ds4_forwarded_features[i];
+		ret = ds4t_virt_read_pad_feature(v, pad, data[0], data,
+						 DS4T_FEATURE_MAX);
+		if (ret <= 0)
+			continue;
+		cache->e[cache->count].id = data[0];
+		cache->e[cache->count].len = ret;
+		cache->count++;
+	}
+
+	spin_lock_irqsave(&v->lock, flags);
+	if (v->src == pad) {
+		old = v->fcache;
+		v->fcache = cache;
+		cache = NULL;
+	}
+	spin_unlock_irqrestore(&v->lock, flags);
+	kfree(old);
+	kfree(cache);
+out:
+	ds4t_pad_put(pad);
+}
+
+/*
+ * The followed pad changed (v->lock held): the old cache is no longer its
+ * answers. Returns the cache for the caller to free once the lock is dropped.
+ */
+static struct ds4t_fcache *ds4t_virt_fcache_reset(struct ds4t_virtual *v)
+{
+	struct ds4t_fcache *old = v->fcache;
+
+	lockdep_assert_held(&v->lock);
+	v->fcache = NULL;
+	if (v->type == DS4T_VIRTUAL_DS4 && v->src &&
+	    v->src->hdev->bus == BUS_USB)
+		schedule_work(&v->fcache_work);
+	return old;
+}
+
+/* A forwarded report from the cache; its size, or -EPIPE when not there. */
+static int ds4t_virt_cached_feature(struct ds4t_virtual *v, u8 reportnum,
+				    u8 *buf, size_t len)
+{
+	const struct ds4t_fcache *cache;
+	unsigned long flags;
+	unsigned int i;
+	int ret = -EPIPE;
+
+	spin_lock_irqsave(&v->lock, flags);
+	cache = v->fcache;
+	for (i = 0; cache && i < cache->count; i++) {
+		if (cache->e[i].id != reportnum)
+			continue;
+		ret = min_t(size_t, cache->e[i].len, len);
+		memcpy(buf, cache->e[i].data, ret);
+		break;
+	}
+	spin_unlock_irqrestore(&v->lock, flags);
+	return ret;
+}
+
+int ds4t_vcore_get_feature(struct ds4t_virtual *v, u8 reportnum, u8 *buf,
+			   size_t len)
 {
 	int ret = ds4t_virt_feature(v, reportnum, buf, len);
 
 	if (ret != -ENOENT)
 		return ret;
-	if (v->type != DS4T_VIRTUAL_DS4)
-		return -EINVAL;
-	return ds4t_virt_forward_feature(v, reportnum, buf, len);
+	return ds4t_virt_cached_feature(v, reportnum, buf, len);
+}
+
+int ds4t_vcore_get_feature_sync(struct ds4t_virtual *v, u8 reportnum, u8 *buf,
+				size_t len)
+{
+	struct ds4t_pad *pad;
+	int ret;
+
+	might_sleep();
+	ret = ds4t_vcore_get_feature(v, reportnum, buf, len);
+	if (ret != -EPIPE || v->type != DS4T_VIRTUAL_DS4)
+		return ret;
+
+	/* Not read into the cache yet: ask the pad itself. */
+	pad = ds4t_virt_get_src(v);
+	if (!pad)
+		return -EPIPE;
+	ret = ds4t_virt_read_pad_feature(v, pad, reportnum, buf, len);
+	ds4t_pad_put(pad);
+	return ret;
 }
 
 /* ------------------------------------------------------------------ output */
@@ -360,104 +450,30 @@ static void ds4t_virt_output_workfn(struct work_struct *work)
 	ds4t_pad_put(pad);
 }
 
+/* Schedules the trip to the pad; v->lock held. */
 static void ds4t_virt_queue_output(struct ds4t_virtual *v)
 {
 	unsigned long delay = 0;
-	struct ds4t_pad *pad;
+	struct ds4t_pad *pad = v->src;
 
-	spin_lock_irq(&v->lock);
-	pad = v->src;
+	lockdep_assert_held(&v->lock);
 	if (pad && pad->hdev->bus == BUS_BLUETOOTH &&
 	    time_before(jiffies, v->last_sent + BT_OUTPUT_INTERVAL))
 		delay = v->last_sent + BT_OUTPUT_INTERVAL - jiffies;
-	spin_unlock_irq(&v->lock);
 
 	/* A pending run already sends the newest state. */
 	if (!delayed_work_pending(&v->output_work))
 		schedule_delayed_work(&v->output_work, delay);
 }
 
-/* ------------------------------------------------------- hid_ll_driver ops */
-
-static struct ds4t_virtual *ds4t_virt_of(struct hid_device *hdev)
+void ds4t_vcore_output(struct ds4t_virtual *v, const u8 *data, size_t len)
 {
-	return container_of(hdev->ll_driver, struct ds4t_virtual, ll);
-}
+	unsigned long flags;
 
-static int ds4t_virt_ll_parse(struct hid_device *hdev)
-{
-	struct ds4t_virtual *v = ds4t_virt_of(hdev);
-
-	if (v->type == DS4T_VIRTUAL_DS4)
-		return hid_parse_report(hdev, (__u8 *)ds4_usb_rdesc,
-					sizeof(ds4_usb_rdesc));
-	return hid_parse_report(hdev, (__u8 *)dualsense_usb_rdesc,
-				sizeof(dualsense_usb_rdesc));
-}
-
-static int ds4t_virt_ll_start(struct hid_device *hdev)
-{
-	return 0;
-}
-
-static void ds4t_virt_ll_stop(struct hid_device *hdev)
-{
-}
-
-static int ds4t_virt_ll_open(struct hid_device *hdev)
-{
-	return 0;
-}
-
-static void ds4t_virt_ll_close(struct hid_device *hdev)
-{
-}
-
-static int ds4t_virt_ll_output_report(struct hid_device *hdev, __u8 *buf,
-				      size_t len)
-{
-	struct ds4t_virtual *v = ds4t_virt_of(hdev);
-	bool changed;
-
-	spin_lock_irq(&v->lock);
-	changed = ds4t_virt_parse_output(v, buf, len);
-	spin_unlock_irq(&v->lock);
-
-	if (changed)
+	spin_lock_irqsave(&v->lock, flags);
+	if (ds4t_virt_parse_output(v, data, len))
 		ds4t_virt_queue_output(v);
-	return len;
-}
-
-static int ds4t_virt_ll_raw_request(struct hid_device *hdev,
-				    unsigned char reportnum, __u8 *buf,
-				    size_t len, unsigned char rtype, int reqtype)
-{
-	struct ds4t_virtual *v = ds4t_virt_of(hdev);
-
-	if (rtype == HID_FEATURE_REPORT && reqtype == HID_REQ_GET_REPORT)
-		return ds4t_virt_get_feature(v, reportnum, buf, len);
-	/* An output report sent as SET_REPORT is still rumble and LED. */
-	if (rtype == HID_OUTPUT_REPORT && reqtype == HID_REQ_SET_REPORT)
-		return ds4t_virt_ll_output_report(hdev, buf, len);
-	/* Everything else is accepted and ignored, as the daemon's uhid does. */
-	if (reqtype == HID_REQ_SET_REPORT)
-		return len;
-	return -EINVAL;
-}
-
-static const struct hid_ll_driver ds4t_virt_ll_template = {
-	.parse = ds4t_virt_ll_parse,
-	.start = ds4t_virt_ll_start,
-	.stop = ds4t_virt_ll_stop,
-	.open = ds4t_virt_ll_open,
-	.close = ds4t_virt_ll_close,
-	.raw_request = ds4t_virt_ll_raw_request,
-	.output_report = ds4t_virt_ll_output_report,
-};
-
-bool ds4t_virtual_owns(struct hid_device *hdev)
-{
-	return hdev->ll_driver && hdev->ll_driver->parse == ds4t_virt_ll_parse;
+	spin_unlock_irqrestore(&v->lock, flags);
 }
 
 /* ------------------------------------------------------------------- input */
@@ -467,13 +483,13 @@ static void ds4t_virt_emit(struct ds4t_virtual *v, const struct ds4t_input *in)
 {
 	const bool real_battery = v->src;
 
+	lockdep_assert_held(&v->lock);
 	if (v->type == DS4T_VIRTUAL_DS4)
 		ds4t_build_ds4(in, real_battery, v->inbuf);
 	else
 		ds4t_build_dualsense(in, v->seq++, real_battery, v->inbuf);
 
-	hid_input_report(v->hdev, HID_INPUT_REPORT, v->inbuf,
-			 DS4T_VIRT_REPORT_SIZE, 1);
+	v->ops->input(v, v->inbuf, DS4T_VIRT_REPORT_SIZE);
 }
 
 void ds4t_virtual_input(struct ds4t_pad *pad, const u8 *data, int size)
@@ -504,48 +520,54 @@ static void ds4t_virt_neutral(struct ds4t_input *in)
 	in->common[4] = 0x08;	/* d-pad released */
 }
 
-void ds4t_virtual_pad_gone(struct ds4t_pad *pad)
+/*
+ * Follows pad instead (NULL: none; its reference moves to v) and returns the
+ * pad followed before, whose reference the caller drops. With expect set,
+ * only when that is the pad followed now (else NULL, nothing done). Without a new pad
+ * the game sees neutral input: nothing is held down on a pad that is gone.
+ * Straight from one pad to another (a Bluetooth/USB switch) it does not: the
+ * next report comes from the new pad, with no neutral input in between for a
+ * game to see as every button let go.
+ */
+static struct ds4t_pad *ds4t_virt_follow(struct ds4t_virtual *v,
+					 struct ds4t_pad *pad,
+					 const struct ds4t_pad *expect)
 {
-	struct ds4t_virtual *v;
-	struct ds4t_input in;
-	bool followed = false;
-
-	rcu_read_lock();
-	v = rcu_dereference(ds4t_virt);
-	if (v) {
-		spin_lock_irq(&v->lock);
-		if (v->src == pad) {
-			followed = true;
-			WRITE_ONCE(v->src, NULL);
-			/* Nothing is held down on a pad that is no longer there. */
-			if (v->live) {
-				ds4t_virt_neutral(&in);
-				ds4t_virt_emit(v, &in);
-			}
-		}
-		spin_unlock_irq(&v->lock);
-	}
-	rcu_read_unlock();
-
-	if (followed)
-		ds4t_pad_put(pad);
-}
-
-/* Releases the pad v follows, if any, and shows neutral input. */
-static struct ds4t_pad *ds4t_virt_unfollow(struct ds4t_virtual *v)
-{
-	struct ds4t_input in;
+	struct ds4t_fcache *old_cache;
 	struct ds4t_pad *old;
+	struct ds4t_input in;
 
 	spin_lock_irq(&v->lock);
 	old = v->src;
-	WRITE_ONCE(v->src, NULL);
-	if (old && v->live) {
+	if ((expect && old != expect) || (!pad && !old)) {
+		spin_unlock_irq(&v->lock);
+		return NULL;
+	}
+	WRITE_ONCE(v->src, pad);
+	if (!pad && old && v->live) {
 		ds4t_virt_neutral(&in);
 		ds4t_virt_emit(v, &in);
 	}
+	old_cache = old != pad ? ds4t_virt_fcache_reset(v) : NULL;
 	spin_unlock_irq(&v->lock);
+	kfree(old_cache);
 	return old;
+}
+
+void ds4t_virtual_pad_gone(struct ds4t_pad *pad)
+{
+	struct ds4t_virtual *v;
+	struct ds4t_pad *old = NULL;
+
+	/* Not under ds4t_virt_mutex: destroy may be waiting for this pad. */
+	rcu_read_lock();
+	v = rcu_dereference(ds4t_virt);
+	if (v)
+		old = ds4t_virt_follow(v, NULL, pad);
+	rcu_read_unlock();
+
+	if (old)
+		ds4t_pad_put(old);
 }
 
 int ds4t_virtual_link(const char *hid_id)
@@ -569,19 +591,7 @@ int ds4t_virtual_link(const char *hid_id)
 		}
 	}
 
-	if (pad) {
-		/*
-		 * Straight from one pad to the other (a Bluetooth/USB switch):
-		 * the next report comes from the new pad, with no neutral input
-		 * in between for a game to see as every button let go.
-		 */
-		spin_lock_irq(&v->lock);
-		old = v->src;
-		WRITE_ONCE(v->src, pad);	/* the reference moves to v */
-		spin_unlock_irq(&v->lock);
-	} else {
-		old = ds4t_virt_unfollow(v);
-	}
+	old = ds4t_virt_follow(v, pad, NULL);
 	if (old)
 		ds4t_pad_put(old);
 out:
@@ -637,43 +647,46 @@ static struct ds4t_virtual *ds4t_virt_alloc(const struct ds4t_virtual_cfg *cfg)
 		return ERR_PTR(-ENOMEM);
 
 	v->type = cfg->type;
-	v->ll = ds4t_virt_ll_template;
 	for (i = 0; i < 6; i++)
 		v->mac_le[i] = mac[5 - i];
 	v->out.blue = 255;
 	v->skip_next_led = true;
 	spin_lock_init(&v->lock);
 	INIT_DELAYED_WORK(&v->output_work, ds4t_virt_output_workfn);
+	INIT_WORK(&v->fcache_work, ds4t_virt_fcache_workfn);
 	return v;
 }
 
-static struct hid_device *ds4t_virt_hid(struct ds4t_virtual *v,
-					const struct ds4t_virtual_cfg *cfg)
+/*
+ * Once nothing reaches v any more (unpublished, frontend stopped): waits for
+ * the workers, drops the followed pad and frees it all.
+ */
+static void ds4t_virt_free(struct ds4t_virtual *v)
 {
-	struct hid_device *hdev = hid_allocate_device();
+	struct ds4t_pad *pad;
 
-	if (IS_ERR(hdev))
-		return hdev;
+	/* Neither queues the other, and nothing else can queue them now. */
+	cancel_work_sync(&v->fcache_work);
+	cancel_delayed_work_sync(&v->output_work);
 
-	hdev->ll_driver = &v->ll;
-	hdev->bus = BUS_USB;
-	hdev->vendor = VIRT_VENDOR;
-	hdev->product = cfg->type == DS4T_VIRTUAL_DS4 ?
-			VIRT_PRODUCT_DS4 : VIRT_PRODUCT_DUALSENSE;
-	hdev->version = VIRT_VERSION;
-	hdev->country = 0;
-	hdev->dev.parent = ds4t_control_device();
-	strscpy(hdev->name, cfg->name, sizeof(hdev->name));
-	strscpy(hdev->uniq, cfg->mac, sizeof(hdev->uniq));
-	return hdev;
+	spin_lock_irq(&v->lock);
+	pad = v->src;
+	v->src = NULL;
+	spin_unlock_irq(&v->lock);
+	if (pad)
+		ds4t_pad_put(pad);
+	kfree(v->fcache);
+	kfree(v);
 }
 
 int ds4t_virtual_create(const struct ds4t_virtual_cfg *cfg)
 {
+	const struct ds4t_vfront_ops *ops = &ds4t_vhid_ops;
 	struct ds4t_virtual *v;
 	struct ds4t_pad *pad = NULL;
 	int ret;
 
+	might_sleep();
 	if (cfg->type != DS4T_VIRTUAL_DS4 &&
 	    cfg->type != DS4T_VIRTUAL_DUALSENSE)
 		return -EINVAL;
@@ -695,35 +708,27 @@ int ds4t_virtual_create(const struct ds4t_virtual_cfg *cfg)
 	v = ds4t_virt_alloc(cfg);
 	if (IS_ERR(v)) {
 		ret = PTR_ERR(v);
-		goto err_pad;
+		if (pad)
+			ds4t_pad_put(pad);
+		goto out;
 	}
-	v->src = pad;		/* the reference moves to the virtual pad */
+	v->ops = ops;
+	/* The reference moves to the virtual pad; the cache is read meanwhile. */
+	spin_lock_irq(&v->lock);
+	v->src = pad;
+	ds4t_virt_fcache_reset(v);
+	spin_unlock_irq(&v->lock);
 
-	v->hdev = ds4t_virt_hid(v, cfg);
-	if (IS_ERR(v->hdev)) {
-		ret = PTR_ERR(v->hdev);
-		goto err_free;
-	}
-
-	/* Published first: hid-playstation's probe reaches the ll ops. */
+	/* Published first: a frontend's probe may already ask for features. */
 	rcu_assign_pointer(ds4t_virt, v);
-	ret = hid_add_device(v->hdev);
+	ret = ops->start(v, cfg);
 	if (ret) {
 		RCU_INIT_POINTER(ds4t_virt, NULL);
 		synchronize_rcu();
-		hid_destroy_device(v->hdev);
-		cancel_delayed_work_sync(&v->output_work);
-		goto err_free;
+		ds4t_virt_free(v);
+		goto out;
 	}
 	WRITE_ONCE(v->live, true);
-	mutex_unlock(&ds4t_virt_mutex);
-	return 0;
-
-err_free:
-	kfree(v);
-err_pad:
-	if (pad)
-		ds4t_pad_put(pad);
 out:
 	mutex_unlock(&ds4t_virt_mutex);
 	return ret;
@@ -732,29 +737,17 @@ out:
 void ds4t_virtual_destroy(void)
 {
 	struct ds4t_virtual *v;
-	struct ds4t_pad *pad;
 
+	might_sleep();
 	mutex_lock(&ds4t_virt_mutex);
 	v = rcu_dereference_protected(ds4t_virt,
 				      lockdep_is_held(&ds4t_virt_mutex));
-	if (!v) {
-		mutex_unlock(&ds4t_virt_mutex);
-		return;
+	if (v) {
+		WRITE_ONCE(v->live, false);
+		RCU_INIT_POINTER(ds4t_virt, NULL);
+		synchronize_rcu();	/* no input path is inside it any more */
+		v->ops->stop(v);	/* the host lets go of it */
+		ds4t_virt_free(v);
 	}
-
-	WRITE_ONCE(v->live, false);
-	RCU_INIT_POINTER(ds4t_virt, NULL);
-	synchronize_rcu();		/* no input path is inside it any more */
-	hid_destroy_device(v->hdev);	/* unbinds hid-playstation */
-	/* Its last output may have queued the worker, so only now is it final. */
-	cancel_delayed_work_sync(&v->output_work);
-
-	spin_lock_irq(&v->lock);
-	pad = v->src;
-	v->src = NULL;
-	spin_unlock_irq(&v->lock);
-	if (pad)
-		ds4t_pad_put(pad);
-	kfree(v);
 	mutex_unlock(&ds4t_virt_mutex);
 }

@@ -642,9 +642,9 @@
     "semantic_hash": ""
   },
   "kernel/README.md": {
-    "mtime": 1795554136.1768131,
-    "seen": 1795554315.0508626,
-    "ast_hash": "03815df549e31d41a7b1376fd37842a6",
+    "mtime": 1795702088.3747196,
+    "seen": 1795702266.6962628,
+    "ast_hash": "8e7a484583b3cafb453c2de18518e02d",
     "semantic_hash": ""
   },
   "assets/Dualshock_4_Layout_base.svg": {
@@ -672,9 +672,9 @@
     "semantic_hash": ""
   },
   "kernel/ds4t-internal.h": {
-    "mtime": 1795553234.3667424,
-    "seen": 1795554315.050667,
-    "ast_hash": "292ed68cd8e0dac1324cb17eb3c97d31",
+    "mtime": 1795702080.2098813,
+    "seen": 1795702266.696094,
+    "ast_hash": "f8470be34c2bc922675f63d29064dddd",
     "semantic_hash": ""
   },
   "src/driver-transport.cpp": {
@@ -755,12 +755,6 @@
     "ast_hash": "f9fab345576287efd065a176d28fdd3e",
     "semantic_hash": ""
   },
-  "kernel/ds4t-virtual.c": {
-    "mtime": 1795697923.501278,
-    "seen": 1795698255.735891,
-    "ast_hash": "775156ef2566c762fc2aedf588934f65",
-    "semantic_hash": ""
-  },
   "tests/kernel/lib.sh": {
     "mtime": 1795580949.7900329,
     "seen": 1795581000.9561207,
@@ -831,6 +825,24 @@
     "mtime": 1795619803.64173,
     "seen": 1795629280.30677,
     "ast_hash": "3c0e2ffcbe62eecc387d0742da6055fe",
+    "semantic_hash": ""
+  },
+  "kernel/ds4t-vcore.c": {
+    "mtime": 1795702101.9698834,
+    "seen": 1795702266.6961002,
+    "ast_hash": "f3ae8d9078919b51e13438582dfa8802",
+    "semantic_hash": ""
+  },
+  "kernel/ds4t-vcore.h": {
+    "mtime": 1795702080.1992354,
+    "seen": 1795702266.696102,
+    "ast_hash": "d4f698751f86ad291f023f0994fc8022",
+    "semantic_hash": ""
+  },
+  "kernel/ds4t-vhid.c": {
+    "mtime": 1795702080.2094798,
+    "seen": 1795702266.6961029,
+    "ast_hash": "2932e3eb5d219021cac80f02bbbcd8ba",
     "semantic_hash": ""
   }
 }
