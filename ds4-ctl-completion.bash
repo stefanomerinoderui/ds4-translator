@@ -15,7 +15,7 @@ _ds4_ctl_completions() {
 
     # Pass the command plus every word already typed after it (not just the
     # command name) so completion can depend on position -- e.g. `set-backend`
-    # offers ds4/dualsense first, then uhid/functionfs/kernel only once a
+    # offers ds4/dualsense first, then the backends only once a
     # controller type is picked.
     local args
     args=$(ds4-ctl --complete-args "${COMP_WORDS[@]:1:COMP_CWORD-1}" 2>/dev/null)

@@ -166,11 +166,16 @@ $(TARGET_SPOOF32): $(SPOOF_SRC) | $(BUILD_DIR)
 	$(CC) -m32 -O3 -fPIC -shared $(STRICT_WARNINGS) $(PRODUCT_WARNINGS) $(HARDEN_COMMON) $(HARDEN_FORTIFY) $(HARDEN_SHARED_LDFLAGS) $(ENV_LDFLAGS) -o $@ $< -ldl -lpthread
 
 
+# -MMD -MP: each object also depends on the headers it includes (src/,
+# kernel/ and the module's uAPI), so changing one rebuilds what uses it -- an
+# ABI bump in include/uapi/ds4t.h must never leave a stale daemon behind.
 $(BUILD_DIR)/%.o: src/%.cpp | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -c -o $@ $<
+	$(CXX) $(CXXFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/%.o: src/%.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c -o $@ $<
+	$(CC) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+-include $(wildcard $(BUILD_DIR)/*.d)
 
 # Machine-generated (kernel BTF -> C types) for the HID-BPF transport's
 # CO-RE relocations -- deliberately not tracked in git (huge, and only
@@ -222,6 +227,15 @@ lint: all debug tidy kernel-lint
 # Loads the module in a throwaway virtme-ng VM against a uhid fake pad.
 kernel-test: kernel
 	tests/kernel/run-vm.sh
+
+# The same suites on a debug kernel (KASAN, lockdep, kmemleak, failslab; see
+# tests/kernel/debug.config), built by virtme-ng from a kernel source tree:
+#   make kernel-test-debug KERNEL_SRC=~/src/linux
+# The first build takes a while; later ones are incremental.
+kernel-test-debug:
+	@test -n "$(KERNEL_SRC)" || { echo "kernel-test-debug: set KERNEL_SRC to a kernel source tree" >&2; exit 2; }
+	cd "$(KERNEL_SRC)" && vng --build -f "$(CURDIR)/tests/kernel/debug.config"
+	KERNEL_DIR="$(KERNEL_SRC)" tests/kernel/run-vm.sh
 
 # Qt 6 settings GUI (ui/). Deliberately kept out of `all`: it needs Qt 6 +
 # CMake, which the daemon itself does not, so a plain `make` still builds the
@@ -574,5 +588,5 @@ uninstall-cli:
 
 .PHONY: all debug clean install install-cli stage-cli uninstall uninstall-cli \
         ui install-ui stage-ui uninstall-ui install-ui-user uninstall-ui-user arch-pkg arch-repo \
-        kernel kernel-check kernel-lint kernel-test stage-dkms tidy lint \
+        kernel kernel-check kernel-lint kernel-test kernel-test-debug stage-dkms tidy lint \
         test test-unit test-perf test-fuzz test-component test-smoke test-completion test-integration test-sanitize test-tsan test-security-static test-hwtest

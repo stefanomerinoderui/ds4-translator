@@ -109,7 +109,7 @@ run_cases() {
     expect "$shell" "set-backend set-hide-method set-mac-squat set-name set-type" set-
     expect "$shell" "ds4 dualsense" set-backend ""
     expect "$shell" "dualsense" set-backend du
-    expect "$shell" "uhid functionfs kernel" set-backend ds4 ""
+    expect "$shell" "uhid functionfs kernel kernel-usb" set-backend ds4 ""
     expect "$shell" "ds4 dualsense" set-name ""
     expect "$shell" "on off" set-mac-squat ""
     expect "$shell" "driver legacy unbind unlink" set-hide-method ""
@@ -120,7 +120,7 @@ run_cases() {
 # The binary's own output contract: one candidate per line. Prefix filtering
 # is the shell's job, so only whole-list cases apply here.
 expect binary "ds4 dualsense" set-backend ""
-expect binary "uhid functionfs kernel" set-backend ds4 ""
+expect binary "uhid functionfs kernel kernel-usb" set-backend ds4 ""
 expect binary "on off" set-mac-squat ""
 
 for shell in bash fish zsh; do

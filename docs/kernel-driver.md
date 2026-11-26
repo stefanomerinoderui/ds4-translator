@@ -416,6 +416,26 @@ access, by design. This is already true of the `unlink` method.
    in `kernel/ds4t-translate.c`, which also builds in user space; a unit test
    holds it byte for byte to the daemon's own `src/translate.cpp`, which the
    `uhid` and `functionfs` backends keep using.
+   - **`kernel-usb`** (`ds4-ctl set-backend <ds4|dualsense> kernel-usb`,
+     falls back to `functionfs`). Done in the VM. The same core
+     (`ds4t-vcore.c`) behind a second frontend, a USB gadget in its own module
+     (`ds4t-gadget.ko`, needs `CONFIG_USB_LIBCOMPOSITE`) on `dummy_hcd`: the
+     host side is a real USB device, `bcdDevice` 0x0100 and Sony's strings,
+     bound by `usbhid` and `hid-playstation`, which is what Wine needs (see
+     below). A plain `usb_gadget_driver` rather than a composite one, so it
+     binds to the UDC it is given (`udc=` parameter, else any free one) and
+     fails with `-EBUSY` when that one is taken; the main module loads it on
+     demand and holds a reference while a USB virtual exists. Its setup and
+     endpoint completions run in interrupt context, so the DS4 feature reports
+     forwarded from a USB pad come from a cache the core fills on the system
+     workqueue whenever the followed pad changes. `tests/kernel/test-gadget.sh`
+     covers the identity, input, rumble (evdev and hidraw, both layouts),
+     forwarded features with the MAC swapped, SDL, and the ways it can go away
+     in use: the pad unplugged, the owner SIGKILLed under four hidraw readers
+     and a rumble writer, `rmmod dummy_hcd` under a live gadget, the module
+     pinned while in use, a busy UDC, and 100 create/destroy cycles, half of
+     them killed mid-enumeration. `test-hotswap.sh` runs the daemon's
+     Bluetooth/USB switch on it too.
 8. **Remove** the workarounds in section 4 only after the module has run as
    the default for a release, keeping `unbind` as the fallback.
 
@@ -429,7 +449,9 @@ access, by design. This is already true of the `unlink` method.
   device and never looks further at one whose version is not a real pad's
   (`0x0100`); seen in a `WINEDEBUG=+hid` log on real hardware. So `functionfs`,
   whose gadget now carries `bcdDevice` 0x0100, stays the DS4 default and
-  `kernel` stays opt-in. Not yet known: whether the
+  `kernel` stays opt-in; `kernel-usb` gives games the same USB device as
+  `functionfs` with the translation in the kernel, but has not run in a game
+  yet. Not yet known: whether the
   DualSense type, which `uhid` never had trouble with, is detected, and why
   Rocket League gets no rumble from the DS4. The daemon's
   `ds4-ctl led`/`identify` write to the physical pad directly and are
@@ -439,8 +461,13 @@ access, by design. This is already true of the `unlink` method.
 - **Real hardware.** Nothing has run on a physical pad: USB, Bluetooth over
   `bluetoothd`'s `uhid` session (probe timing, the calibration read, output
   report pacing), and unplugging or dropping the link under load.
-- **A debug kernel.** The host kernel has no KASAN or lockdep. The slab
-  debugging above covers memory errors, not lock ordering.
+- **A debug kernel.** The host kernel has no KASAN or lockdep; the slab
+  debugging above covers memory errors, not lock ordering. `make
+  kernel-test-debug KERNEL_SRC=<linux tree>` builds one from
+  `tests/kernel/debug.config` (KASAN, lockdep, atomic-sleep and object
+  debugging, UBSAN, kmemleak, failslab) and runs every suite on it, plus
+  `test-faults.sh`: each allocation of the create ioctl failed in turn, for
+  both frontends, then a kmemleak scan.
 - **Making `driver` the default.** It stays opt-in until the two points
   above are settled; flipping a default is a decision for the maintainer,
   not something this work can justify with a fake pad.

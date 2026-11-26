@@ -1926,13 +1926,18 @@ enum BackendType {
     BACKEND_FUNCTIONFS,
     // The hid-ds4-translator module creates the virtual pad and translates in
     // the kernel; needs the driver hide method.
-    BACKEND_KERNEL
+    BACKEND_KERNEL,
+    // The same, with the virtual pad a USB gadget on dummy_hcd (ds4t-gadget):
+    // a real USB device on the host side, as functionfs gives, so Wine finds
+    // the version and strings a real pad has.
+    BACKEND_KERNEL_USB
 };
 
 static const char* backend_type_name(BackendType backend) {
     switch (backend) {
         case BACKEND_FUNCTIONFS: return "functionfs";
         case BACKEND_KERNEL: return "kernel";
+        case BACKEND_KERNEL_USB: return "kernel-usb";
         default: return "uhid";
     }
 }
@@ -1941,6 +1946,7 @@ static const char* backend_type_config_str(BackendType backend) {
     switch (backend) {
         case BACKEND_FUNCTIONFS: return "functionfs";
         case BACKEND_KERNEL: return "kernel";
+        case BACKEND_KERNEL_USB: return "kernel-usb";
         default: return "uhid";
     }
 }
@@ -1969,6 +1975,8 @@ static BackendType read_backend_config(ControllerType type, BackendType default_
                 return BACKEND_UHID;
             } else if (val == "kernel") {
                 return BACKEND_KERNEL;
+            } else if (val == "kernel-usb") {
+                return BACKEND_KERNEL_USB;
             }
         }
     }
@@ -2169,10 +2177,12 @@ static int ffs_target_for_type(ControllerType type) {
     }
 }
 
-// The "kernel" backend: the module creates the virtual pad, follows the open
-// physical one and translates between them. It exists only for as long as the
-// control fd does, and the module needs the driver hide method to hold pads.
-static bool create_kernel_virtual(ControllerType type, const std::string& custom_name) {
+// The "kernel" and "kernel-usb" backends: the module creates the virtual pad,
+// follows the open physical one and translates between them. It exists only
+// for as long as the control fd does, and the module needs the driver hide
+// method to hold pads. With usb it is a USB gadget, whose name is the USB
+// product string (the host prefixes the manufacturer), as functionfs's is.
+static bool create_kernel_virtual(ControllerType type, const std::string& custom_name, bool usb) {
     if (g_hide_method != HIDE_METHOD_DRIVER) {
         std::cerr << "kernel backend: needs the driver hide method (ds4-ctl set-hide-method driver)." << std::endl;
         return false;
@@ -2185,14 +2195,19 @@ static bool create_kernel_virtual(ControllerType type, const std::string& custom
         return false;
     }
     const bool dualsense = (type == TYPE_DUALSENSE);
-    const std::string name = !custom_name.empty() ? custom_name
-        : dualsense ? "Sony Interactive Entertainment DualSense Wireless Controller"
-                    : "Sony Computer Entertainment Wireless Controller";
-    if (!driver_transport_create_virtual(g_driver_control_fd, dualsense, name, g_virtual_mac_str,
+    std::string name = custom_name;
+    if (name.empty() && usb) {
+        name = dualsense ? "DualSense Wireless Controller" : "Wireless Controller";
+    } else if (name.empty()) {
+        name = dualsense ? "Sony Interactive Entertainment DualSense Wireless Controller"
+                         : "Sony Computer Entertainment Wireless Controller";
+    }
+    if (!driver_transport_create_virtual(g_driver_control_fd, dualsense, usb, name, g_virtual_mac_str,
                                          g_phy_hid_id)) {
         return false;
     }
-    std::cout << "Virtual USB Controller created by the kernel module." << std::endl;
+    std::cout << (usb ? "Virtual USB Controller created by the kernel module (USB gadget)."
+                      : "Virtual USB Controller created by the kernel module.") << std::endl;
     g_kernel_vdev = true;
     g_vdev_exists = true;
     return true;
@@ -2210,6 +2225,15 @@ static bool create_virtual_device_backend(ControllerType type) {
     functionfs_set_mac(g_virtual_mac_le, g_virtual_mac_str.c_str());
 
     if (controller_type_is_xbox(type)) backend_type = BACKEND_FUNCTIONFS;
+
+    if (backend_type == BACKEND_KERNEL_USB) {
+        if (create_kernel_virtual(type, custom_name, true)) {
+            return true;
+        }
+        // The nearest thing: also a real USB device, from the daemon.
+        std::cerr << "Failed to create the kernel-usb backend's controller. Falling back to FunctionFS backend..." << std::endl;
+        backend_type = BACKEND_FUNCTIONFS;
+    }
 
     if (backend_type == BACKEND_FUNCTIONFS) {
         const int ffs_target = ffs_target_for_type(type);
@@ -2229,7 +2253,7 @@ static bool create_virtual_device_backend(ControllerType type) {
     }
 
     if (backend_type == BACKEND_KERNEL) {
-        if (create_kernel_virtual(type, custom_name)) {
+        if (create_kernel_virtual(type, custom_name, false)) {
             return true;
         }
         std::cerr << "Failed to create the kernel backend's controller. Falling back to UHID backend..." << std::endl;
@@ -3566,9 +3590,10 @@ int main(int argc, char* argv[]) {
                             response = "Already set to Hidden";
                         }
                     } else if (cmd == "set-backend ds4 uhid" || cmd == "set-backend ds4 functionfs" ||
-                               cmd == "set-backend ds4 kernel") {
+                               cmd == "set-backend ds4 kernel" || cmd == "set-backend ds4 kernel-usb") {
                         BackendType want_backend = (cmd == "set-backend ds4 uhid") ? BACKEND_UHID
-                            : (cmd == "set-backend ds4 kernel") ? BACKEND_KERNEL : BACKEND_FUNCTIONFS;
+                            : (cmd == "set-backend ds4 kernel") ? BACKEND_KERNEL
+                            : (cmd == "set-backend ds4 kernel-usb") ? BACKEND_KERNEL_USB : BACKEND_FUNCTIONFS;
                         if (backend_for_ds4 != want_backend) {
                             backend_for_ds4 = want_backend;
                             write_config(target_type, backend_for_ds4, backend_for_dualsense, g_name_ds4, g_name_dualsense);
@@ -3576,9 +3601,9 @@ int main(int argc, char* argv[]) {
                                 pending_backend_change = want_backend;
                                 backend_change_requested = true;
                                 response = "OK: Changing DS4 backend to " + std::string(backend_type_name(want_backend)) + "...";
-                                if (want_backend != BACKEND_FUNCTIONFS) {
+                                if (want_backend != BACKEND_FUNCTIONFS && want_backend != BACKEND_KERNEL_USB) {
                                     response += "\nNote: some Wine/Proton games never detect a DS4 on this backend "
-                                                "(no real USB enumeration); functionfs is the one that does.";
+                                                "(no real USB enumeration); functionfs and kernel-usb are the ones that do.";
                                 }
                             } else {
                                 response = "OK: DS4 backend set to " + std::string(backend_type_name(want_backend)) +
@@ -3588,9 +3613,10 @@ int main(int argc, char* argv[]) {
                             response = "DS4 already set to use backend " + std::string(backend_type_name(want_backend));
                         }
                     } else if (cmd == "set-backend dualsense uhid" || cmd == "set-backend dualsense functionfs" ||
-                               cmd == "set-backend dualsense kernel") {
+                               cmd == "set-backend dualsense kernel" || cmd == "set-backend dualsense kernel-usb") {
                         BackendType want_backend = (cmd == "set-backend dualsense uhid") ? BACKEND_UHID
-                            : (cmd == "set-backend dualsense kernel") ? BACKEND_KERNEL : BACKEND_FUNCTIONFS;
+                            : (cmd == "set-backend dualsense kernel") ? BACKEND_KERNEL
+                            : (cmd == "set-backend dualsense kernel-usb") ? BACKEND_KERNEL_USB : BACKEND_FUNCTIONFS;
                         if (backend_for_dualsense != want_backend) {
                             backend_for_dualsense = want_backend;
                             write_config(target_type, backend_for_ds4, backend_for_dualsense, g_name_ds4, g_name_dualsense);

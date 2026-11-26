@@ -84,7 +84,7 @@ dmesg_mark=$(dmesg | wc -l)
 mount | grep -q debugfs || mount -t debugfs none /sys/kernel/debug
 modprobe uhid || { echo "uhid unavailable"; exit 1; }
 modprobe hid_playstation || { echo "hid_playstation unavailable"; exit 1; }
-rmmod hid_ds4_translator 2>/dev/null
+unload_modules
 insmod "$KO" || { echo "insmod failed"; exit 1; }
 
 export DS4_RUNTIME_DIR=/tmp/ds4d DS4_STATE_DIR=/tmp/ds4d/state DS4_CONFIG_PATH=/tmp/ds4d/ds4-translator.conf
@@ -104,9 +104,10 @@ scenario() { # <title> <backend> [ds4-ctl command...]
     "$DAEMON" -t ds4 >/tmp/daemon.log 2>&1 &
     daemon_pid=$!
     check "the emulated pad follows Bluetooth" pad_shows "$DS4_NAME" "$BT_STATE"
-    if [ "$backend" = functionfs ]; then
+    if [ "$backend" = functionfs ] || [ "$backend" = kernel-usb ]; then
         # The version Wine hands games; Sony's pad library wants a real one.
         check "the gadget has a real DS4's USB version" sony_usb_version_is 0100
+        check "the daemon did not fall back" bash -c "! grep -q 'Falling back' /tmp/daemon.log"
     fi
 
     # Every X the game sees across the switch: 16 (Bluetooth), then 17 (USB),
@@ -135,9 +136,15 @@ scenario() { # <title> <backend> [ds4-ctl command...]
 }
 
 # uhid is left out: with the test hook its emulated pad would pass for a
-# physical one. functionfs needs dummy_hcd and libcomposite in the guest.
+# physical one. functionfs and kernel-usb need dummy_hcd and libcomposite in
+# the guest, kernel-usb the gadget module too (insmod: it is not installed in
+# the guest, so the module's own request_module() cannot find it).
 backends=(kernel)
-modprobe dummy_hcd 2>/dev/null && modprobe libcomposite 2>/dev/null && backends+=(functionfs)
+if modprobe dummy_hcd 2>/dev/null && modprobe libcomposite 2>/dev/null; then
+    backends+=(functionfs)
+    gadget_ko="$(dirname "$KO")/ds4t-gadget.ko"
+    [ -f "$gadget_ko" ] && insmod "$gadget_ko" && backends+=(kernel-usb)
+fi
 for backend in "${backends[@]}"; do
     scenario "Bluetooth, then USB, then the cable is pulled" "$backend"
     scenario "the same with an emulation type change while on USB" "$backend" set-type dualsense

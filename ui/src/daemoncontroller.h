@@ -36,7 +36,7 @@ class DaemonController : public QObject {
     Q_PROPERTY(QString connectionType READ connectionType NOTIFY statusChanged)
     Q_PROPERTY(QString activeBackend READ activeBackend NOTIFY statusChanged)
     // Config-string values ("ds4"/"dualsense"/"none"/"hidden",
-    // "uhid"/"functionfs"/"kernel", "legacy"/"unbind"/"unlink"/"driver") so QML can bind them straight
+    // "uhid"/"functionfs"/"kernel"/"kernel-usb", "legacy"/"unbind"/"unlink"/"driver") so QML can bind them straight
     // to a control's current index.
     Q_PROPERTY(QString emulationType READ emulationType NOTIFY statusChanged)
     Q_PROPERTY(QString ds4Backend READ ds4Backend NOTIFY statusChanged)
@@ -79,7 +79,7 @@ public:
 
     // type: ds4 | dualsense | none | hidden
     Q_INVOKABLE void setType(const QString &type);
-    // controller: ds4 | dualsense -- backend: uhid | functionfs | kernel
+    // controller: ds4 | dualsense -- backend: uhid | functionfs | kernel | kernel-usb
     Q_INVOKABLE void setBackend(const QString &controller, const QString &backend);
     // controller: ds4 | dualsense -- name: free text, length-checked by ds4ipc
     Q_INVOKABLE void setName(const QString &controller, const QString &name);

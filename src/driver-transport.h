@@ -40,14 +40,15 @@ bool driver_transport_claim(int control_fd);
 // Hands every pad back to its regular driver.
 void driver_transport_detach(int control_fd);
 
-// The module's own virtual controller (the "kernel" emulation backend): it
-// translates the claimed pad's input itself, relays rumble/LED back, and goes
-// away when the control fd closes. `dualsense` picks the pad type, `mac` is the
+// The module's own virtual controller (the "kernel" and "kernel-usb" emulation
+// backends): it translates the claimed pad's input itself, relays rumble/LED
+// back, and goes away when the control fd closes. `dualsense` picks the pad
+// type, `usb` makes it a USB gadget (then `name` is the USB product string), `mac` is the
 // pad's uniq (and what driver_transport_set_ignore_mac() was given), `hid_id`
 // the claimed pad it follows, or empty for none. False with errno-style
 // diagnostics logged (module too old, a controller already exists, no such
 // pad).
-bool driver_transport_create_virtual(int control_fd, bool dualsense, const std::string& name,
+bool driver_transport_create_virtual(int control_fd, bool dualsense, bool usb, const std::string& name,
                                      const std::string& mac, const std::string& hid_id);
 void driver_transport_destroy_virtual(int control_fd);
 // Follows another claimed pad, or none when hid_id is empty.

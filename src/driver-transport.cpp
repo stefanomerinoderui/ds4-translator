@@ -121,18 +121,25 @@ bool copy_field(char (&field)[N], const std::string& value, const char* what) {
 
 } // namespace
 
-bool driver_transport_create_virtual(int control_fd, bool dualsense, const std::string& name,
+bool driver_transport_create_virtual(int control_fd, bool dualsense, bool usb, const std::string& name,
                                      const std::string& mac, const std::string& hid_id) {
     struct ds4t_virtual_cfg cfg;
     memset(&cfg, 0, sizeof(cfg));
     cfg.type = dualsense ? DS4T_VIRTUAL_DUALSENSE : DS4T_VIRTUAL_DS4;
+    cfg.flags = usb ? DS4T_VIRTUAL_F_USB : 0;
     if (!copy_field(cfg.name, name, "controller name") || !copy_field(cfg.mac, mac, "MAC") ||
         !copy_field(cfg.hid_id, hid_id, "HID id")) {
         return false;
     }
     if (ioctl(control_fd, DS4T_IOC_CTL_CREATE_VIRTUAL, &cfg) != 0) {
-        std::cerr << "driver: the module cannot create the virtual controller: " << strerror(errno)
-                  << std::endl;
+        const int err = errno;
+        std::cerr << "driver: the module cannot create the virtual controller: " << strerror(err);
+        if (usb && err == EOPNOTSUPP) {
+            std::cerr << " (no ds4t-gadget module: a kernel without USB gadget support?)";
+        } else if (usb && err == EBUSY) {
+            std::cerr << " (no free UDC: is dummy_hcd loaded, and is another gadget using it?)";
+        }
+        std::cerr << std::endl;
         return false;
     }
     return true;
