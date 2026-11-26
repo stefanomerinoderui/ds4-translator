@@ -144,9 +144,9 @@
     "semantic_hash": "015b45491d31f39a22d30657dcec8fd8"
   },
   "src/main.cpp": {
-    "mtime": 1795616140.6624703,
-    "seen": 1795616337.886233,
-    "ast_hash": "9c39b5ed8e5d81423a091e34ef2e969d",
+    "mtime": 1795697842.4522307,
+    "seen": 1795698255.735975,
+    "ast_hash": "6ac03bf568ac6260c218ff444273e091",
     "semantic_hash": ""
   },
   "src/paths.h": {
@@ -624,9 +624,9 @@
     "semantic_hash": "f0c9871272530025988b974d419e2cd8"
   },
   "tests/kernel/fake-pad.c": {
-    "mtime": 1795579844.9595225,
-    "seen": 1795581000.9561195,
-    "ast_hash": "538b1a1da28f3b203d0e2a5e7a59897f",
+    "mtime": 1795697968.621911,
+    "seen": 1795698255.7360575,
+    "ast_hash": "f36c432d93dea8812d2201cda70e59bb",
     "semantic_hash": ""
   },
   "tests/kernel/run-vm.sh": {
@@ -756,9 +756,9 @@
     "semantic_hash": ""
   },
   "kernel/ds4t-virtual.c": {
-    "mtime": 1795584427.7635539,
-    "seen": 1795584872.1754408,
-    "ast_hash": "1e119cebc00bd823b37eeaddb5076a05",
+    "mtime": 1795697923.501278,
+    "seen": 1795698255.735891,
+    "ast_hash": "775156ef2566c762fc2aedf588934f65",
     "semantic_hash": ""
   },
   "tests/kernel/lib.sh": {
@@ -774,15 +774,15 @@
     "semantic_hash": ""
   },
   "tests/kernel/test-virtual.sh": {
-    "mtime": 1795615996.5131865,
-    "seen": 1795616337.8863733,
-    "ast_hash": "b8a7137eb03d296ba0889df49293363a",
+    "mtime": 1795697968.6230936,
+    "seen": 1795698255.7360797,
+    "ast_hash": "7acba0d118fb0ca04db18fa4934dc593",
     "semantic_hash": ""
   },
   "tests/kernel/virtual-check.c": {
-    "mtime": 1795584576.7394059,
-    "seen": 1795584872.17567,
-    "ast_hash": "e39b43f04fc153754a797162b10b4ceb",
+    "mtime": 1795697968.6226327,
+    "seen": 1795698255.7360919,
+    "ast_hash": "3ae8fc7fdf54656dcf08aa7bad3d1bbe",
     "semantic_hash": ""
   },
   "tests/unit/test_kernel_translate.cpp": {
@@ -798,9 +798,9 @@
     "semantic_hash": ""
   },
   "tests/kernel/test-hotswap.sh": {
-    "mtime": 1795582443.2418814,
-    "seen": 1795582638.0044534,
-    "ast_hash": "33efde2d64392408de0ef286d6eb867e",
+    "mtime": 1795697710.8396418,
+    "seen": 1795698255.7360766,
+    "ast_hash": "afec9dc8a3f1770eec9c46e994e6f9d5",
     "semantic_hash": ""
   },
   "tests/unit/test_bt_suppression.cpp": {
@@ -822,9 +822,9 @@
     "semantic_hash": ""
   },
   "tests/completion/test_completion.sh": {
-    "mtime": 1795629277.577456,
-    "seen": 1795629280.3067312,
-    "ast_hash": "628614be6af7ec9f698ba3a492a41b36",
+    "mtime": 1795629297.1222792,
+    "seen": 1795698255.7359962,
+    "ast_hash": "fc3e17d693fcd06270648887df95e2f6",
     "semantic_hash": ""
   },
   "tests/hardware/rumble-check.py": {

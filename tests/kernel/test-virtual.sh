@@ -99,6 +99,25 @@ for type in 1 2; do
     done
 done
 
+# Sony's own pad library (Unreal's WinDualShock) reads feature reports that
+# hid-playstation never asks for, and gives up on a pad that fails them. The
+# emulated DS4 answers them from a USB pad, its MAC swapped for the emulated
+# one; a Bluetooth pad has them in another layout, so they stay unanswered.
+mac_le=$(echo "$MAC_VIRT" | tr -d : | sed 's/../& /g' | awk '{for (i = NF; i > 0; i--) printf "%s", $i}')
+for bus in usb bt; do
+    echo "# DS4: feature reports the module does not build, pad on $bus"
+    start_pad "$bus" "$MAC_PAD" --fixed 1 --stream 1 || nok "fake pad did not become ready"
+    start_virtual --type 1 --mac "$MAC_VIRT" --pad-mac "$MAC_PAD" --features 81,a9 --hold 1
+    if [ "$bus" = usb ]; then
+        check "one is read from the pad" wait_virtual '^feature a9 len=9 data=a9a5a5a5a5a5a5a5a5$'
+        check "the MAC one carries the emulated MAC" wait_virtual "^feature 81 len=7 data=81$mac_le\$"
+    else
+        check "they fail" wait_virtual '^feature a9 failed'
+    fi
+    stop_virtual
+    stop_pads
+done
+
 # SDL, which most games sit on, through its HIDAPI driver (hidraw) and its evdev
 # one: it must find the emulated pad as the Sony pad it is, and a rumble it
 # plays must reach the pad.

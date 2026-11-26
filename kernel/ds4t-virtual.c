@@ -124,7 +124,8 @@ static void ds4_calibration_report(struct ds4t_virtual *v, u8 reportnum,
 
 /*
  * Fills buf with the feature report hid-playstation asks for; returns its
- * size, or -EINVAL for one this pad type does not have. len is the room.
+ * size, -ENOENT for a DS4 one left to the pad (ds4t_virt_get_feature()), or
+ * -EINVAL for one a DualSense does not have. len is the room.
  */
 static int ds4t_virt_feature(struct ds4t_virtual *v, u8 reportnum, u8 *buf,
 			     size_t len)
@@ -165,7 +166,7 @@ static int ds4t_virt_feature(struct ds4t_virtual *v, u8 reportnum, u8 *buf,
 			report[42] = 0x20;
 			break;
 		default:
-			return -EINVAL;
+			return -ENOENT;	/* asked of the pad itself */
 		}
 	} else {
 		switch (reportnum) {
@@ -197,6 +198,57 @@ static int ds4t_virt_feature(struct ds4t_virtual *v, u8 reportnum, u8 *buf,
 	size = min(size, len);
 	memcpy(buf, report, size);
 	return size;
+}
+
+/* Feature 0x81: the pad's MAC (USB only), replaced like the one in 0x12. */
+#define DS4_FEATURE_MAC		0x81
+
+/*
+ * A feature report the emulated DS4 does not build itself, read from the
+ * followed pad. Sony's own pad library (Unreal's WinDualShock, for one) reads
+ * more of them than hid-playstation does, and takes a pad that fails them for
+ * something else. Only a pad on USB has them in the layout a USB DS4 is asked
+ * for, so one on Bluetooth gets -EPIPE, a stalled request, as before.
+ */
+static int ds4t_virt_forward_feature(struct ds4t_virtual *v, u8 reportnum,
+				     u8 *buf, size_t len)
+{
+	struct ds4t_pad *pad;
+	int ret;
+
+	spin_lock_irq(&v->lock);
+	pad = v->src;
+	if (pad)
+		ds4t_pad_get(pad);
+	spin_unlock_irq(&v->lock);
+	if (!pad)
+		return -EPIPE;
+
+	down_read(&pad->exist_lock);
+	if (!pad->exist || pad->hdev->bus != BUS_USB)
+		ret = -EPIPE;
+	else
+		ret = hid_hw_raw_request(pad->hdev, reportnum, buf, len,
+					 HID_FEATURE_REPORT, HID_REQ_GET_REPORT);
+	up_read(&pad->exist_lock);
+	ds4t_pad_put(pad);
+
+	if (ret > 0 && reportnum == DS4_FEATURE_MAC)
+		memcpy(buf + 1, v->mac_le,
+		       min_t(size_t, sizeof(v->mac_le), ret - 1));
+	return ret;
+}
+
+static int ds4t_virt_get_feature(struct ds4t_virtual *v, u8 reportnum,
+				 u8 *buf, size_t len)
+{
+	int ret = ds4t_virt_feature(v, reportnum, buf, len);
+
+	if (ret != -ENOENT)
+		return ret;
+	if (v->type != DS4T_VIRTUAL_DS4)
+		return -EINVAL;
+	return ds4t_virt_forward_feature(v, reportnum, buf, len);
 }
 
 /* ------------------------------------------------------------------ output */
@@ -383,7 +435,7 @@ static int ds4t_virt_ll_raw_request(struct hid_device *hdev,
 	struct ds4t_virtual *v = ds4t_virt_of(hdev);
 
 	if (rtype == HID_FEATURE_REPORT && reqtype == HID_REQ_GET_REPORT)
-		return ds4t_virt_feature(v, reportnum, buf, len);
+		return ds4t_virt_get_feature(v, reportnum, buf, len);
 	/* An output report sent as SET_REPORT is still rumble and LED. */
 	if (rtype == HID_OUTPUT_REPORT && reqtype == HID_REQ_SET_REPORT)
 		return ds4t_virt_ll_output_report(hdev, buf, len);

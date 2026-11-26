@@ -6,7 +6,8 @@
 // script to check.
 //
 //   virtual-check --type 1|2 --mac XX:.. [--pad-mac XX:..] [--inject]
-//                 [--rumble] [--hidraw-rumble usb|bt] [--hold SECONDS]
+//                 [--rumble] [--hidraw-rumble usb|bt] [--features ID,..]
+//                 [--hold SECONDS]
 //   virtual-check --observe --name NAME [--hold SECONDS] [--watch]
 //
 // With --observe it touches nothing: it only reads the state of the gamepad
@@ -16,6 +17,8 @@
 //
 // --hidraw-rumble writes a rumble report straight to the virtual pad's hidraw
 // node, the way Steam and SDL do, in the USB or the Bluetooth layout.
+// --features reads each feature report (hex IDs) from the virtual pad's hidraw
+// node, the way a game's pad library does, and prints what came back.
 // --pad-mac names the fake pad to follow (its HID id is found through sysfs);
 // without it nothing is followed and --inject sets the input instead. Dies, and
 // with it the virtual controller, on SIGTERM or when --hold runs out.
@@ -23,6 +26,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <linux/hidraw.h>
 #include <linux/input.h>
 #include <poll.h>
 #include <signal.h>
@@ -214,6 +218,30 @@ static ssize_t hidraw_rumble(int fd, int type, int bluetooth)
 	return write(fd, r, len);
 }
 
+// Prints "feature XX len=N data=HEX" or "feature XX failed: ERROR" per ID in
+// the comma-separated hex list ids.
+static void read_features(int fd, const char *ids)
+{
+	char *list = strdup(ids), *save = NULL;
+
+	for (char *tok = strtok_r(list, ",", &save); tok;
+	     tok = strtok_r(NULL, ",", &save)) {
+		unsigned char buf[64] = { (unsigned char)strtoul(tok, NULL, 16) };
+		int n = ioctl(fd, HIDIOCGFEATURE(sizeof(buf)), buf);
+
+		if (n < 0) {
+			printf("feature %02x failed: %s\n", buf[0], strerror(errno));
+			continue;
+		}
+		printf("feature %02x len=%d data=", buf[0], n);
+		for (int i = 0; i < n; i++)
+			printf("%02x", buf[i]);
+		printf("\n");
+	}
+	fflush(stdout);
+	free(list);
+}
+
 // A DualShock 4 input report with a known state, for DS4T_IOC_CTL_INJECT.
 static void fill_injected(struct ds4t_feature *report)
 {
@@ -236,6 +264,7 @@ int main(int argc, char **argv)
 	const char *mac = NULL, *pad_mac = NULL;
 	int type = 0, inject = 0, do_rumble = 0, observe = 0, watch = 0, hold = 3, fd, ev;
 	const char *hidraw_layout = NULL;
+	const char *features = NULL;
 	char path[64];
 
 	for (int i = 1; i < argc; i++) {
@@ -251,6 +280,8 @@ int main(int argc, char **argv)
 			g_event_name = argv[++i];
 		else if (!strcmp(argv[i], "--hidraw-rumble") && i + 1 < argc)
 			hidraw_layout = argv[++i];
+		else if (!strcmp(argv[i], "--features") && i + 1 < argc)
+			features = argv[++i];
 		else if (!strcmp(argv[i], "--watch"))
 			watch = 1;
 		else if (!strcmp(argv[i], "--observe"))
@@ -345,6 +376,17 @@ int main(int argc, char **argv)
 			close(raw);
 	}
 
+	if (features) {
+		int raw = open_hidraw_by_mac(mac);
+
+		if (raw < 0)
+			printf("no hidraw node for the virtual pad\n");
+		else
+			read_features(raw, features);
+		if (raw >= 0)
+			close(raw);
+	}
+
 	for (int i = 0; i < hold * 10 && !g_stop; i++)
 		sleep_ms(100);
 	// What the game still sees at the end, e.g. after the pad was unplugged.
@@ -353,7 +395,8 @@ int main(int argc, char **argv)
 
 usage:
 	fprintf(stderr, "usage: virtual-check --type 1|2 --mac MAC [--pad-mac MAC] "
-			"[--inject] [--rumble] [--hidraw-rumble usb|bt] [--hold S]\n"
+			"[--inject] [--rumble] [--hidraw-rumble usb|bt] [--features ID,..] "
+			"[--hold S]\n"
 			"       virtual-check --observe --name NAME [--hold S] [--watch]\n");
 	return 2;
 }

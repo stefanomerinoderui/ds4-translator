@@ -46,6 +46,12 @@
 #define FEATURE_PAIRING_SIZE 16
 #define FEATURE_FIRMWARE 0xA3
 #define FEATURE_FIRMWARE_SIZE 49
+// Two of the reports only a real pad answers: its MAC again, and one that
+// stands for the rest (a pattern only, no meaning).
+#define FEATURE_MAC_USB 0x81
+#define FEATURE_MAC_USB_SIZE 7
+#define FEATURE_OTHER 0xA9
+#define FEATURE_OTHER_SIZE 9
 
 // CRC32 as hid-playstation computes it for Bluetooth feature reports: the seed
 // byte first, then the report including its ID.
@@ -152,12 +158,16 @@ static int answer_get_report(int fd, const struct uhid_get_report_req *req)
 		size = FEATURE_PAIRING_SIZE;
 	else if (req->rnum == FEATURE_FIRMWARE)
 		size = FEATURE_FIRMWARE_SIZE;
+	else if (req->rnum == FEATURE_MAC_USB)
+		size = FEATURE_MAC_USB_SIZE;
+	else if (req->rnum == FEATURE_OTHER)
+		size = FEATURE_OTHER_SIZE;
 
 	if (size) {
 		ev.u.get_report_reply.size = size;
 		memset(ev.u.get_report_reply.data, 0xA5, size);
 		ev.u.get_report_reply.data[0] = req->rnum;
-		if (req->rnum == FEATURE_PAIRING)
+		if (req->rnum == FEATURE_PAIRING || req->rnum == FEATURE_MAC_USB)
 			memcpy(&ev.u.get_report_reply.data[1], g_mac, sizeof(g_mac));
 		if (req->rnum == FEATURE_CAL_BT) {
 			// A Bluetooth calibration report with a valid CRC whose gyro
