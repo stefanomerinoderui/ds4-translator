@@ -321,8 +321,7 @@ check "and gives it back" wait_driver "$MAC_A" "$FALLBACK"
 stop_pads
 
 echo "# 11. no kernel splats across the whole run"
-check "no oops, KASAN/KFENCE report, slab corruption or lockdep splat in dmesg" \
-    bash -c "! dmesg | tail -n +$((dmesg_mark + 1)) | grep -Eq 'BUG:|Oops|KASAN|KFENCE|Poison overwritten|Redzone|Object already free|WARNING: CPU|WARNING: .*lock|possible circular'"
+check_no_splat "$dmesg_mark"
 
 echo
 echo "$pass passed, $fail failed"

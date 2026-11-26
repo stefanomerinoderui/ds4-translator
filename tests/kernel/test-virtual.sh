@@ -206,8 +206,7 @@ unset DS4_RUNTIME_DIR DS4_STATE_DIR DS4_CONFIG_PATH
 check "rmmod works once the daemon is gone" rmmod hid_ds4_translator
 
 echo "# no kernel splats across the whole run"
-check "no oops, KASAN/KFENCE report, slab corruption or lockdep splat in dmesg" \
-    bash -c "! dmesg | tail -n +$((dmesg_mark + 1)) | grep -Eq 'BUG:|Oops|KASAN|KFENCE|Poison overwritten|Redzone|Object already free|WARNING: CPU|WARNING: .*lock|possible circular'"
+check_no_splat "$dmesg_mark"
 
 echo
 echo "$pass passed, $fail failed"

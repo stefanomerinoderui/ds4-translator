@@ -42,8 +42,20 @@ fi
 g++ -std=c++17 -Wall -Wextra -Werror -O2 -I"$ROOT/src" -o "$BUILD/transport-check" \
     "$HERE/transport-check.cpp" "$ROOT/src/driver-transport.cpp"
 
-# Every suite in one VM boot (run-suites.sh); the run fails if any does. With
-# KERNEL_DIR set, that tree's kernel is booted, not the host's.
-RUN=(--run)
-[ -n "${KERNEL_DIR:-}" ] && RUN=(--run "$KERNEL_DIR")
-exec vng "${RUN[@]}" --append "slub_debug=FZPU kfence.sample_interval=1 modprobe.blacklist=hid_ds4_translator,ds4t_gadget" --user root --exec "$HERE/run-suites.sh $ROOT/kernel/hid-ds4-translator.ko $BUILD $ROOT/build/ds4-translator $ROOT/build/ds4-ctl"
+APPEND="slub_debug=FZPU kfence.sample_interval=1 modprobe.blacklist=hid_ds4_translator,ds4t_gadget"
+SUITES="$HERE/run-suites.sh $ROOT/kernel/hid-ds4-translator.ko $BUILD $ROOT/build/ds4-translator $ROOT/build/ds4-ctl"
+
+# On the host's kernel every suite runs in one VM boot (run-suites.sh); the
+# run fails if any does.
+if [ -z "${KERNEL_DIR:-}" ]; then
+    exec vng --run --append "$APPEND" --user root --exec "$SUITES"
+fi
+
+# On a debug kernel (KERNEL_DIR), one boot per suite: lockdep turns itself
+# off after its first report, which would leave the suites after it unchecked.
+rc=0
+for suite in binder virtual hotswap gadget faults; do
+    echo "=== $suite"
+    vng --run "$KERNEL_DIR" --append "$APPEND" --user root --exec "$SUITES $suite" || rc=1
+done
+exit "$rc"

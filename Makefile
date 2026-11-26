@@ -234,7 +234,14 @@ kernel-test: kernel
 # The first build takes a while; later ones are incremental.
 kernel-test-debug:
 	@test -n "$(KERNEL_SRC)" || { echo "kernel-test-debug: set KERNEL_SRC to a kernel source tree" >&2; exit 2; }
-	cd "$(KERNEL_SRC)" && vng --build -f "$(CURDIR)/tests/kernel/debug.config"
+	@# vng only applies a fragment to a tree with no .config yet; merge it into
+	@# an existing one, so a change to debug.config reaches a built tree too.
+	cd "$(KERNEL_SRC)" && if [ -f .config ]; then \
+		scripts/kconfig/merge_config.sh -m .config "$(CURDIR)/tests/kernel/debug.config" && \
+		$(MAKE) olddefconfig && vng --build; \
+	else \
+		vng --build -f "$(CURDIR)/tests/kernel/debug.config"; \
+	fi
 	KERNEL_DIR="$(KERNEL_SRC)" tests/kernel/run-vm.sh
 
 # Qt 6 settings GUI (ui/). Deliberately kept out of `all`: it needs Qt 6 +

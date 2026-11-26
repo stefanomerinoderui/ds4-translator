@@ -449,11 +449,12 @@ access, by design. This is already true of the `unlink` method.
   device and never looks further at one whose version is not a real pad's
   (`0x0100`); seen in a `WINEDEBUG=+hid` log on real hardware. So `functionfs`,
   whose gadget now carries `bcdDevice` 0x0100, stays the DS4 default and
-  `kernel` stays opt-in; `kernel-usb` gives games the same USB device as
-  `functionfs` with the translation in the kernel, but has not run in a game
-  yet. Not yet known: whether the
-  DualSense type, which `uhid` never had trouble with, is detected, and why
-  Rocket League gets no rumble from the DS4. The daemon's
+  `kernel` stays opt-in. `kernel-usb` gives games a real USB device too, with
+  the translation in the kernel; on real hardware it works in Satisfactory and
+  in Dead by Daylight, which never detected the pad on `functionfs` either.
+  Not yet known: whether the DualSense type, which `uhid` never had trouble
+  with, is detected. Rocket League gives a DS4 no rumble even on Windows with
+  a real pad over USB, so that one is the game's. The daemon's
   `ds4-ctl led`/`identify` write to the physical pad directly and are
   overwritten by the module's next output report, which it builds from the
   game's own rumble and LED state.
@@ -467,7 +468,14 @@ access, by design. This is already true of the `unlink` method.
   `tests/kernel/debug.config` (KASAN, lockdep, atomic-sleep and object
   debugging, UBSAN, kmemleak, failslab) and runs every suite on it, plus
   `test-faults.sh`: each allocation of the create ioctl failed in turn, for
-  both frontends, then a kmemleak scan.
+  both frontends, then a kmemleak scan. Run on 6.18, one VM boot per suite:
+  every suite passes, every injected failure unwinds, nothing leaks. It found
+  two upstream bugs, neither in this module, that the suites now step around:
+  `hid_add_device()` ignores a failed `dev_set_name()` and oopses on the NULL
+  name (failslab is kept off that call), and `hid-playstation`'s DualSense
+  output worker reports the headset jack under its own lock, the reverse of
+  its rumble path's order (lockdep; reported as KNOWN, and lockdep is off for
+  the rest of that suite's boot).
 - **Making `driver` the default.** It stays opt-in until the two points
   above are settled; flipping a default is a decision for the maintainer,
   not something this work can justify with a fake pad.

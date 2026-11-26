@@ -20,6 +20,36 @@ pad_pids=()
 attach_pid=
 
 ok()   { echo "ok   - $1"; pass=$((pass + 1)); }
+
+# What a kernel bug leaves in dmesg: an oops, a KASAN/KFENCE/UBSAN report, slab
+# corruption, a lockdep or debug-objects splat, sleeping in atomic context.
+SPLAT_RE='BUG:|Oops|KASAN|KFENCE|UBSAN|Poison overwritten|Redzone|Object already free|WARNING: CPU|WARNING: .*lock|possible circular|sleeping function called|ODEBUG'
+
+# The final check of each suite: no splat since dmesg line $1; on failure the
+# splat itself is printed, the only trace of it the run keeps.
+check_no_splat() { # <dmesg line mark>
+    local new
+    new=$(dmesg | tail -n +$(($1 + 1)))
+    # Known, upstream, not this module's: hid-playstation's DualSense output
+    # worker reports the headset jack while holding its own lock, the reverse
+    # of its rumble path's order (lockdep, kernel 6.18). Only when it is the
+    # one report and nothing of ours is in it.
+    local report
+    report=$(grep -E -A80 "$SPLAT_RE" <<<"$new")
+    if [ "$(grep -Ec "$SPLAT_RE" <<<"$new")" = 1 ] &&
+       grep -q 'dualsense_output_worker' <<<"$report" && grep -q 'dualsense_play_effect' <<<"$report" &&
+       ! grep -Eq 'ds4t_|hid_ds4_translator' <<<"$report"; then
+        echo "KNOWN - upstream hid-playstation lock order (DualSense jack switch under ps_dev->lock); lockdep is off from here"
+        ok "no oops, sanitizer report, slab corruption or lockdep splat in dmesg (but the known one)"
+        return
+    fi
+    if grep -Eq "$SPLAT_RE" <<<"$new"; then
+        nok "no oops, sanitizer report, slab corruption or lockdep splat in dmesg"
+        grep -E -B2 -A40 "$SPLAT_RE" <<<"$new" | head -n 120
+    else
+        ok "no oops, sanitizer report, slab corruption or lockdep splat in dmesg"
+    fi
+}
 nok()  { echo "FAIL - $1"; fail=$((fail + 1)); }
 check() { local desc=$1; shift; if "$@"; then ok "$desc"; else nok "$desc"; fi; }
 

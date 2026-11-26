@@ -278,8 +278,7 @@ stop_pads
 check "rmmod of both modules works at the end" bash -c 'rmmod ds4t_gadget && rmmod hid_ds4_translator'
 
 echo "# no kernel splats across the whole run"
-check "no oops, KASAN/KFENCE report, slab corruption or lockdep splat in dmesg" \
-    bash -c "! dmesg | tail -n +$((dmesg_mark + 1)) | grep -Eq 'BUG:|Oops|KASAN|KFENCE|Poison overwritten|Redzone|Object already free|WARNING: CPU|WARNING: .*lock|possible circular|sleeping function called'"
+check_no_splat "$dmesg_mark"
 
 echo
 echo "$pass passed, $fail failed"
