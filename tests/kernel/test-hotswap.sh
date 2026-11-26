@@ -130,6 +130,32 @@ for backend in "${backends[@]}"; do
     scenario "the same with an emulation type change while on USB" "$backend" set-type dualsense
 done
 
+# Turning emulation on from "none" while a game is running: the module taking
+# the pad over is the only remove the game may see. The daemon used to unbind
+# and rebind the pad as well, so it vanished, came back and vanished again
+# within a second, which Wine's HID bus did not survive.
+echo "# none, then ds4, with the pad on hid-playstation in between (kernel backend)"
+printf 'hide_method=driver\nbackend_ds4=kernel\nbackend_dualsense=kernel\n' >"$DS4_CONFIG_PATH"
+rm -f /tmp/daemon.log
+start_pad bt "$MAC_PAD" --fixed 1 --stream 1 || nok "Bluetooth pad did not become ready"
+"$DAEMON" -t none >/tmp/daemon.log 2>&1 &
+daemon_pid=$!
+check "the daemon starts with emulation off" wait_log 'Physical controller left untouched'
+phys_id=$(basename "$(hid_dev_by_mac "$MAC_PAD")")
+# How often hid-playstation has bound the physical pad so far.
+phys_binds() { dmesg | grep -c "playstation $phys_id: Registered"; }
+binds_before=$(phys_binds)
+"$DS4CTL" set-type ds4 >/tmp/ctl.log 2>&1
+check "the emulated pad shows up" pad_shows "$DS4_NAME" "$BT_STATE" 10
+check "the pad is not unbound and rebound on top of the takeover" \
+    bash -c "! grep -q 'Forcing physical controller re-enumeration' /tmp/daemon.log"
+binds_after=$(phys_binds)
+echo "# hid-playstation bound $phys_id $((binds_after - binds_before)) more time(s)"
+check "the physical pad does not come back on hid-playstation in between" \
+    test "$binds_after" -eq "$binds_before"
+stop_daemon
+stop_pads
+
 unset DS4_RUNTIME_DIR DS4_STATE_DIR DS4_CONFIG_PATH DS4_TEST_UHID_USB_IS_PHYSICAL
 
 echo "# no kernel splats across the whole run"

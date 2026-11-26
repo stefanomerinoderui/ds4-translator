@@ -3991,8 +3991,14 @@ int main(int argc, char* argv[]) {
             // had the physical device open, and doesn't notify hotplug-
             // aware apps of a newly-visible device either. Only force this
             // when hidden-ness actually changed (not e.g. ds4<->dualsense,
-            // which doesn't affect what other apps can see).
-            if (had_physical &&
+            // which doesn't affect what other apps can see). Never under the
+            // driver hide method: the module taking the pad over (or handing
+            // it back and rescanning) already is a genuine remove+add, and a
+            // rebind on top of it makes the pad vanish, come back and vanish
+            // again within a second -- which Wine's HID bus (winedevice.exe)
+            // has been seen not to survive, leaving a running game with no
+            // controller at all.
+            if (had_physical && g_hide_method != HIDE_METHOD_DRIVER &&
                 controller_type_hides_physical(old_type) != controller_type_hides_physical(target_type)) {
                 std::cout << "Forcing physical controller re-enumeration (unbind/rebind) so already-running apps pick up the visibility change..." << std::endl;
                 rebind_physical_hid_driver(disconnected_phy_name);
