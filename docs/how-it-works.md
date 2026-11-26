@@ -191,7 +191,7 @@ Two known limits:
 The daemon uses the kernel's User-space HID (`/dev/uhid`) driver to create a virtual USB device:
 * **Report Descriptors**: Emulates either a standard DualShock 4 USB controller or a DualSense Wireless Controller connected via USB using their authentic HID report descriptors.
 * **Firmware & Identity Matching**:
-  - The virtual controller reports the official hardware version `0x8111` in `UHID_CREATE2`.
+  - The virtual controller reports version `0x8111` in `UHID_CREATE2` (what `hid-playstation` makes of a real pad's). The `functionfs` gadget instead carries a real pad's USB `bcdDevice`, `0x0100`, which is what Wine hands games: Sony's own pad library skips a pad with any other.
   - It exposes a virtual MAC address (`74:e7:d6:3a:47:e8`) that matches the `uniq` field in UHID registration and the responses to Feature Reports `0x09` (DualSense pairing) and `0x12` (DS4 pairing).
   - It handles `UHID_GET_REPORT` and responds to Feature Reports `0x05` (calibration data) and `0x20` (firmware info) with authentic byte payloads from real controllers. This satisfies game security checks (like those in native PlayStation PC ports like *Jedi: Survivor*) which would otherwise reject mock devices.
 

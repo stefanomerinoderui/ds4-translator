@@ -682,12 +682,16 @@ struct GadgetIdentity {
 };
 
 static const struct GadgetIdentity *gadget_identity(int target_type) {
+    // bcdDevice 0x0100, as on the real pads. (0x8111 is not theirs: it is
+    // what hid-playstation turns their version into on the input device.)
+    // Sony's own pad library -- Unreal's WinDualShock, behind Proton --
+    // looks at the version and skips a pad that has any other.
     static const struct GadgetIdentity ds4 = {
-        "0x054c\n", "0x05c4\n", "0x8111\n", "Sony Computer Entertainment\n",
+        "0x054c\n", "0x05c4\n", "0x0100\n", "Sony Computer Entertainment\n",
         "Wireless Controller", true, NULL, NULL, NULL
     };
     static const struct GadgetIdentity dualsense = {
-        "0x054c\n", "0x0ce6\n", "0x8111\n", "Sony Interactive Entertainment\n",
+        "0x054c\n", "0x0ce6\n", "0x0100\n", "Sony Interactive Entertainment\n",
         "DualSense Wireless Controller", true, NULL, NULL, NULL
     };
     static const struct GadgetIdentity xbox360 = {

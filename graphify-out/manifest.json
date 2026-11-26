@@ -66,9 +66,9 @@
     "semantic_hash": "d9fc64b3835c61aa621af4dda39e3be5"
   },
   "src/functionfs-backend.c": {
-    "mtime": 1795532080.5474865,
-    "seen": 1795532751.8970673,
-    "ast_hash": "1fb141cb44adf395327af6fdde3a2a67",
+    "mtime": 1795700443.684341,
+    "seen": 1795700779.1665165,
+    "ast_hash": "077d9a81a6dc7e171b108bc501d47f4f",
     "semantic_hash": ""
   },
   "src/functionfs-backend.h": {
@@ -558,15 +558,15 @@
     "semantic_hash": ""
   },
   "docs/how-it-works.md": {
-    "mtime": 1795554136.1764586,
-    "seen": 1795554315.050857,
-    "ast_hash": "c8d316f1147a1ee370f847e8308a9f89",
+    "mtime": 1795700592.944104,
+    "seen": 1795700779.1667821,
+    "ast_hash": "f37c387a998984eefe29c317bff8d223",
     "semantic_hash": ""
   },
   "docs/kernel-driver.md": {
-    "mtime": 1795616140.6634285,
-    "seen": 1795616337.8866796,
-    "ast_hash": "de876ae2f76705e97497a921b719e330",
+    "mtime": 1795700592.9437175,
+    "seen": 1795700779.1667848,
+    "ast_hash": "804694842de10f6a795e153611be3878",
     "semantic_hash": ""
   },
   "docs/security-findings.md": {
@@ -798,9 +798,9 @@
     "semantic_hash": ""
   },
   "tests/kernel/test-hotswap.sh": {
-    "mtime": 1795697710.8396418,
-    "seen": 1795698255.7360766,
-    "ast_hash": "afec9dc8a3f1770eec9c46e994e6f9d5",
+    "mtime": 1795700454.214041,
+    "seen": 1795700779.1666362,
+    "ast_hash": "ad58f93d81357c494b356e109ff0812f",
     "semantic_hash": ""
   },
   "tests/unit/test_bt_suppression.cpp": {

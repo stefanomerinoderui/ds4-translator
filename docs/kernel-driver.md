@@ -423,9 +423,13 @@ access, by design. This is already true of the `unlink` method.
 
 - **The `kernel` backend in games.** Rumble and input work in a browser
   (evdev) and in the VM through SDL's HIDAPI and evdev drivers. Its virtual pad
-  has no USB parent, like `uhid`'s, and Satisfactory (the known case) does not
-  detect it as a DualShock 4 -- reported on real hardware -- so `functionfs`
-  stays the DS4 default and `kernel` stays opt-in. Not yet known: whether the
+  has no USB parent, like `uhid`'s, so Wine has no USB version to give a game
+  and reports 0. Satisfactory (the known case, Proton) reads pads through
+  Unreal's WinDualShock plugin, which calls `HidD_GetAttributes` on every HID
+  device and never looks further at one whose version is not a real pad's
+  (`0x0100`); seen in a `WINEDEBUG=+hid` log on real hardware. So `functionfs`,
+  whose gadget now carries `bcdDevice` 0x0100, stays the DS4 default and
+  `kernel` stays opt-in. Not yet known: whether the
   DualSense type, which `uhid` never had trouble with, is detected, and why
   Rocket League gets no rumble from the DS4. The daemon's
   `ds4-ctl led`/`identify` write to the physical pad directly and are

@@ -54,6 +54,15 @@ stop_daemon() {
     daemon_pid=
 }
 
+# Whether the Sony USB device (the functionfs gadget) has bcdDevice $1.
+sony_usb_version_is() { # <bcdDevice>
+    local d
+    for d in /sys/bus/usb/devices/*; do
+        [ "$(cat "$d/idVendor" 2>/dev/null)" = 054c ] && { grep -qx "$1" "$d/bcdDevice"; return; }
+    done
+    return 1
+}
+
 # Waits up to ~15 s for the daemon log to contain $1 at least $2 times.
 wait_log() { # <text> [count]
     local _
@@ -95,6 +104,10 @@ scenario() { # <title> <backend> [ds4-ctl command...]
     "$DAEMON" -t ds4 >/tmp/daemon.log 2>&1 &
     daemon_pid=$!
     check "the emulated pad follows Bluetooth" pad_shows "$DS4_NAME" "$BT_STATE"
+    if [ "$backend" = functionfs ]; then
+        # The version Wine hands games; Sony's pad library wants a real one.
+        check "the gadget has a real DS4's USB version" sony_usb_version_is 0100
+    fi
 
     # Every X the game sees across the switch: 16 (Bluetooth), then 17 (USB),
     # never 128, the centred stick of a neutral report.
