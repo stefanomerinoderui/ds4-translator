@@ -18,6 +18,13 @@ claimed pad's translated reports (`ds4t-translate.c`, also built in user space
 for the unit tests) with output and feature reports handled in the module
 (`ds4t-vcore.c`, `ds4t-vhid.c`). Closing the control node destroys it.
 
+With `ds4-ctl set-backend ds4 kernel-usb` that controller is a USB gadget on
+`dummy_hcd` instead (`ds4t-gadget.c`, a second module, `ds4t-gadget.ko`,
+loaded on demand): games then see a real USB pad, version and strings
+included, as with the daemon's `functionfs` backend. It is only built on a
+kernel with USB gadget support (`CONFIG_USB_LIBCOMPOSITE`); `udc=dummy_udc.0`
+pins the UDC it binds to.
+
 ## Build
 
 Needs the running kernel's headers. A Clang-built kernel (CachyOS) is

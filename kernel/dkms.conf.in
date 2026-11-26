@@ -5,6 +5,11 @@ PACKAGE_NAME="ds4-translator"
 PACKAGE_VERSION="@VERSION@"
 BUILT_MODULE_NAME[0]="hid-ds4-translator"
 DEST_MODULE_LOCATION[0]="/kernel/drivers/hid"
+# The kernel-usb backend's USB gadget. Kbuild only builds it on a kernel with
+# gadget support (CONFIG_USB_LIBCOMPOSITE), which every distribution kernel
+# that ships dummy_hcd has.
+BUILT_MODULE_NAME[1]="ds4t-gadget"
+DEST_MODULE_LOCATION[1]="/kernel/drivers/usb/gadget"
 AUTOINSTALL="yes"
 # kernel/Makefile builds with LLVM=1 on its own when the kernel itself was
 # built with Clang (CachyOS and others), as a module has to match.

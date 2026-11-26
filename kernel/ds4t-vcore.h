@@ -95,6 +95,10 @@ int ds4t_vcore_get_feature_sync(struct ds4t_virtual *v, u8 reportnum, u8 *buf,
 /* An output report from the host: rumble and LED, relayed to the pad. */
 void ds4t_vcore_output(struct ds4t_virtual *v, const u8 *data, size_t len);
 
+/* The USB gadget frontend registers itself here (ds4t-gadget.ko). */
+int ds4t_register_usb_frontend(const struct ds4t_vfront_ops *ops);
+void ds4t_unregister_usb_frontend(const struct ds4t_vfront_ops *ops);
+
 /* The hid_device frontend (ds4t-vhid.c). */
 extern const struct ds4t_vfront_ops ds4t_vhid_ops;
 

@@ -320,6 +320,7 @@ int ds4t_vcore_get_feature(struct ds4t_virtual *v, u8 reportnum, u8 *buf,
 		return ret;
 	return ds4t_virt_cached_feature(v, reportnum, buf, len);
 }
+EXPORT_SYMBOL_GPL(ds4t_vcore_get_feature);
 
 int ds4t_vcore_get_feature_sync(struct ds4t_virtual *v, u8 reportnum, u8 *buf,
 				size_t len)
@@ -475,6 +476,7 @@ void ds4t_vcore_output(struct ds4t_virtual *v, const u8 *data, size_t len)
 		ds4t_virt_queue_output(v);
 	spin_unlock_irqrestore(&v->lock, flags);
 }
+EXPORT_SYMBOL_GPL(ds4t_vcore_output);
 
 /* ------------------------------------------------------------------- input */
 
@@ -679,9 +681,51 @@ static void ds4t_virt_free(struct ds4t_virtual *v)
 	kfree(v);
 }
 
+/* The USB gadget frontend, while ds4t-gadget is loaded. */
+static const struct ds4t_vfront_ops *ds4t_usb_front;	/* ds4t_virt_mutex */
+
+int ds4t_register_usb_frontend(const struct ds4t_vfront_ops *ops)
+{
+	int ret = 0;
+
+	mutex_lock(&ds4t_virt_mutex);
+	if (ds4t_usb_front)
+		ret = -EBUSY;
+	else
+		ds4t_usb_front = ops;
+	mutex_unlock(&ds4t_virt_mutex);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(ds4t_register_usb_frontend);
+
+/* Only reached with no virtual using it: that one holds the module. */
+void ds4t_unregister_usb_frontend(const struct ds4t_vfront_ops *ops)
+{
+	mutex_lock(&ds4t_virt_mutex);
+	if (ds4t_usb_front == ops)
+		ds4t_usb_front = NULL;
+	mutex_unlock(&ds4t_virt_mutex);
+}
+EXPORT_SYMBOL_GPL(ds4t_unregister_usb_frontend);
+
+/*
+ * The frontend cfg asks for, with a reference on its module; NULL when the
+ * gadget module is not there. ds4t_virt_mutex held.
+ */
+static const struct ds4t_vfront_ops *ds4t_virt_get_front(u32 flags)
+{
+	const struct ds4t_vfront_ops *ops;
+
+	lockdep_assert_held(&ds4t_virt_mutex);
+	ops = flags & DS4T_VIRTUAL_F_USB ? ds4t_usb_front : &ds4t_vhid_ops;
+	if (!ops || !try_module_get(ops->owner))
+		return NULL;
+	return ops;
+}
+
 int ds4t_virtual_create(const struct ds4t_virtual_cfg *cfg)
 {
-	const struct ds4t_vfront_ops *ops = &ds4t_vhid_ops;
+	const struct ds4t_vfront_ops *ops;
 	struct ds4t_virtual *v;
 	struct ds4t_pad *pad = NULL;
 	int ret;
@@ -690,10 +734,20 @@ int ds4t_virtual_create(const struct ds4t_virtual_cfg *cfg)
 	if (cfg->type != DS4T_VIRTUAL_DS4 &&
 	    cfg->type != DS4T_VIRTUAL_DUALSENSE)
 		return -EINVAL;
+	if (cfg->flags & ~DS4T_VIRTUAL_F_USB)
+		return -EINVAL;
+	/* Outside the mutex: the gadget module's init registers under it. */
+	if ((cfg->flags & DS4T_VIRTUAL_F_USB) && !READ_ONCE(ds4t_usb_front))
+		request_module("ds4t_gadget");
 
 	mutex_lock(&ds4t_virt_mutex);
 	if (rcu_access_pointer(ds4t_virt)) {
 		ret = -EEXIST;
+		goto out;
+	}
+	ops = ds4t_virt_get_front(cfg->flags);
+	if (!ops) {
+		ret = -EOPNOTSUPP;
 		goto out;
 	}
 
@@ -701,7 +755,7 @@ int ds4t_virtual_create(const struct ds4t_virtual_cfg *cfg)
 		pad = ds4t_pad_find(cfg->hid_id);
 		if (!pad) {
 			ret = -ENODEV;
-			goto out;
+			goto err_ops;
 		}
 	}
 
@@ -710,7 +764,7 @@ int ds4t_virtual_create(const struct ds4t_virtual_cfg *cfg)
 		ret = PTR_ERR(v);
 		if (pad)
 			ds4t_pad_put(pad);
-		goto out;
+		goto err_ops;
 	}
 	v->ops = ops;
 	/* The reference moves to the virtual pad; the cache is read meanwhile. */
@@ -726,9 +780,14 @@ int ds4t_virtual_create(const struct ds4t_virtual_cfg *cfg)
 		RCU_INIT_POINTER(ds4t_virt, NULL);
 		synchronize_rcu();
 		ds4t_virt_free(v);
-		goto out;
+		goto err_ops;
 	}
 	WRITE_ONCE(v->live, true);
+	mutex_unlock(&ds4t_virt_mutex);
+	return 0;
+
+err_ops:
+	module_put(ops->owner);
 out:
 	mutex_unlock(&ds4t_virt_mutex);
 	return ret;
@@ -746,8 +805,11 @@ void ds4t_virtual_destroy(void)
 		WRITE_ONCE(v->live, false);
 		RCU_INIT_POINTER(ds4t_virt, NULL);
 		synchronize_rcu();	/* no input path is inside it any more */
+		const struct ds4t_vfront_ops *ops = v->ops;
+
 		v->ops->stop(v);	/* the host lets go of it */
 		ds4t_virt_free(v);
+		module_put(ops->owner);
 	}
 	mutex_unlock(&ds4t_virt_mutex);
 }

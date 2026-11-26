@@ -54,7 +54,7 @@ dmesg_mark=$(dmesg | wc -l)
 mount | grep -q debugfs || mount -t debugfs none /sys/kernel/debug
 modprobe uhid || { echo "uhid unavailable"; exit 1; }
 modprobe hid_playstation || { echo "hid_playstation unavailable"; exit 1; }
-rmmod hid_ds4_translator 2>/dev/null
+unload_modules
 insmod "$KO" || { echo "insmod failed"; exit 1; }
 
 # 1 is a DualShock 4, 2 a DualSense (DS4T_VIRTUAL_*).

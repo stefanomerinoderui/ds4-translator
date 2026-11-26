@@ -23,6 +23,9 @@ DEBUGFS=/sys/kernel/debug/ds4t
 # shellcheck source=lib.sh
 . "$(dirname "$0")/lib.sh"
 
+# The ABI the module and the tools here were built with.
+ABI=$(awk '/^#define DS4T_ABI_VERSION/ { print $3 }' "$(dirname "$0")/../../include/uapi/ds4t.h")
+
 # Stands in for the daemon: opens the control node (optionally naming the
 # emulated pad's MAC) and stays attached until detach/kill.
 attach() { # [ignore mac]
@@ -55,7 +58,7 @@ modprobe uhid || { echo "uhid unavailable"; exit 1; }
 modprobe hid_playstation || { echo "hid_playstation unavailable"; exit 1; }
 
 # A copy installed on the host (DKMS) must not stand in for the build under test.
-rmmod hid_ds4_translator 2>/dev/null
+unload_modules
 
 echo "# 0a. oracle: hid-playstation accepts the fake Bluetooth pad's calibration"
 # A valid CRC proves the seed (0xA3) used by src/translate.cpp; the payload's
@@ -75,7 +78,7 @@ check "pad stays on $FALLBACK" wait_driver "$MAC_A" "$FALLBACK"
 
 echo "# 1. attach: the pad is taken over and its nodes disappear"
 attach
-check "control open succeeded with ABI 4" grep -q 'attached abi=4' /tmp/attach.log
+check "control open succeeded with the current ABI" grep -q "attached abi=$ABI" /tmp/attach.log
 check "pad taken over by $DRIVER" wait_driver "$MAC_A" "$DRIVER"
 dev=$(hid_dev_by_mac "$MAC_A")
 check "no hidraw node" bash -c "! ls '$dev'/hidraw/* >/dev/null 2>&1"
@@ -150,7 +153,7 @@ check "node exists" bash -c "for _ in \$(seq 50); do [ -c '$node' ] && exit 0; s
 check "node is 0600 root" bash -c "[ \"\$(stat -c '%a %U' '$node')\" = '600 root' ]"
 info=$("$CLIENT" "$node" info)
 check "GET_INFO reports abi, ids and MAC" \
-    bash -c "grep -qi 'abi=4 bus=3 vendor=054c product=05c4 uniq=$MAC_B' <<<'$info' && grep -q 'hid_id=$hid_id' <<<'$info'"
+    bash -c "grep -qi 'abi=$ABI bus=3 vendor=054c product=05c4 uniq=$MAC_B' <<<'$info' && grep -q 'hid_id=$hid_id' <<<'$info'"
 reports=$("$CLIENT" "$node" read 5)
 check "read returns 5 USB input reports" \
     bash -c "[ \$(grep -c '^report id=01 len=64 ' <<<'$reports') = 5 ]"

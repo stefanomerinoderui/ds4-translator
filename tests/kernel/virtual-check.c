@@ -7,7 +7,7 @@
 //
 //   virtual-check --type 1|2 --mac XX:.. [--pad-mac XX:..] [--inject]
 //                 [--rumble] [--hidraw-rumble usb|bt] [--features ID,..]
-//                 [--hold SECONDS]
+//                 [--usb] [--fail-nth N] [--hold SECONDS]
 //   virtual-check --observe --name NAME [--hold SECONDS] [--watch]
 //
 // With --observe it touches nothing: it only reads the state of the gamepad
@@ -19,6 +19,11 @@
 // node, the way Steam and SDL do, in the USB or the Bluetooth layout.
 // --features reads each feature report (hex IDs) from the virtual pad's hidraw
 // node, the way a game's pad library does, and prints what came back.
+// --usb makes it a USB gadget (the kernel-usb backend; ds4t-gadget loaded, a
+// free UDC): usbhid then names the gamepad "<manufacturer> <product>".
+// --fail-nth makes the Nth fault-injection point the create ioctl reaches fail
+// (failslab, a debug kernel's /proc/thread-self/fail-nth), and prints how many
+// were left: 0 means the failure was injected.
 // --pad-mac names the fake pad to follow (its HID id is found through sysfs);
 // without it nothing is followed and --inject sets the input instead. Dies, and
 // with it the virtual controller, on SIGTERM or when --hold runs out.
@@ -218,6 +223,32 @@ static ssize_t hidraw_rumble(int fd, int type, int bluetooth)
 	return write(fd, r, len);
 }
 
+// Arms /proc/thread-self/fail-nth; reads back what is left of it (0 once the
+// failure has been injected, the count otherwise; it disarms itself).
+static int set_fail_nth(int n)
+{
+	FILE *f = fopen("/proc/thread-self/fail-nth", "w");
+
+	if (!f || fprintf(f, "%d", n) < 0 || fclose(f)) {
+		printf("fail-nth unavailable\n");
+		return -1;
+	}
+	return 0;
+}
+
+static int get_fail_nth(void)
+{
+	FILE *f = fopen("/proc/thread-self/fail-nth", "r");
+	int n = -1;
+
+	if (f) {
+		if (fscanf(f, "%d", &n) != 1)
+			n = -1;
+		fclose(f);
+	}
+	return n;
+}
+
 // Prints "feature XX len=N data=HEX" or "feature XX failed: ERROR" per ID in
 // the comma-separated hex list ids.
 static void read_features(int fd, const char *ids)
@@ -265,6 +296,9 @@ int main(int argc, char **argv)
 	int type = 0, inject = 0, do_rumble = 0, observe = 0, watch = 0, hold = 3, fd, ev;
 	const char *hidraw_layout = NULL;
 	const char *features = NULL;
+	char usb_name[160];
+	int usb = 0;
+	int fail_nth = 0, ret, err;
 	char path[64];
 
 	for (int i = 1; i < argc; i++) {
@@ -282,6 +316,10 @@ int main(int argc, char **argv)
 			hidraw_layout = argv[++i];
 		else if (!strcmp(argv[i], "--features") && i + 1 < argc)
 			features = argv[++i];
+		else if (!strcmp(argv[i], "--fail-nth") && i + 1 < argc)
+			fail_nth = atoi(argv[++i]);
+		else if (!strcmp(argv[i], "--usb"))
+			usb = 1;
 		else if (!strcmp(argv[i], "--watch"))
 			watch = 1;
 		else if (!strcmp(argv[i], "--observe"))
@@ -315,7 +353,14 @@ int main(int argc, char **argv)
 		return 0;
 	}
 
-	fd = open("/dev/ds4-translator/control", O_RDWR);
+	// A killed predecessor may still be releasing the node (closing it waits
+	// for its virtual controller to go): open is single, so retry a while.
+	for (int i = 0; i < 50; i++) {
+		fd = open("/dev/ds4-translator/control", O_RDWR);
+		if (fd >= 0 || errno != EBUSY)
+			break;
+		sleep_ms(100);
+	}
 	if (fd < 0) {
 		perror("open control");
 		return 1;
@@ -330,14 +375,27 @@ int main(int argc, char **argv)
 
 	memset(&cfg, 0, sizeof(cfg));
 	cfg.type = type;
+	if (usb) {
+		cfg.flags = DS4T_VIRTUAL_F_USB;
+		snprintf(usb_name, sizeof(usb_name), "%s %s",
+			 type == DS4T_VIRTUAL_DS4 ? "Sony Computer Entertainment" :
+			 "Sony Interactive Entertainment", DEVICE_NAME);
+		g_event_name = usb_name;
+	}
 	snprintf(cfg.name, sizeof(cfg.name), "%s", DEVICE_NAME);
 	snprintf(cfg.mac, sizeof(cfg.mac), "%s", mac);
 	if (pad_mac && hid_id_by_mac(pad_mac, cfg.hid_id, sizeof(cfg.hid_id))) {
 		fprintf(stderr, "no HID device with uniq %s\n", pad_mac);
 		return 1;
 	}
-	if (ioctl(fd, DS4T_IOC_CTL_CREATE_VIRTUAL, &cfg)) {
-		printf("create failed: %s\n", strerror(errno));
+	if (fail_nth && set_fail_nth(fail_nth))
+		return 1;
+	ret = ioctl(fd, DS4T_IOC_CTL_CREATE_VIRTUAL, &cfg);
+	err = errno;
+	if (fail_nth)
+		printf("fail-nth left=%d\n", get_fail_nth());
+	if (ret) {
+		printf("create failed: %s\n", strerror(err));
 		return 1;
 	}
 	printf("created following=%s\n", cfg.hid_id[0] ? cfg.hid_id : "-");
@@ -395,7 +453,7 @@ int main(int argc, char **argv)
 
 usage:
 	fprintf(stderr, "usage: virtual-check --type 1|2 --mac MAC [--pad-mac MAC] "
-			"[--inject] [--rumble] [--hidraw-rumble usb|bt] [--features ID,..] "
+			"[--inject] [--rumble] [--hidraw-rumble usb|bt] [--features ID,..] [--usb] "
 			"[--hold S]\n"
 			"       virtual-check --observe --name NAME [--hold S] [--watch]\n");
 	return 2;

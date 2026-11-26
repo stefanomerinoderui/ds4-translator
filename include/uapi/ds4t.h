@@ -36,7 +36,7 @@
 #include <linux/types.h>
 
 /* Bumped on any incompatible change to this header. */
-#define DS4T_ABI_VERSION	4
+#define DS4T_ABI_VERSION	5
 
 /* Largest report the node transfers (the largest real one is 78 bytes). */
 #define DS4T_MAX_REPORT		128
@@ -49,6 +49,13 @@
 /* ds4t_virtual_cfg.type */
 #define DS4T_VIRTUAL_DS4	1
 #define DS4T_VIRTUAL_DUALSENSE	2
+
+/*
+ * ds4t_virtual_cfg.flags. DS4T_VIRTUAL_F_USB: a USB gadget on a UDC (such as
+ * dummy_hcd's) instead of a bare HID device, so the host sees a real USB pad;
+ * needs the ds4t-gadget module, loaded on demand.
+ */
+#define DS4T_VIRTUAL_F_USB	0x1
 
 struct ds4t_info {
 	__u32 abi_version;		/* DS4T_ABI_VERSION of the module */
@@ -83,8 +90,9 @@ struct ds4t_link {
 /* ioctl argument of DS4T_IOC_CTL_CREATE_VIRTUAL. */
 struct ds4t_virtual_cfg {
 	__u32 type;			/* DS4T_VIRTUAL_* */
-	__u32 reserved;
-	char name[DS4T_NAME_LEN];	/* NUL-terminated device name */
+	__u32 flags;			/* DS4T_VIRTUAL_F_* */
+	/* NUL-terminated device name; with F_USB the USB product string */
+	char name[DS4T_NAME_LEN];
 	char mac[DS4T_MAC_LEN];		/* the virtual pad's uniq, NUL-terminated */
 	char hid_id[DS4T_HID_ID_LEN];	/* claimed pad to follow; empty: none */
 };
@@ -138,6 +146,8 @@ struct ds4t_virtual_cfg {
  * reports drive the virtual pad and the virtual pad's output reports reach it;
  * with none, the pad only moves on DS4T_IOC_CTL_INJECT. The MAC should be the
  * one given to DS4T_IOC_CTL_SET_IGNORE_MAC, so the module never claims it.
+ * With DS4T_VIRTUAL_F_USB it fails with -EOPNOTSUPP when the ds4t-gadget
+ * module cannot be loaded, and -EBUSY when no UDC is free.
  */
 #define DS4T_IOC_CTL_CREATE_VIRTUAL _IOW(DS4T_IOC_MAGIC, 0x13, struct ds4t_virtual_cfg)
 

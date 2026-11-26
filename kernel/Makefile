@@ -34,13 +34,15 @@ clean:
 # ENOSYS: hid_hw_output_report() returns -ENOSYS by contract when the
 # transport has no output endpoint, and the write path tests for it (as
 # hidraw does).
+# CAMELCASE: the USB descriptor fields (bLength, wMaxPacketSize, ...) are the
+# kernel's own names from <linux/usb/ch9.h>; --no-tree cannot tell.
 # Not every kernel's build tree ships checkpatch.pl; CHECKPATCH overrides it.
 CHECKPATCH ?= $(KDIR)/scripts/checkpatch.pl
 check:
 	$(CHECKPATCH) --no-tree --strict \
-		--ignore ALLOC_WITH_SIZEOF,ENOSYS \
+		--ignore ALLOC_WITH_SIZEOF,ENOSYS,CAMELCASE \
 		-f ds4t-driver.c -f ds4t-chardev.c -f ds4t-control.c \
-		-f ds4t-vcore.c -f ds4t-vcore.h -f ds4t-vhid.c \
+		-f ds4t-vcore.c -f ds4t-vcore.h -f ds4t-vhid.c -f ds4t-gadget.c \
 		-f ds4t-translate.c -f ds4t-translate.h \
 		-f ds4t-descriptors.h -f ds4t-internal.h
 

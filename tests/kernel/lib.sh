@@ -23,10 +23,24 @@ ok()   { echo "ok   - $1"; pass=$((pass + 1)); }
 nok()  { echo "FAIL - $1"; fail=$((fail + 1)); }
 check() { local desc=$1; shift; if "$@"; then ok "$desc"; else nok "$desc"; fi; }
 
+# Unloads the gadget module, then the main one. A killed daemon or tool may
+# still be releasing the control node (that closes asynchronously, after the
+# process is reaped) and so still hold them: retry for a few seconds.
+unload_modules() {
+    local _
+    for _ in $(seq 50); do
+        rmmod ds4t_gadget 2>/dev/null
+        rmmod hid_ds4_translator 2>/dev/null
+        lsmod | grep -q -e '^ds4t_gadget ' -e '^hid_ds4_translator ' || return 0
+        sleep 0.1
+    done
+    return 1
+}
+
 cleanup() {
     kill "${pad_pids[@]}" "$attach_pid" 2>/dev/null
     wait 2>/dev/null
-    rmmod hid_ds4_translator 2>/dev/null
+    unload_modules
 }
 trap cleanup EXIT
 

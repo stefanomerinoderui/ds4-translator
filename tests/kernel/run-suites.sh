@@ -20,4 +20,9 @@ rc=0
     "$DAEMON" "$DS4CTL" || rc=1
 "$HERE/test-hotswap.sh" "$KO" "$BUILD/fake-pad" "$BUILD/virtual-check" \
     "$DAEMON" "$DS4CTL" || rc=1
+"$HERE/test-gadget.sh" "$KO" "$BUILD/fake-pad" "$BUILD/virtual-check" \
+    "$DAEMON" "$DS4CTL" || rc=1
+# Last: it needs a debug kernel (skips itself otherwise) and fails allocations.
+"$HERE/test-faults.sh" "$KO" "$BUILD/fake-pad" "$BUILD/virtual-check" \
+    "$DAEMON" "$DS4CTL" || rc=1
 exit "$rc"
