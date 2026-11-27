@@ -2,7 +2,7 @@
 # in by the Makefile from the current working tree, so this is not meant to be
 # run directly from packaging/arch/.
 pkgbase=ds4-translator
-pkgname=(ds4-translator ds4-translator-ui)
+pkgname=(ds4-translator ds4-translator-ui ds4-translator-dkms)
 pkgver=@PKGVER@
 pkgrel=1
 pkgdesc="Maps a physical DualShock 4 to a virtual DualShock 4, DualSense or Xbox controller"
@@ -37,11 +37,25 @@ build() {
 package_ds4-translator() {
     pkgdesc="Maps a physical DualShock 4 to a virtual DualShock 4, DualSense or Xbox controller (daemon and ds4-ctl)"
     depends=(glibc gcc-libs libusb libbpf systemd kmod)
-    optdepends=('lib32-glibc: udev spoof shim for 32-bit games')
+    optdepends=('lib32-glibc: udev spoof shim for 32-bit games'
+                'ds4-translator-dkms: the "driver" hide method (claims the pad before any other driver) and the "kernel"/"kernel-usb" emulation backends')
     install=ds4-translator.install
 
     cd "$pkgbase-$pkgver"
     _make DESTDIR="$pkgdir" stage-cli
+}
+
+package_ds4-translator-dkms() {
+    pkgdesc="Kernel modules for ds4-translator: claim the physical DualShock 4 (hide method 'driver') and emulate the pad in-kernel (backends 'kernel', 'kernel-usb'), built by DKMS"
+    # Sources only, so no architecture; the module itself is GPL-2.0.
+    arch=(any)
+    license=(GPL-2.0-only)
+    depends=(dkms)
+    optdepends=('linux-headers: build the module for the stock kernel'
+                'linux-lts-headers: build the module for the LTS kernel')
+
+    cd "$pkgbase-$pkgver"
+    _make DESTDIR="$pkgdir" stage-dkms
 }
 
 package_ds4-translator-ui() {

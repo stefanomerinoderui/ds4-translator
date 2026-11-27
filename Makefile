@@ -38,6 +38,33 @@ STRICT_WARNINGS = -Wall -Wextra -Werror -Wshadow -Wformat=2 -Wformat-security \
                    -Wnull-dereference -Wpointer-arith -Wcast-align -Wundef -Wwrite-strings \
                    -Wno-missing-field-initializers
 
+# Stricter again for the product's own code (the daemon, ds4-ctl and the udev
+# shim), not for the tests: gtest's macros trip several of these. Chosen by
+# measuring the tree: every flag here is clean on it, and ones that mostly flag
+# established style were left out (-Wold-style-cast: 71 C-style casts of kernel
+# and libusb types; -Wswitch-enum: switches that are meant to have a default;
+# -Wlogical-op: `errno == EAGAIN || errno == EWOULDBLOCK`, the portable idiom).
+# Narrowing and sign changes matter here: report bytes, MAC octets and bit masks
+# are exactly where an implicit conversion silently drops bits.
+#
+# -Wduplicated-cond is GCC's alone and -Wformat-signedness only reached Clang in
+# version 19, so those two are kept when the compiler in use accepts them; an
+# unknown -W option is itself an error under -Werror, which broke
+# CXX=clang++ builds on older Clang.
+# $(call warning_if_supported,<compiler>,<c|c++>,<flag>)
+warning_if_supported = $(shell echo 'int main(void){return 0;}' | \
+    $(1) -x $(2) -Werror $(3) -fsyntax-only - >/dev/null 2>&1 && echo $(3))
+OPTIONAL_WARNINGS = -Wduplicated-cond -Wformat-signedness
+PRODUCT_WARNINGS_BASE = -Wconversion -Wsign-conversion -Wcast-qual \
+                   -Wredundant-decls -Wimplicit-fallthrough -Walloca -Wvla -Wfloat-equal
+PRODUCT_WARNINGS := $(PRODUCT_WARNINGS_BASE) \
+                   $(foreach w,$(OPTIONAL_WARNINGS),$(call warning_if_supported,$(CC),c,$(w)))
+PRODUCT_WARNINGS_CXX := $(PRODUCT_WARNINGS_BASE) \
+                   $(foreach w,$(OPTIONAL_WARNINGS),$(call warning_if_supported,$(CXX),c++,$(w))) \
+                   -Wmissing-declarations -Wextra-semi \
+                   -Wnon-virtual-dtor -Woverloaded-virtual \
+                   -Wzero-as-null-pointer-constant -Wsuggest-override
+
 BUILD_DIR = build
 UI_BUILD_DIR = ui/build
 UI_BINARY    = $(UI_BUILD_DIR)/ds4-translator-ui
@@ -57,8 +84,8 @@ ifeq ($(shell pkg-config --exists libusb-1.0 && echo yes),)
 endif
 UNBIND_CXXFLAGS := $(shell pkg-config --cflags libusb-1.0)
 UNBIND_LDFLAGS  := $(shell pkg-config --libs libusb-1.0)
-UNBIND_SRC      := src/hid-unbind-detect.cpp src/usb-hid-transport.cpp
-UNBIND_OBJ      := $(BUILD_DIR)/hid-unbind-detect.o $(BUILD_DIR)/usb-hid-transport.o
+UNBIND_SRC      := src/hid-unbind-detect.cpp src/usb-hid-transport.cpp src/driver-transport.cpp
+UNBIND_OBJ      := $(BUILD_DIR)/hid-unbind-detect.o $(BUILD_DIR)/usb-hid-transport.o $(BUILD_DIR)/driver-transport.o
 
 # HID-BPF replacement transport for the unbind hide method's Bluetooth
 # side (see src/hid-bpf-transport.h and src/hid-bpf/hid-bpf-transport.bpf.c)
@@ -92,9 +119,9 @@ HARDEN_FORTIFY     = -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=2
 HARDEN_LDFLAGS     = -pie -Wl,-z,relro,-z,now
 HARDEN_SHARED_LDFLAGS = -Wl,-z,relro,-z,now
 
-CXXFLAGS = -O3 $(STRICT_WARNINGS) $(HARDEN_FLAGS) $(HARDEN_FORTIFY) -std=c++17 -DDS4_VERSION=\"$(VERSION)\" \
+CXXFLAGS = -O3 $(STRICT_WARNINGS) $(PRODUCT_WARNINGS_CXX) $(HARDEN_FLAGS) $(HARDEN_FORTIFY) -std=c++17 -DDS4_VERSION=\"$(VERSION)\" \
            -DHID_BPF_OBJ_PATH=\"$(HIDBPF_INSTALL_PATH)\" $(UNBIND_CXXFLAGS) $(HIDBPF_CXXFLAGS)
-CFLAGS   = -O3 $(STRICT_WARNINGS) $(HARDEN_FLAGS) $(HARDEN_FORTIFY) -DDS4_VERSION=\"$(VERSION)\" $(UNBIND_CXXFLAGS)
+CFLAGS   = -O3 $(STRICT_WARNINGS) $(PRODUCT_WARNINGS) $(HARDEN_FLAGS) $(HARDEN_FORTIFY) -DDS4_VERSION=\"$(VERSION)\" $(UNBIND_CXXFLAGS)
 LDFLAGS  = -lpthread $(HARDEN_LDFLAGS) $(UNBIND_LDFLAGS) $(HIDBPF_LDFLAGS) $(ENV_LDFLAGS)
 
 TARGET_DAEMON = $(BUILD_DIR)/ds4-translator
@@ -118,9 +145,9 @@ CTL_OBJ    = $(BUILD_DIR)/ctl.o $(BUILD_DIR)/ipc-client.o
 all: $(TARGET_DAEMON) $(TARGET_CTL) $(TARGET_SPOOF) $(TARGET_SPOOF32) $(HIDBPF_BPF_OBJ)
 
 # Debug build: no optimisation, debug symbols, DS4_DEBUG enabled
-debug: CXXFLAGS = -O0 -g $(STRICT_WARNINGS) $(HARDEN_FLAGS) -std=c++17 -DDS4_DEBUG -DDS4_VERSION=\"$(VERSION)\" \
+debug: CXXFLAGS = -O0 -g $(STRICT_WARNINGS) $(PRODUCT_WARNINGS_CXX) $(HARDEN_FLAGS) -std=c++17 -DDS4_DEBUG -DDS4_VERSION=\"$(VERSION)\" \
                   -DHID_BPF_OBJ_PATH=\"$(HIDBPF_INSTALL_PATH)\" $(UNBIND_CXXFLAGS) $(HIDBPF_CXXFLAGS)
-debug: CFLAGS   = -O0 -g $(STRICT_WARNINGS) $(HARDEN_FLAGS) -DDS4_DEBUG -DDS4_VERSION=\"$(VERSION)\" $(UNBIND_CXXFLAGS)
+debug: CFLAGS   = -O0 -g $(STRICT_WARNINGS) $(PRODUCT_WARNINGS) $(HARDEN_FLAGS) -DDS4_DEBUG -DDS4_VERSION=\"$(VERSION)\" $(UNBIND_CXXFLAGS)
 debug: clean all
 
 $(BUILD_DIR):
@@ -133,17 +160,22 @@ $(TARGET_CTL): $(CTL_OBJ)
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
 
 $(TARGET_SPOOF): $(SPOOF_SRC) | $(BUILD_DIR)
-	$(CC) -O3 -fPIC -shared $(HARDEN_COMMON) $(HARDEN_FORTIFY) $(HARDEN_SHARED_LDFLAGS) $(ENV_LDFLAGS) -o $@ $< -ldl -lpthread
+	$(CC) -O3 -fPIC -shared $(STRICT_WARNINGS) $(PRODUCT_WARNINGS) $(HARDEN_COMMON) $(HARDEN_FORTIFY) $(HARDEN_SHARED_LDFLAGS) $(ENV_LDFLAGS) -o $@ $< -ldl -lpthread
 
 $(TARGET_SPOOF32): $(SPOOF_SRC) | $(BUILD_DIR)
-	$(CC) -m32 -O3 -fPIC -shared $(HARDEN_COMMON) $(HARDEN_FORTIFY) $(HARDEN_SHARED_LDFLAGS) $(ENV_LDFLAGS) -o $@ $< -ldl -lpthread
+	$(CC) -m32 -O3 -fPIC -shared $(STRICT_WARNINGS) $(PRODUCT_WARNINGS) $(HARDEN_COMMON) $(HARDEN_FORTIFY) $(HARDEN_SHARED_LDFLAGS) $(ENV_LDFLAGS) -o $@ $< -ldl -lpthread
 
 
+# -MMD -MP: each object also depends on the headers it includes (src/,
+# kernel/ and the module's uAPI), so changing one rebuilds what uses it -- an
+# ABI bump in include/uapi/ds4t.h must never leave a stale daemon behind.
 $(BUILD_DIR)/%.o: src/%.cpp | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -c -o $@ $<
+	$(CXX) $(CXXFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/%.o: src/%.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c -o $@ $<
+	$(CC) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+-include $(wildcard $(BUILD_DIR)/*.d)
 
 # Machine-generated (kernel BTF -> C types) for the HID-BPF transport's
 # CO-RE relocations -- deliberately not tracked in git (huge, and only
@@ -157,15 +189,60 @@ $(BUILD_DIR)/vmlinux.h: | $(BUILD_DIR)
 # clang (not $(CC)/$(CXX)) targeting the BPF backend directly -- this is
 # not a native object file. -D__TARGET_ARCH_x86 hardcodes this project's
 # only tested/supported arch, same as the rest of the build.
+# Warnings are errors for the BPF object too. vmlinux.h is generated from the
+# running kernel's BTF and differs on every kernel, so it is a system header
+# (-isystem, whose warnings Clang suppresses): its forward declarations that
+# declare nothing are not ours to fix, while src/hid-bpf/ is held to the rules.
+BPF_WARNINGS = -Wall -Wextra -Werror
+
 $(HIDBPF_BPF_OBJ): src/hid-bpf/hid-bpf-transport.bpf.c src/hid-bpf/hid_bpf.h \
                    src/hid-bpf/hid_bpf_helpers.h src/hid-bpf/hid_report_descriptor_helpers.h \
                    $(BUILD_DIR)/vmlinux.h | $(BUILD_DIR)
-	clang -O2 -g -target bpf -D__TARGET_ARCH_x86 \
-	    -I $(BUILD_DIR) -I src/hid-bpf -c $< -o $@
+	clang -O2 -g -target bpf -D__TARGET_ARCH_x86 $(BPF_WARNINGS) \
+	    -isystem $(BUILD_DIR) -I src/hid-bpf -c $< -o $@
 
 clean:
 	rm -rf $(BUILD_DIR)
 	rm -rf $(UI_BUILD_DIR)
+	$(MAKE) -C kernel clean 2>/dev/null || true
+
+# Kernel module (kernel/). Deliberately kept out of `all`: it needs the
+# running kernel's headers, which the daemon itself does not.
+kernel:
+	$(MAKE) -C kernel
+
+kernel-check:
+	$(MAKE) -C kernel check
+
+# Strict build (every warning an error), checkpatch, sparse if installed and
+# the Clang static analyzer on a Clang-built kernel.
+kernel-lint:
+	$(MAKE) -C kernel lint
+
+# Everything static, warnings as errors: the daemon's strict build (both
+# variants), clang-tidy, and the kernel module's lint. Needs the tools those
+# use (clang-tidy, kernel headers; sparse and a Clang kernel for the full set).
+lint: all debug tidy kernel-lint
+
+# Loads the module in a throwaway virtme-ng VM against a uhid fake pad.
+kernel-test: kernel
+	tests/kernel/run-vm.sh
+
+# The same suites on a debug kernel (KASAN, lockdep, kmemleak, failslab; see
+# tests/kernel/debug.config), built by virtme-ng from a kernel source tree:
+#   make kernel-test-debug KERNEL_SRC=~/src/linux
+# The first build takes a while; later ones are incremental.
+kernel-test-debug:
+	@test -n "$(KERNEL_SRC)" || { echo "kernel-test-debug: set KERNEL_SRC to a kernel source tree" >&2; exit 2; }
+	@# vng only applies a fragment to a tree with no .config yet; merge it into
+	@# an existing one, so a change to debug.config reaches a built tree too.
+	cd "$(KERNEL_SRC)" && if [ -f .config ]; then \
+		scripts/kconfig/merge_config.sh -m .config "$(CURDIR)/tests/kernel/debug.config" && \
+		$(MAKE) olddefconfig && vng --build; \
+	else \
+		vng --build -f "$(CURDIR)/tests/kernel/debug.config"; \
+	fi
+	KERNEL_DIR="$(KERNEL_SRC)" tests/kernel/run-vm.sh
 
 # Qt 6 settings GUI (ui/). Deliberately kept out of `all`: it needs Qt 6 +
 # CMake, which the daemon itself does not, so a plain `make` still builds the
@@ -256,10 +333,22 @@ stage-cli: all
 	install -D -m 644 ds4-translator.sysusers $(DESTDIR)/usr/lib/sysusers.d/ds4-translator.conf
 	install -D -m 644 $(HIDBPF_BPF_OBJ) $(DESTDIR)$(HIDBPF_INSTALL_PATH)
 
+# The kernel module's sources as a DKMS tree (the ds4-translator-dkms package).
+# Self-contained: ds4t.h is copied next to the sources, because the Kbuild
+# include path into ../include/uapi only exists in the repository.
+DKMS_VERSION ?= $(ARCH_PKGVER)
+DKMS_SRCDIR   = $(DESTDIR)/usr/src/ds4-translator-$(DKMS_VERSION)
+stage-dkms:
+	install -d $(DKMS_SRCDIR)
+	install -m 644 kernel/Kbuild kernel/Makefile kernel/ds4t-*.c kernel/ds4t-*.h \
+	    include/uapi/ds4t.h $(DKMS_SRCDIR)/
+	sed 's|@VERSION@|$(DKMS_VERSION)|' kernel/dkms.conf.in > $(DKMS_SRCDIR)/dkms.conf
+	chmod 644 $(DKMS_SRCDIR)/dkms.conf
+
 # Installable Arch Linux package(s), built by makepkg from a snapshot of the
 # working tree (uncommitted changes included, so what you test is what you
-# package). Produces two split packages in $(ARCH_PKG_DIR): ds4-translator
-# (daemon + CLI) and ds4-translator-ui. Install with
+# package). Produces three split packages in $(ARCH_PKG_DIR): ds4-translator
+# (daemon + CLI), ds4-translator-ui and ds4-translator-dkms (kernel module). Install with
 #   sudo pacman -U build/arch/ds4-translator-*.pkg.tar.zst
 # Must run as a regular user -- makepkg refuses to run as root.
 ARCH_PKG_DIR = $(BUILD_DIR)/arch
@@ -323,15 +412,27 @@ TEST_CXXFLAGS  = -O1 -g $(STRICT_WARNINGS) -std=c++17 -DDS4_VERSION=\"test\" -Is
 GTEST_FILTER ?= *
 GTEST_ARGS    = --gtest_filter='$(GTEST_FILTER)' --gtest_output=xml:$(TEST_BUILD_DIR)/$(notdir $@).xml
 
+# kernel/ds4t-translate.c is the module's own translation, built here as plain
+# C so the unit tests can hold it to the daemon's src/translate.cpp.
+KTRANSLATE_SRC = kernel/ds4t-translate.c
+KTRANSLATE_OBJ = $(TEST_BUILD_DIR)/ds4t-translate.o
+KTRANSLATE_OBJ_SAN = $(TEST_BUILD_DIR)/ds4t-translate-san.o
+$(KTRANSLATE_OBJ): $(KTRANSLATE_SRC) kernel/ds4t-translate.h
+	@mkdir -p $(TEST_BUILD_DIR)
+	$(CC) -O1 -g $(PRODUCT_WARNINGS) -c -o $@ $<
+$(KTRANSLATE_OBJ_SAN): $(KTRANSLATE_SRC) kernel/ds4t-translate.h
+	@mkdir -p $(TEST_BUILD_DIR)
+	$(CC) -O1 -g $(PRODUCT_WARNINGS) -fsanitize=address,undefined -fno-sanitize-recover=undefined -c -o $@ $<
+
 UNIT_TEST_BIN = $(TEST_BUILD_DIR)/unit-tests
 UNIT_TEST_SRC = $(wildcard tests/unit/*.cpp)
 # hid-unbind-detect.cpp needs write_hid_driver_sysfs from main.cpp; the stub
 # stands in so it links without the daemon.
 UNIT_LIB_SRC  = src/ipc-client.cpp src/translate.cpp src/calibration.cpp src/pairing.cpp src/fs-util.cpp src/hid-unbind-detect.cpp tests/stubs/hid_driver_sysfs_stub.cpp
 
-$(UNIT_TEST_BIN): $(UNIT_TEST_SRC) $(UNIT_LIB_SRC) $(wildcard src/*.h)
+$(UNIT_TEST_BIN): $(UNIT_TEST_SRC) $(UNIT_LIB_SRC) $(KTRANSLATE_OBJ) $(wildcard src/*.h)
 	@mkdir -p $(TEST_BUILD_DIR)
-	$(CXX) $(TEST_CXXFLAGS) -o $@ $(UNIT_TEST_SRC) $(UNIT_LIB_SRC) $(GTEST_LDFLAGS) -lpthread
+	$(CXX) $(TEST_CXXFLAGS) -Ikernel -o $@ $(UNIT_TEST_SRC) $(UNIT_LIB_SRC) $(KTRANSLATE_OBJ) $(GTEST_LDFLAGS) -lpthread
 
 test-unit: $(UNIT_TEST_BIN)
 	$(UNIT_TEST_BIN) $(GTEST_ARGS)
@@ -343,20 +444,21 @@ USB_TEST_BIN = $(TEST_BUILD_DIR)/usb-transport-tests
 
 # Same unit suites under ASan+UBSan: memory/UB bugs in the parsers fail the run.
 SAN_TEST_BIN = $(TEST_BUILD_DIR)/unit-tests-san
-$(SAN_TEST_BIN): $(UNIT_TEST_SRC) $(UNIT_LIB_SRC) $(wildcard src/*.h)
+$(SAN_TEST_BIN): $(UNIT_TEST_SRC) $(UNIT_LIB_SRC) $(KTRANSLATE_OBJ_SAN) $(wildcard src/*.h)
 	@mkdir -p $(TEST_BUILD_DIR)
-	$(CXX) $(TEST_CXXFLAGS) -fsanitize=address,undefined -fno-sanitize-recover=undefined \
-	    -fno-omit-frame-pointer -o $@ $(UNIT_TEST_SRC) $(UNIT_LIB_SRC) $(GTEST_LDFLAGS) -lpthread
+	$(CXX) $(TEST_CXXFLAGS) -Ikernel -fsanitize=address,undefined -fno-sanitize-recover=undefined \
+	    -fno-omit-frame-pointer -o $@ $(UNIT_TEST_SRC) $(UNIT_LIB_SRC) $(KTRANSLATE_OBJ_SAN) $(GTEST_LDFLAGS) -lpthread
 
 test-sanitize: $(SAN_TEST_BIN) $(USB_TEST_BIN)-san
 	$(SAN_TEST_BIN) $(GTEST_ARGS)
 	$(USB_TEST_BIN)-san $(GTEST_ARGS)
 
 COMPONENT_TEST_BIN = $(TEST_BUILD_DIR)/component-tests
-COMPONENT_TEST_SRC = tests/component/test_ipc_transport.cpp
-$(COMPONENT_TEST_BIN): $(COMPONENT_TEST_SRC) src/ipc-client.cpp $(wildcard src/*.h)
+COMPONENT_TEST_SRC = tests/component/test_ipc_transport.cpp tests/component/test_driver_transport.cpp
+COMPONENT_LIB_SRC  = src/ipc-client.cpp src/driver-transport.cpp
+$(COMPONENT_TEST_BIN): $(COMPONENT_TEST_SRC) $(COMPONENT_LIB_SRC) $(wildcard src/*.h include/uapi/*.h)
 	@mkdir -p $(TEST_BUILD_DIR)
-	$(CXX) $(TEST_CXXFLAGS) -o $@ $(COMPONENT_TEST_SRC) src/ipc-client.cpp $(GTEST_LDFLAGS) -lpthread
+	$(CXX) $(TEST_CXXFLAGS) -o $@ $(COMPONENT_TEST_SRC) $(COMPONENT_LIB_SRC) $(GTEST_LDFLAGS) -lpthread
 
 # udev-spoof.so against a stub libudev (see tests/stubs/libudev_stub.c): the
 # shim dlopen()s libudev.so.1, so the stub is put first on LD_LIBRARY_PATH.
@@ -424,21 +526,36 @@ test-fuzz: $(addprefix $(TEST_BUILD_DIR)/fuzz-,$(FUZZ_TARGETS))
 # client code against data races (the udev shim and daemon are covered by
 # docs/security-findings.md instead).
 TSAN_UNIT_BIN = $(TEST_BUILD_DIR)/unit-tests-tsan
-$(TSAN_UNIT_BIN): $(UNIT_TEST_SRC) tests/component/test_ipc_transport.cpp $(UNIT_LIB_SRC) $(wildcard src/*.h)
+$(TSAN_UNIT_BIN): $(UNIT_TEST_SRC) tests/component/test_ipc_transport.cpp $(UNIT_LIB_SRC) $(KTRANSLATE_SRC) $(wildcard src/*.h)
 	@mkdir -p $(TEST_BUILD_DIR)
-	$(CXX) $(TEST_CXXFLAGS) -fsanitize=thread -o $@ $(UNIT_TEST_SRC) tests/component/test_ipc_transport.cpp \
-	    $(UNIT_LIB_SRC) $(GTEST_LDFLAGS) -lpthread
+	$(CC) -O1 -g $(PRODUCT_WARNINGS) -fsanitize=thread -c -o $(TEST_BUILD_DIR)/ds4t-translate-tsan.o $(KTRANSLATE_SRC)
+	$(CXX) $(TEST_CXXFLAGS) -Ikernel -fsanitize=thread -o $@ $(UNIT_TEST_SRC) tests/component/test_ipc_transport.cpp \
+	    $(UNIT_LIB_SRC) $(TEST_BUILD_DIR)/ds4t-translate-tsan.o $(GTEST_LDFLAGS) -lpthread
 
 test-tsan: $(TSAN_UNIT_BIN) $(USB_TEST_BIN)-tsan
 	$(TSAN_UNIT_BIN) $(GTEST_ARGS)
 	$(USB_TEST_BIN)-tsan $(GTEST_ARGS)
 
 # Hardening flags, systemd unit, udev rules, workflows, shell scripts, secrets.
+# clang-tidy over the daemon, the way .github/workflows/lint.yml runs it: the
+# checks and WarningsAsErrors come from .clang-tidy, so any finding fails.
+TIDY_CXXFLAGS = -std=c++17 -Isrc $(UNBIND_CXXFLAGS) $(HIDBPF_CXXFLAGS) -DDS4_VERSION=\"tidy\"
+TIDY_CFLAGS   = -Isrc $(UNBIND_CXXFLAGS) -DDS4_VERSION=\"tidy\"
+tidy:
+	@command -v clang-tidy >/dev/null || { echo "tidy: clang-tidy not found" >&2; exit 1; }
+	set -e; for f in src/*.cpp; do echo "=== $$f"; clang-tidy --quiet "$$f" -- $(TIDY_CXXFLAGS); done
+	set -e; for f in src/*.c; do echo "=== $$f"; clang-tidy --quiet "$$f" -- $(TIDY_CFLAGS); done
+
 test-security-static: all
 	tests/security/static_checks.sh $(BUILD_DIR)
 
 test-smoke: all
 	tests/smoke/smoke.sh $(BUILD_DIR)
+
+# bash/fish/zsh completion scripts against the built ds4-ctl; a shell that is
+# not installed is skipped.
+test-completion: all
+	tests/completion/test_completion.sh $(BUILD_DIR)
 
 # Real daemon + ds4-ctl against a scratch dir (see paths.h); skips itself if a
 # production daemon is running on this machine.
@@ -451,7 +568,7 @@ test-integration: all
 test-hwtest:
 	python3 -m unittest discover -s tests/hwtest
 
-test: test-unit test-component test-smoke test-integration test-security-static test-hwtest
+test: test-unit test-component test-smoke test-completion test-integration test-security-static test-hwtest
 
 # Mirrors install: removes the UI too. uninstall-cli leaves it in place.
 uninstall: uninstall-ui uninstall-cli
@@ -478,4 +595,5 @@ uninstall-cli:
 
 .PHONY: all debug clean install install-cli stage-cli uninstall uninstall-cli \
         ui install-ui stage-ui uninstall-ui install-ui-user uninstall-ui-user arch-pkg arch-repo \
-        test test-unit test-perf test-fuzz test-component test-smoke test-integration test-sanitize test-tsan test-security-static test-hwtest
+        kernel kernel-check kernel-lint kernel-test kernel-test-debug stage-dkms tidy lint \
+        test test-unit test-perf test-fuzz test-component test-smoke test-completion test-integration test-sanitize test-tsan test-security-static test-hwtest

@@ -39,7 +39,7 @@ To prevent games and launchers (like Steam) from receiving double-input or regis
 ### 2a. Hide Methods (`ds4-ctl set-hide-method`)
 
 Which of the mechanisms above actually runs is selected by `hide_method=` in
-`/etc/ds4-translator.conf` (`ds4-ctl set-hide-method <legacy|unbind|unlink>`).
+`/etc/ds4-translator.conf` (`ds4-ctl set-hide-method <legacy|unbind|unlink|driver>`).
 It applies on the next physical (re)connection.
 
 | Method | USB | Bluetooth |
@@ -47,6 +47,7 @@ It applies on the next physical (re)connection.
 | `legacy` | `chmod 0600` + `setfacl -b` + `EVIOCGRAB`; nodes exist, permission-blocked | same |
 | `unbind` (default) | kernel HID driver fully unbound, **no node ever created**; read via libusb | driver stays bound, nodes exist but are inert (HID-BPF swallows every report); siblings also chmod'd + grabbed |
 | `unlink` | identical to `unbind` — there is no node to unlink | `unbind`, plus the pad is moved onto `hid-generic`, the leftover `hidraw`/`event*`/`js*` `/dev` entries are deleted outright, and the emulated device squats the pad's MAC so `hid-playstation` refuses it to begin with |
+| `driver` (opt-in) | the `hid-ds4-translator` kernel module claims the pad before `hid-playstation`: **no node, battery or LED is ever created**; read via `/dev/ds4-translator/<hid_id>` | same, over `bluetoothd`'s `uhid` session (so the output pacer still applies) |
 
 The asymmetry is forced by BlueZ: the Bluetooth `hid_device` is created by
 `bluetoothd`'s input plugin writing into `/dev/uhid`, and taking the L2CAP
@@ -54,6 +55,15 @@ session away from `bluetoothd` requires dropping the device's ACL link
 entirely — so the driver cannot simply be unbound the way the USB side is.
 `unbind` therefore neutralizes the nodes instead of removing them; `unlink`
 removes them.
+
+`driver` replaces both transports with the out-of-tree module in `kernel/`
+(design: [kernel-driver.md](kernel-driver.md)). The module is inert until the
+daemon attaches through `/dev/ds4-translator/control`; it does so only while
+this method is selected, a physical pad is meant to be hidden (not type
+`none`) and `release-physical` is not in force. Attaching takes over pads
+`hid-playstation` already holds. Detaching, or the daemon dying however it
+dies, hands every pad back. When the module is not loaded, or does not hold
+the pad, a connection falls back to `unbind`.
 
 **How `unlink` works.** `/dev` is `devtmpfs`, where root can `unlink()` a
 device node like any other file. The unlink drops only the *path*: the
@@ -181,7 +191,7 @@ Two known limits:
 The daemon uses the kernel's User-space HID (`/dev/uhid`) driver to create a virtual USB device:
 * **Report Descriptors**: Emulates either a standard DualShock 4 USB controller or a DualSense Wireless Controller connected via USB using their authentic HID report descriptors.
 * **Firmware & Identity Matching**:
-  - The virtual controller reports the official hardware version `0x8111` in `UHID_CREATE2`.
+  - The virtual controller reports version `0x8111` in `UHID_CREATE2` (what `hid-playstation` makes of a real pad's). The `functionfs` gadget instead carries a real pad's USB `bcdDevice`, `0x0100`, which is what Wine hands games: Sony's own pad library skips a pad with any other.
   - It exposes a virtual MAC address (`74:e7:d6:3a:47:e8`) that matches the `uniq` field in UHID registration and the responses to Feature Reports `0x09` (DualSense pairing) and `0x12` (DS4 pairing).
   - It handles `UHID_GET_REPORT` and responds to Feature Reports `0x05` (calibration data) and `0x20` (firmware info) with authentic byte payloads from real controllers. This satisfies game security checks (like those in native PlayStation PC ports like *Jedi: Survivor*) which would otherwise reject mock devices.
 
@@ -196,11 +206,18 @@ device and is confirmed to fix that detection failure. DualSense emulation
 never showed the issue on either backend.
 
 DS4 and DualSense each have their own independent backend setting because
-of this — `ds4-ctl set-backend <ds4|dualsense> <uhid|functionfs>`, persisted
+of this — `ds4-ctl set-backend <ds4|dualsense> <uhid|functionfs|kernel>`, persisted
 to `/etc/ds4-translator.conf` as `backend_ds4=`/`backend_dualsense=`
 alongside `type=`, defaulting to `ds4=functionfs`, `dualsense=uhid`. Either
 type can still be pointed at either backend if wanted (`functionfs` works
 for DualSense too); only the defaults differ.
+
+`kernel` is a third backend for the `driver` hide method
+([kernel-driver.md](kernel-driver.md)): the `hid-ds4-translator` module creates
+the virtual DS4/DualSense itself and translates the claimed pad's reports in
+the kernel, relaying rumble and LED back, so the daemon only configures it. It
+needs `ds4-ctl set-hide-method driver` and the module; without them the daemon
+logs why and uses `uhid`. Like `uhid`, the pad it creates has no USB parent.
 
 `functionfs` builds the gadget via configfs
 (`/sys/kernel/config/usb_gadget/`) using the generic `ffs` function, mounted

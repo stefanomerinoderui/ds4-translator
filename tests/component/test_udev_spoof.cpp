@@ -30,6 +30,9 @@ const char *udev_device_get_sysattr_value(udev_device *, const char *);
 namespace {
 
 constexpr char kVirtualPath[] = "/devices/virtual/misc/uhid/0003:054C:05C4.0001/hidraw/hidraw3";
+// The kernel backend's pad hangs off the module's control node instead.
+constexpr char kKernelVirtualPath[] =
+    "/devices/virtual/misc/ds4t-control/0003:054C:0CE6.0002/hidraw/hidraw5";
 constexpr char kRealPath[] = "/devices/pci0000:00/usb1/1-2/1-2:1.3/hidraw/hidraw4";
 
 udev_device virtual_ds4() { return {"054c", "05c4", kVirtualPath, "DEVTYPE=usb_device\n"}; }
@@ -51,6 +54,13 @@ TEST(UdevSpoof, VirtualSonyControllerGetsMarkedFakeUsbParent) {
     ASSERT_NE(parent, nullptr);
     EXPECT_TRUE(is_tagged(parent));
     EXPECT_STREQ(udev_device_get_subsystem(parent), "usb");
+}
+
+TEST(UdevSpoof, KernelBackendControllerGetsMarkedFakeUsbParent) {
+    udev_device dev{"054c", "0ce6", kKernelVirtualPath, "DEVTYPE=usb_device\n"};
+    udev_device *parent = fake_parent(&dev);
+    ASSERT_NE(parent, nullptr);
+    EXPECT_TRUE(is_tagged(parent));
 }
 
 TEST(UdevSpoof, PhysicalControllerIsNotSpoofed) {

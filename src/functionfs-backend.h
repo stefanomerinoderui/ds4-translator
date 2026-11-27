@@ -77,10 +77,18 @@ void functionfs_set_mac(const uint8_t mac_le[6], const char *mac_str);
 // the canned report. Safe to call while a device is running.
 void functionfs_set_ds4_firmware(const uint8_t report[49]);
 
-// Real DS4 motion calibration (feature 0x02, 37 bytes with the report ID, USB
-// layout) to answer GET_REPORT with instead of the canned one. NULL restores
-// the canned report. Safe to call while a device is running.
-void functionfs_set_ds4_imu_calibration(const uint8_t report[37]);
+// Implemented by the daemon (main.cpp): sends rumble and light bar values to the
+// physical controller, which the emulated device's output reports are mapped
+// onto. Declared here so both sides see one prototype.
+void send_physical_output_report(int fd, bool bluetooth, uint8_t motor_left, uint8_t motor_right,
+                                 uint8_t r, uint8_t g, uint8_t b, uint8_t flash_on,
+                                 uint8_t flash_off);
+
+// Sets the IMU calibration (36 bytes, the payload of DS4 feature report 0x02)
+// that the emulated DS4 serves, taken from the physical pad; NULL goes back to
+// the built-in fixed values. Safe to call while the device is running: the
+// ep0 thread reads it under a lock.
+void functionfs_set_calibration(const uint8_t cal[36]);
 
 // product_name: custom USB product string override, or NULL/empty to use the
 // built-in per-type default ("Wireless Controller" / "DualSense Wireless

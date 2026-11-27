@@ -8,7 +8,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/../lib/assert.sh"
 
 for bin in ds4-translator ds4-ctl libudev-sony-spoof.so hid-bpf-transport.bpf.o; do
-    [ -e "$BUILD_DIR/$bin" ] && pass "built: $bin" || fail "missing build artifact: $bin"
+    if [ -e "$BUILD_DIR/$bin" ]; then pass "built: $bin"; else fail "missing build artifact: $bin"; fi
 done
 
 EXPECT_OUT='^ds4-translator ' expect_rc 0 "daemon --version" "$BUILD_DIR/ds4-translator" --version

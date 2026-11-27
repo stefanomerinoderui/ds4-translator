@@ -4,6 +4,7 @@
 
 #include <cstring>
 #include <string>
+#include <vector>
 
 #include "translate.h"
 
@@ -409,64 +410,6 @@ TEST(Ds4OutputReport, DefaultIsSteadyLight) {
     EXPECT_EQ(buf[12], 0);
 }
 
-// ------------------------------------------------------ IMU calibration (BT)
-
-namespace {
-// A Bluetooth 0x05 report whose every 16-bit field holds a distinct value
-// (field index + 1), CRC filled in.
-void make_bt_calibration(uint8_t out[DS4_IMU_CAL_BT_SIZE]) {
-    std::memset(out, 0, DS4_IMU_CAL_BT_SIZE);
-    out[0] = DS4_IMU_CAL_BT_ID;
-    for (int field = 0; field < 17; ++field) { // fields at bytes 1,3,...,33
-        out[1 + field * 2] = static_cast<uint8_t>(field + 1);
-    }
-    const uint32_t crc = calculate_crc32(0xA3, out, DS4_IMU_CAL_USB_SIZE);
-    for (int i = 0; i < 4; ++i) out[DS4_IMU_CAL_USB_SIZE + i] = static_cast<uint8_t>(crc >> (8 * i));
-}
-uint8_t field_at(const uint8_t* report, size_t byte) { return report[byte]; }
-} // namespace
-
-TEST(ImuCalibration, BluetoothGyroGainsAreReorderedToUsbLayout) {
-    uint8_t bt[DS4_IMU_CAL_BT_SIZE], usb[DS4_IMU_CAL_USB_SIZE];
-    make_bt_calibration(bt);
-    ASSERT_TRUE(convert_ds4_imu_calibration_bt(bt, sizeof(bt), usb));
-    EXPECT_EQ(usb[0], DS4_IMU_CAL_USB_ID);
-    // BT order: pitch+ yaw+ roll+ pitch- yaw- roll- (bytes 7..17); USB: pitch+ pitch- yaw+ yaw- roll+ roll-.
-    EXPECT_EQ(field_at(usb, 7), field_at(bt, 7));
-    EXPECT_EQ(field_at(usb, 9), field_at(bt, 13));
-    EXPECT_EQ(field_at(usb, 11), field_at(bt, 9));
-    EXPECT_EQ(field_at(usb, 13), field_at(bt, 15));
-    EXPECT_EQ(field_at(usb, 15), field_at(bt, 11));
-    EXPECT_EQ(field_at(usb, 17), field_at(bt, 17));
-}
-
-TEST(ImuCalibration, BiasesSpeedAndAccelFieldsKeepTheirOffsets) {
-    uint8_t bt[DS4_IMU_CAL_BT_SIZE], usb[DS4_IMU_CAL_USB_SIZE];
-    make_bt_calibration(bt);
-    ASSERT_TRUE(convert_ds4_imu_calibration_bt(bt, sizeof(bt), usb));
-    EXPECT_EQ(0, std::memcmp(usb + 1, bt + 1, 6));   // gyro biases
-    EXPECT_EQ(0, std::memcmp(usb + 19, bt + 19, 18)); // speed, accelerometer, trailer
-}
-
-TEST(ImuCalibration, CorruptedOrMislabelledReportIsRejected) {
-    uint8_t bt[DS4_IMU_CAL_BT_SIZE], usb[DS4_IMU_CAL_USB_SIZE];
-    make_bt_calibration(bt);
-    bt[20] ^= 0xFF; // payload no longer matches the CRC
-    EXPECT_FALSE(convert_ds4_imu_calibration_bt(bt, sizeof(bt), usb));
-    make_bt_calibration(bt);
-    EXPECT_FALSE(convert_ds4_imu_calibration_bt(bt, sizeof(bt) - 1, usb));
-    bt[0] = DS4_IMU_CAL_USB_ID;
-    EXPECT_FALSE(convert_ds4_imu_calibration_bt(bt, sizeof(bt), usb));
-}
-
-TEST(ImuCalibration, UsbReportValidation) {
-    uint8_t usb[DS4_IMU_CAL_USB_SIZE] = {DS4_IMU_CAL_USB_ID};
-    EXPECT_TRUE(is_valid_ds4_imu_calibration_usb(usb, sizeof(usb)));
-    EXPECT_FALSE(is_valid_ds4_imu_calibration_usb(usb, sizeof(usb) - 1));
-    usb[0] = 0x05;
-    EXPECT_FALSE(is_valid_ds4_imu_calibration_usb(usb, sizeof(usb)));
-}
-
 // ---------------------------------------------------------------- pairing info
 
 TEST(PairingInfo, MacIsReadByteReversed) {
@@ -482,3 +425,75 @@ TEST(PairingInfo, MalformedOrEmptyMacYieldsNothing) {
     report[0] = 0x81;
     EXPECT_EQ(ds4_pairing_info_mac(report, sizeof(report)), "");           // wrong id
 }
+namespace {
+
+// 36 calibration bytes where every byte is its own index, so a moved byte is
+// visible in the output.
+void fill_payload(uint8_t payload[DS4_CALIBRATION_SIZE]) {
+    for (size_t i = 0; i < DS4_CALIBRATION_SIZE; ++i) payload[i] = (uint8_t)(0x10 + i);
+}
+
+std::vector<uint8_t> bluetooth_calibration_report(const uint8_t payload[DS4_CALIBRATION_SIZE]) {
+    std::vector<uint8_t> report(41);
+    report[0] = 0x05;
+    std::memcpy(&report[1], payload, DS4_CALIBRATION_SIZE);
+    const uint32_t crc = calculate_crc32(0xA3, report.data(), 37);
+    for (int i = 0; i < 4; ++i) report[37 + i] = (uint8_t)(crc >> (8 * i));
+    return report;
+}
+
+TEST(Ds4Calibration, UsbReportIsCopiedUnchanged) {
+    uint8_t payload[DS4_CALIBRATION_SIZE];
+    fill_payload(payload);
+    std::vector<uint8_t> report(37);
+    report[0] = 0x02;
+    std::memcpy(&report[1], payload, sizeof(payload));
+
+    uint8_t out[DS4_CALIBRATION_SIZE] = {};
+    ASSERT_TRUE(ds4_calibration_to_usb_layout(report.data(), report.size(), out));
+    EXPECT_EQ(0, std::memcmp(out, payload, sizeof(payload)));
+}
+
+TEST(Ds4Calibration, BluetoothGyroWordsAreReorderedToTheUsbLayout) {
+    uint8_t payload[DS4_CALIBRATION_SIZE];
+    fill_payload(payload);
+    const auto report = bluetooth_calibration_report(payload);
+
+    uint8_t out[DS4_CALIBRATION_SIZE] = {};
+    ASSERT_TRUE(ds4_calibration_to_usb_layout(report.data(), report.size(), out));
+
+    // The biases and everything after the gyro block do not move.
+    EXPECT_EQ(0, std::memcmp(out, payload, 6));
+    EXPECT_EQ(0, std::memcmp(out + 18, payload + 18, DS4_CALIBRATION_SIZE - 18));
+    // Bluetooth words (p+, p-, y+, y-, r+, r-) become USB (p+, y+, r+, p-, y-, r-).
+    const size_t bt_word_for_usb_word[6] = {0, 2, 4, 1, 3, 5};
+    for (size_t usb_word = 0; usb_word < 6; ++usb_word) {
+        EXPECT_EQ(0, std::memcmp(out + 6 + 2 * usb_word, payload + 6 + 2 * bt_word_for_usb_word[usb_word], 2))
+            << "USB word " << usb_word;
+    }
+}
+
+TEST(Ds4Calibration, BluetoothReportWithABadCrcIsRejected) {
+    uint8_t payload[DS4_CALIBRATION_SIZE];
+    fill_payload(payload);
+    auto report = bluetooth_calibration_report(payload);
+    report[10] ^= 0xFF;
+
+    uint8_t out[DS4_CALIBRATION_SIZE] = {0xEE};
+    EXPECT_FALSE(ds4_calibration_to_usb_layout(report.data(), report.size(), out));
+    EXPECT_EQ(0xEE, out[0]); // untouched on failure
+}
+
+TEST(Ds4Calibration, WrongIdsAndSizesAreRejected) {
+    std::vector<uint8_t> report(41, 0);
+    uint8_t out[DS4_CALIBRATION_SIZE];
+    EXPECT_FALSE(ds4_calibration_to_usb_layout(nullptr, 37, out));
+    EXPECT_FALSE(ds4_calibration_to_usb_layout(report.data(), 37, out));  // id 0x00, not 0x02
+    report[0] = 0x02;
+    EXPECT_FALSE(ds4_calibration_to_usb_layout(report.data(), 41, out));  // USB id, BT size
+    EXPECT_FALSE(ds4_calibration_to_usb_layout(report.data(), 36, out));  // short
+    report[0] = 0x05;
+    EXPECT_FALSE(ds4_calibration_to_usb_layout(report.data(), 37, out));  // BT id, USB size
+}
+
+} // namespace

@@ -19,7 +19,7 @@ static std::string button_names_joined();
 #define DS4_VERSION "unknown"
 #endif
 
-void print_usage() {
+static void print_usage() {
     std::cout << "Usage: ds4-ctl <command> [args]" << std::endl;
     std::cout << "Commands:" << std::endl;
     std::cout << "  version                          Print ds4-ctl's version" << std::endl;
@@ -27,12 +27,18 @@ void print_usage() {
     std::cout << "  set-type <ds4|dualsense|xbox360|xboxone|xboxseries|none|hidden>   Change the virtual controller emulation type at runtime" << std::endl;
     std::cout << "                                   (none = fully untouched physical passthrough, hidden = physical" << std::endl;
     std::cout << "                                   hidden from other apps but not translated)" << std::endl;
-    std::cout << "  set-backend <ds4|dualsense> <uhid|functionfs>   Change that controller type's backend at" << std::endl;
+    std::cout << "  set-backend <ds4|dualsense> <uhid|functionfs|kernel|kernel-usb>   Change that controller type's backend at" << std::endl;
     std::cout << "                                   runtime (recreates the device if that type is currently" << std::endl;
     std::cout << "                                   active, otherwise just persists for later). Defaults:" << std::endl;
     std::cout << "                                   dualsense=uhid, ds4=functionfs -- uhid never reliably" << std::endl;
     std::cout << "                                   enumerates as a real USB device, which some Wine/Proton" << std::endl;
     std::cout << "                                   titles need to detect DS4 emulation; functionfs does." << std::endl;
+    std::cout << "                                   kernel = the hid-ds4-translator module creates the pad and" << std::endl;
+    std::cout << "                                   translates in the kernel (needs set-hide-method driver;" << std::endl;
+    std::cout << "                                   falls back to uhid without it). kernel-usb = the same, as" << std::endl;
+    std::cout << "                                   a USB gadget on dummy_hcd (ds4t-gadget module), so games" << std::endl;
+    std::cout << "                                   see a real USB pad as with functionfs (falls back to" << std::endl;
+    std::cout << "                                   functionfs without it)." << std::endl;
     std::cout << "  set-name <ds4|dualsense> <name>  Override the controller name/product string reported to" << std::endl;
     std::cout << "                                   the OS (recreates the device if that type is currently" << std::endl;
     std::cout << "                                   active -- brief input interruption -- otherwise just" << std::endl;
@@ -77,7 +83,7 @@ void print_usage() {
     std::cout << "  led --reset                      Hand the light bar and motors straight back to the" << std::endl;
     std::cout << "                                   emulated device" << std::endl;
     std::cout << "  set-hide-method                  Change how the physical controller is hidden from other" << std::endl;
-    std::cout << "    <legacy|unbind|unlink>         apps (applies on the next physical (re)connection). unbind" << std::endl;
+    std::cout << "    <legacy|unbind|unlink|driver>  apps (applies on the next physical (re)connection). unbind" << std::endl;
     std::cout << "                                   (default) hides it before any other app can see it, with" << std::endl;
     std::cout << "                                   live translation either way: USB fully unbinds the kernel" << std::endl;
     std::cout << "                                   HID driver (no hidraw/input node exists at all) and reads" << std::endl;
@@ -92,6 +98,10 @@ void print_usage() {
     std::cout << "                                   ENOENT instead of a permission error on a live node." << std::endl;
     std::cout << "                                   legacy is the older chmod/setfacl/EVIOCGRAB method --" << std::endl;
     std::cout << "                                   node exists but permission-blocked, USB and Bluetooth." << std::endl;
+    std::cout << "                                   driver uses the hid-ds4-translator kernel module, which" << std::endl;
+    std::cout << "                                   claims the pad before any other driver so no hidraw," << std::endl;
+    std::cout << "                                   input, battery or LED device ever exists for it. Falls" << std::endl;
+    std::cout << "                                   back to unbind when the module is not loaded." << std::endl;
     std::cout << "  set-mac-squat <on|off>           unlink method only. On (default), the emulated device" << std::endl;
     std::cout << "                                   advertises the physical pad's own MAC address, which" << std::endl;
     std::cout << "                                   makes the kernel's hid-playstation driver refuse the" << std::endl;
@@ -152,9 +162,9 @@ enum {
 };
 
 // Single source of truth for `tap`'s button/dpad names, shared by run_tap(),
-// usage text, and `--complete-args tap` (queried live by
-// ds4-ctl-completion.bash) so a new button here shows up in completion
-// automatically instead of needing the bash script hand-edited too.
+// usage text, and `--complete-args tap` (queried live by the bash, fish and
+// zsh completion scripts) so a new button here shows up in completion
+// automatically instead of needing the scripts hand-edited too.
 struct ButtonSpec {
     const char *name;
     uint16_t bit;
@@ -192,9 +202,9 @@ static std::string button_names_joined() {
 
 // Single source of truth for top-level commands and their valid next
 // argument, shared by main()'s dispatch/validation and `--commands`/
-// `--complete-args` (queried live by ds4-ctl-completion.bash). `tap`'s
-// completions come from kButtons instead, since they're a longer, separate
-// list (see --complete-args handling in main()).
+// `--complete-args` (queried live by the bash/fish/zsh completion scripts).
+// `tap`'s completions come from kButtons instead, since they're a longer,
+// separate list (see --complete-args handling in main()).
 struct CommandSpec {
     const char *name;
     const char *arg_completions; // space-separated tokens, or nullptr
@@ -217,7 +227,7 @@ static const CommandSpec kCommands[] = {
     {"pair",             nullptr},
     {"calibrate",        "stick-center stick-range triggers --permanent"},
     {"led",              "--reset"},
-    {"set-hide-method",  "legacy unbind unlink"},
+    {"set-hide-method",  "legacy unbind unlink driver"},
     {"set-mac-squat",    "on off"},
     {"forget-mac",       nullptr},
 };
@@ -241,6 +251,21 @@ static bool is_in_list(const std::string& word, const char *space_separated) {
     return false;
 }
 
+// Output contract of `--complete-args`: one candidate per line. fish command
+// substitution and zsh's ${(f)...} split only on newlines, so printing the
+// space-separated list as-is made them offer the whole line (e.g.
+// "ds4 dualsense") as a single candidate. bash's compgen -W splits on any
+// whitespace, so it works either way.
+static void print_completions(const std::string& space_separated) {
+    size_t start = 0;
+    while (start < space_separated.size()) {
+        size_t sp = space_separated.find(' ', start);
+        if (sp == std::string::npos) sp = space_separated.size();
+        if (sp > start) std::cout << space_separated.substr(start, sp - start) << "\n";
+        start = sp + 1;
+    }
+}
+
 struct UiState {
     uint16_t buttons = 0;
     uint8_t dpad = 8; // 0=up..7=up-left clockwise, 8=neutral
@@ -258,7 +283,7 @@ static void send_ui_state(const UiState& s) {
     uint8_t l2 = (s.buttons & SYN_BTN_L2) ? 255 : 0;
     uint8_t r2 = (s.buttons & SYN_BTN_R2) ? 255 : 0;
     (void)snprintf(cmdbuf, sizeof(cmdbuf), "input %x %u %u %u %u %u %u %u",
-             s.buttons, s.dpad, 128, 128, 128, 128, l2, r2);
+             s.buttons, s.dpad, 128u, 128u, 128u, 128u, l2, r2);
     std::string resp;
     send_command(cmdbuf, resp);
 }
@@ -342,7 +367,7 @@ static int run_virtual_ui(const std::string& type, bool auto_destroy) {
     // -- skipping tcsetattr restoration and, now, the --auto destroy-on-exit
     // below. Clearing ISIG makes Ctrl+C arrive as plain data like every
     // other key here, so it always goes through the normal exit path.
-    raw_term.c_lflag &= ~(ICANON | ECHO | ISIG);
+    raw_term.c_lflag &= static_cast<tcflag_t>(~(ICANON | ECHO | ISIG));
     raw_term.c_cc[VMIN] = 0;
     raw_term.c_cc[VTIME] = 0;
     tcsetattr(STDIN_FILENO, TCSANOW, &raw_term);
@@ -580,7 +605,7 @@ static int run_test_ui() {
         return 1;
     }
     raw_term = orig_term;
-    raw_term.c_lflag &= ~(ICANON | ECHO);
+    raw_term.c_lflag &= static_cast<tcflag_t>(~(ICANON | ECHO));
     raw_term.c_cc[VMIN] = 0;
     raw_term.c_cc[VTIME] = 0;
     tcsetattr(STDIN_FILENO, TCSANOW, &raw_term);
@@ -803,15 +828,6 @@ static int run_calibrate(const std::string& target, bool permanent) {
     return calibrate_step(target + " store" + (permanent ? " permanent" : "")) ? 0 : 1;
 }
 
-// Prints completion candidates one per line. Zsh and fish split the output on
-// newlines only, so a space-separated list would arrive as a single candidate;
-// bash's compgen splits on either, so one-per-line serves all three shells.
-static void print_completion_words(const std::string& words) {
-    std::istringstream in(words);
-    std::string word;
-    while (in >> word) std::cout << word << "\n";
-}
-
 int main(int argc, char* argv[]) {
     if (argc < 2) {
         print_usage();
@@ -825,9 +841,10 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    // Hidden, machine-readable queries used by ds4-ctl-completion.bash. The
-    // bash script asks the binary for its command list / per-command
-    // argument list at completion time instead of hardcoding them, so
+    // Hidden, machine-readable queries used by the bash/fish/zsh completion
+    // scripts (one token per line). They ask the binary for its command
+    // list / per-command argument list at completion time instead of
+    // hardcoding them, so
     // adding a command to kCommands (or a button to kButtons) is all that's
     // needed to keep tab-completion in sync — no separate file to edit.
     if (cmd == "--commands") {
@@ -838,29 +855,29 @@ int main(int argc, char* argv[]) {
         if (argc < 3) return 0;
         std::string target = argv[2];
         if (target == "tap") {
-            print_completion_words(button_names_joined());
+            print_completions(button_names_joined());
         } else if (target == "set-backend") {
             // Position-aware (unlike every other command here): argv[3], if
             // present, is the controller word already typed -- offer
-            // ds4/dualsense first, then uhid/functionfs once one of those is
-            // picked. argv[3:] wasn't passed at all until
-            // ds4-ctl-completion.bash started forwarding every prior word
-            // instead of just the command name.
+            // ds4/dualsense first, then the backends once one of those is
+            // picked. argv[3:] wasn't passed at all until the completion
+            // scripts started forwarding every prior word instead of just
+            // the command name.
             if (argc <= 3) {
-                print_completion_words("ds4 dualsense");
+                print_completions("ds4 dualsense");
             } else if (argc == 4) {
-                print_completion_words("uhid functionfs");
+                print_completions(ds4ipc::join_values(ds4ipc::backend_values()));
             }
         } else if (target == "set-name") {
             // Same shape as set-backend for the first argument; the second
             // is a free-text name, so there's nothing useful to complete.
             if (argc <= 3) {
-                print_completion_words("ds4 dualsense");
+                print_completions("ds4 dualsense");
             } else if (argc == 4) {
-                print_completion_words("--reset");
+                print_completions("--reset");
             }
         } else if (const CommandSpec *spec = find_command(target)) {
-            if (spec->arg_completions) print_completion_words(spec->arg_completions);
+            if (spec->arg_completions) print_completions(spec->arg_completions);
         }
         return 0;
     }
@@ -945,7 +962,8 @@ int main(int argc, char* argv[]) {
     std::string build_error;
     if (cmd == "set-backend") {
         if (argc < 4) {
-            std::cerr << "Error: set-backend requires <ds4|dualsense> <uhid|functionfs>" << std::endl;
+            std::cerr << "Error: set-backend requires <ds4|dualsense> <backend> ("
+                      << ds4ipc::join_values(ds4ipc::backend_values()) << ")" << std::endl;
             return 1;
         }
         full_cmd = ds4ipc::build_set_backend(argv[2], argv[3], &build_error);

@@ -73,6 +73,37 @@ bool parse_emulated_type(const std::string& val, ControllerType& out) {
     return true;
 }
 
+bool ds4_calibration_to_usb_layout(const uint8_t* report, size_t len,
+                                   uint8_t out[DS4_CALIBRATION_SIZE]) {
+    constexpr uint8_t kUsbReportId = 0x02;
+    constexpr size_t kUsbReportSize = 1 + DS4_CALIBRATION_SIZE;
+    constexpr uint8_t kBtReportId = 0x05;
+    constexpr size_t kBtReportSize = kUsbReportSize + 4; // plus CRC32
+    constexpr uint8_t kBtFeatureCrcSeed = 0xA3;
+    constexpr size_t kGyroWordsOffset = 6; // after the three gyro biases
+    constexpr size_t kWord = 2;
+
+    if (report == nullptr) return false;
+    if (len == kUsbReportSize && report[0] == kUsbReportId) {
+        memcpy(out, report + 1, DS4_CALIBRATION_SIZE);
+        return true;
+    }
+    if (len != kBtReportSize || report[0] != kBtReportId) return false;
+
+    const uint32_t want = (uint32_t)report[len - 4] | ((uint32_t)report[len - 3] << 8) |
+                          ((uint32_t)report[len - 2] << 16) | ((uint32_t)report[len - 1] << 24);
+    if (calculate_crc32(kBtFeatureCrcSeed, report, len - 4) != want) return false;
+
+    memcpy(out, report + 1, DS4_CALIBRATION_SIZE);
+    // Word i of the Bluetooth gyro block lands where USB keeps it.
+    static const size_t kBtWordForUsbWord[6] = {0, 2, 4, 1, 3, 5};
+    for (size_t usb_word = 0; usb_word < 6; ++usb_word) {
+        memcpy(out + kGyroWordsOffset + usb_word * kWord,
+               report + 1 + kGyroWordsOffset + kBtWordForUsbWord[usb_word] * kWord, kWord);
+    }
+    return true;
+}
+
 // CRC32 calculation matching Linux kernel (IEEE 802.3 Ethernet polynomial 0xEDB88320)
 uint32_t calculate_crc32(uint8_t seed, const uint8_t* data, size_t len) {
     static uint32_t table[256];
@@ -177,12 +208,6 @@ size_t select_usb_touch_reports(uint8_t num_touch, const dualshock4_touch_report
     return count;
 }
 
-namespace {
-uint32_t read_le_u32(const uint8_t* p) {
-    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
-}
-} // namespace
-
 size_t build_ds4_output_report(bool bluetooth, const Ds4Output& o, uint8_t out[DS4_BT_OUTPUT_SIZE]) {
     memset(out, 0, DS4_BT_OUTPUT_SIZE);
     if (bluetooth) {
@@ -197,10 +222,7 @@ size_t build_ds4_output_report(bool bluetooth, const Ds4Output& o, uint8_t out[D
         out[11] = o.flash_on;
         out[12] = o.flash_off;
         const uint32_t crc = calculate_crc32(0xA2, out, 74);
-        out[74] = crc & 0xFF;
-        out[75] = (crc >> 8) & 0xFF;
-        out[76] = (crc >> 16) & 0xFF;
-        out[77] = (crc >> 24) & 0xFF;
+        for (int i = 0; i < 4; ++i) out[74 + i] = static_cast<uint8_t>(crc >> (8 * i));
         return DS4_BT_OUTPUT_SIZE;
     }
     out[0] = 0x05; // report ID
@@ -213,31 +235,6 @@ size_t build_ds4_output_report(bool bluetooth, const Ds4Output& o, uint8_t out[D
     out[9] = o.flash_on;
     out[10] = o.flash_off;
     return DS4_USB_OUTPUT_SIZE;
-}
-
-bool is_valid_ds4_imu_calibration_usb(const uint8_t* data, size_t len) {
-    return len == DS4_IMU_CAL_USB_SIZE && data[0] == DS4_IMU_CAL_USB_ID;
-}
-
-bool convert_ds4_imu_calibration_bt(const uint8_t* bt, size_t len, uint8_t usb[DS4_IMU_CAL_USB_SIZE]) {
-    if (len != DS4_IMU_CAL_BT_SIZE || bt[0] != DS4_IMU_CAL_BT_ID) return false;
-    const uint32_t received = read_le_u32(bt + DS4_IMU_CAL_USB_SIZE);
-    if (received != calculate_crc32(0xA3, bt, DS4_IMU_CAL_USB_SIZE)) return false;
-
-    memcpy(usb, bt, DS4_IMU_CAL_USB_SIZE);
-    usb[0] = DS4_IMU_CAL_USB_ID;
-    // Gyro pitch/yaw/roll gains: Bluetooth lists the three plus values then
-    // the three minus values, USB interleaves plus/minus per axis. Every
-    // other field sits at the same offset in both.
-    const size_t pitch_plus = 7, yaw_plus = 9, roll_plus = 11;
-    const size_t pitch_minus = 13, yaw_minus = 15, roll_minus = 17;
-    memcpy(usb + 7, bt + pitch_plus, 2);
-    memcpy(usb + 9, bt + pitch_minus, 2);
-    memcpy(usb + 11, bt + yaw_plus, 2);
-    memcpy(usb + 13, bt + yaw_minus, 2);
-    memcpy(usb + 15, bt + roll_plus, 2);
-    memcpy(usb + 17, bt + roll_minus, 2);
-    return true;
 }
 
 std::string ds4_pairing_info_mac(const uint8_t* data, size_t len) {
@@ -366,4 +363,80 @@ size_t build_gip_input_report(const dualshock4_input_report_common& common, bool
 
     if (series && touchpad) out[GIP_SERIES_SHARE_OFFSET] |= 0x01; // Touchpad click -> Share
     return size;
+}
+
+void build_ds4_usb_report(const dualshock4_input_report_common& common, uint8_t num_touch,
+                          const dualshock4_touch_report touch_reps[4], bool has_real_battery,
+                          uint8_t out[DS_VIRTUAL_REPORT_SIZE]) {
+    memset(out, 0, DS_VIRTUAL_REPORT_SIZE);
+    auto* report = reinterpret_cast<dualshock4_input_report_usb*>(out);
+    report->report_id = 0x01;
+    report->common = common;
+    if (!has_real_battery) {
+        // No hardware behind this device: report a plausible fixed state
+        // (USB-wired, fully charged) instead of whatever zeroed or synthetic
+        // value common.status happens to hold. status[0] bit 4 is the cable,
+        // bits 3:0 the level (0-10, 0x0B = full).
+        report->common.status[0] = 0x1B;
+        report->common.status[1] = 0x00;
+    }
+    // A Bluetooth report can carry a fourth packet the USB layout has no room
+    // for; keep the three newest rather than dropping the latest.
+    report->num_touch_reports = (uint8_t)select_usb_touch_reports(num_touch, touch_reps, report->touch_reports);
+    // Real hardware fills every slot; leaving unused ones zeroed (contact 0,
+    // x 0, y 0) reads as a touch at (0,0) to any consumer that does not gate
+    // on num_touch_reports, so mark both points "not touching" (bit 7).
+    for (int i = report->num_touch_reports; i < 3; ++i) {
+        report->touch_reports[i].points[0].contact = 0x80;
+        report->touch_reports[i].points[1].contact = 0x80;
+    }
+}
+
+void build_dualsense_report(const dualshock4_input_report_common& common, uint8_t num_touch,
+                            const dualshock4_touch_report touch_reps[4], uint8_t seq,
+                            bool has_real_battery, uint8_t out[DS_VIRTUAL_REPORT_SIZE]) {
+    memset(out, 0, DS_VIRTUAL_REPORT_SIZE);
+    out[0] = 0x01;
+    auto* report = reinterpret_cast<dualsense_input_report*>(&out[1]);
+
+    report->x = common.x;
+    report->y = common.y;
+    report->rx = common.rx;
+    report->ry = common.ry;
+    report->z = common.z;
+    report->rz = common.rz;
+    report->buttons[0] = common.buttons[0];
+    report->buttons[1] = common.buttons[1];
+    report->buttons[2] = common.buttons[2] & 0x03;
+    report->buttons[3] = 0;
+    report->seq_number = seq;
+    memcpy(report->gyro, common.gyro, sizeof(report->gyro));
+    memcpy(report->accel, common.accel, sizeof(report->accel));
+    report->sensor_timestamp = (uint32_t)common.sensor_timestamp;
+
+    if (num_touch > 0) {
+        // The newest report of the batch: the older ones are the same
+        // fingers a few milliseconds earlier.
+        const int latest = (num_touch > 4 ? 4 : num_touch) - 1;
+        for (int i = 0; i < 2; ++i) {
+            const dualshock4_touch_point& from = touch_reps[latest].points[i];
+            report->points[i].contact = from.contact;
+            report->points[i].x_lo = from.x_lo;
+            report->points[i].x_hi = from.x_hi;
+            report->points[i].y_lo = from.y_lo;
+            report->points[i].y_hi = from.y_hi;
+        }
+    } else {
+        report->points[0].contact = 0x80;
+        report->points[1].contact = 0x80;
+    }
+
+    if (has_real_battery) {
+        int percent;
+        BatteryState state;
+        decode_ds4_battery(common.status[0], percent, state);
+        report->status[0] = encode_dualsense_battery(percent, state);
+    } else {
+        report->status[0] = 0x2B; // fully charged
+    }
 }

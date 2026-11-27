@@ -13,10 +13,20 @@ Checks: >
   clang-analyzer-*,
   portability-*,
   -bugprone-easily-swappable-parameters,
+  -bugprone-signed-bitwise,
+  -bugprone-throwing-static-initialization,
   -cert-err58-cpp,
   -clang-analyzer-optin.performance.Padding,
   -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling
 
+# bugprone-signed-bitwise and bugprone-throwing-static-initialization exist
+# only in recent clang-tidy (the 23.x series flags them; the version CI installs
+# does not), and between them account for all but one of 244 findings on a
+# tree that was clean before: the former fires on every `byte & 0x80` and every
+# `O_RDWR | O_NONBLOCK`, since the operand is promoted to int; the latter on six
+# std::string constants and one object built at startup, where an allocation
+# failure ends the process either way. Neither is a defect in this codebase.
+#
 # cppcoreguidelines-pro-bounds-*/pro-type-vararg were tried and dropped:
 # they flag every raw array index and every snprintf call, which is the
 # baseline idiom for this codebase's HID/struct handling, not a security

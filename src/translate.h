@@ -156,18 +156,6 @@ bool is_valid_ds4_firmware_report(const uint8_t* data, size_t len);
 // summary of a valid firmware report; empty string for an invalid one.
 std::string describe_ds4_firmware(const uint8_t* data, size_t len);
 
-// Motion-sensor calibration (gyro biases/gains, accelerometer ranges). The
-// USB report 0x02 is 37 bytes; over Bluetooth the pad answers 0x05 with the
-// same fields in a different gyro order plus a CRC32 (seed 0xA3) over the
-// first 37 bytes. Games read it in the USB layout from the emulated device.
-constexpr uint8_t DS4_IMU_CAL_USB_ID = 0x02;
-constexpr uint8_t DS4_IMU_CAL_BT_ID = 0x05;
-constexpr size_t DS4_IMU_CAL_USB_SIZE = 37;
-constexpr size_t DS4_IMU_CAL_BT_SIZE = 41;
-bool is_valid_ds4_imu_calibration_usb(const uint8_t* data, size_t len);
-// Checks `bt` (41 bytes, id 0x05, CRC) and rewrites it into USB layout.
-bool convert_ds4_imu_calibration_bt(const uint8_t* bt, size_t len, uint8_t usb[DS4_IMU_CAL_USB_SIZE]);
-
 // Feature report 0x12 (pairing info, 16 bytes with the ID): the pad's own
 // Bluetooth MAC byte-reversed in bytes 1-6, then the host identity.
 constexpr uint8_t DS4_PAIRING_INFO_ID = 0x12;
@@ -175,6 +163,35 @@ constexpr size_t DS4_PAIRING_INFO_SIZE = 16;
 // The MAC as "aa:bb:cc:dd:ee:ff" (lower case), or "" if the report is
 // malformed or carries an all-zero MAC.
 std::string ds4_pairing_info_mac(const uint8_t* data, size_t len);
+// The IMU calibration an emulated DS4 serves as feature report 0x02 (USB
+// layout, 36 bytes after the report ID), taken from a physical pad's own
+// calibration report: 0x02, 37 bytes, over USB (copied as is), or 0x05, 41
+// bytes with a trailing CRC32, over Bluetooth. Bluetooth orders the six gyro
+// plus/minus words as pitch+, pitch-, yaw+, yaw-, roll+, roll- where USB has
+// pitch+, yaw+, roll+, pitch-, yaw-, roll-; everything else is identical.
+// False (out untouched) for a wrong report ID or size, or a Bluetooth report
+// whose CRC does not match.
+constexpr size_t DS4_CALIBRATION_SIZE = 36;
+constexpr uint8_t DS4_IMU_CAL_USB_ID = 0x02;
+constexpr uint8_t DS4_IMU_CAL_BT_ID = 0x05;
+constexpr size_t DS4_IMU_CAL_USB_SIZE = 37;
+constexpr size_t DS4_IMU_CAL_BT_SIZE = 41;
+bool ds4_calibration_to_usb_layout(const uint8_t* report, size_t len,
+                                   uint8_t out[DS4_CALIBRATION_SIZE]);
+
+// The 64-byte input report 0x01 the virtual DS4 / DualSense presents, built
+// from the physical pad's common block and touch reports. The DS4 one is the
+// pad's own data with unused touch slots marked "no finger"; the DualSense one
+// is a real repack (sequence number, newest touch report, re-encoded battery).
+// Without a physical battery behind it the status bytes are a fixed
+// "fully charged" instead.
+constexpr size_t DS_VIRTUAL_REPORT_SIZE = 64;
+void build_ds4_usb_report(const dualshock4_input_report_common& common, uint8_t num_touch,
+                          const dualshock4_touch_report touch_reps[4], bool has_real_battery,
+                          uint8_t out[DS_VIRTUAL_REPORT_SIZE]);
+void build_dualsense_report(const dualshock4_input_report_common& common, uint8_t num_touch,
+                            const dualshock4_touch_report touch_reps[4], uint8_t seq,
+                            bool has_real_battery, uint8_t out[DS_VIRTUAL_REPORT_SIZE]);
 
 enum BatteryState { BATTERY_DISCHARGING, BATTERY_CHARGING, BATTERY_FULL };
 
