@@ -78,18 +78,33 @@ ScrollView {
         width: parent.width
         spacing: 12
 
-        Label {
+        RowLayout {
             Layout.fillWidth: true
             Layout.margins: 12
             Layout.bottomMargin: 0
-            wrapMode: Text.Wrap
-            color: root.hasPad && !root.onUsb ? "#c0392b" : palette.text
-            text: !DaemonController.online ? qsTr("The daemon is not reachable.")
-                : !root.hasPad ? qsTr("No controller connected. Plug it in with a USB cable.")
-                : !root.onUsb ? qsTr("%1 is connected over %2. Calibration needs the controller on USB: "
-                    + "connect it by cable (and unpair the Bluetooth link if it stays on Bluetooth).")
-                    .arg(DaemonController.physicalController).arg(DaemonController.connectionType)
-                : qsTr("%1, connected over USB.").arg(DaemonController.physicalController)
+            spacing: 12
+
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                color: root.hasPad && !root.onUsb ? "#c0392b" : palette.text
+                text: !DaemonController.online ? qsTr("The daemon is not reachable.")
+                    : !root.hasPad ? qsTr("No controller connected. Plug it in with a USB cable.")
+                    : !root.onUsb ? qsTr("%1 is connected over %2. Calibration needs the controller on USB: "
+                        + "connect it by cable (and unpair the Bluetooth link if it stays on Bluetooth).")
+                        .arg(DaemonController.physicalController).arg(DaemonController.connectionType)
+                    : qsTr("%1, connected over USB.").arg(DaemonController.physicalController)
+            }
+
+            // Undoes any calibration not stored permanently and ends one left
+            // open (a cancelled run blocks the next start until a reset).
+            Button {
+                text: qsTr("Reset controller")
+                enabled: root.onUsb && CalibrationController.phase === CalibrationController.Idle
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Reboots the controller: it goes back to its permanent calibration")
+                onClicked: CalibrationController.resetController()
+            }
         }
 
         // Unsaved results, as dualshock-tools shows them: the pad uses them
@@ -113,14 +128,7 @@ ScrollView {
                     wrapMode: Text.Wrap
                     text: qsTr("The controller has a calibration that is not stored permanently. It is "
                         + "lost when the controller resets or goes into standby. To keep it, calibrate "
-                        + "again and choose \"Store permanently\".")
-                }
-                Button {
-                    text: qsTr("Revert")
-                    enabled: root.onUsb
-                    ToolTip.visible: hovered
-                    ToolTip.text: qsTr("Reset the controller, going back to its permanent calibration")
-                    onClicked: CalibrationController.resetController()
+                        + "again and choose \"Store permanently\"; to undo it, reset the controller.")
                 }
             }
         }

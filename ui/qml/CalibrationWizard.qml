@@ -23,7 +23,8 @@ Dialog {
     anchors.centerIn: Overlay.overlay
     // Wide enough for the footer's buttons (the store page has three), but
     // never wider than the window.
-    width: Math.min(Math.max(560, root.implicitFooterWidth), (parent ? parent.width : 560) - 24)
+    width: Math.min(Math.max(560, footerRow.implicitWidth + root.leftPadding + root.rightPadding + 24),
+                    (parent ? parent.width : 560) - 24)
     // Opened by CalibrationController.begin(), closed once the controller goes
     // back to Idle. Not a binding on `visible`: closing the dialog would
     // break it.
@@ -32,10 +33,6 @@ Dialog {
             root.close();
         } else if (!root.visible) {
             root.open();
-        }
-        // Drawn trace starts fresh with each range page.
-        if (root.phase === CalibrationController.Rotating) {
-            dials.clearTrace();
         }
     }
 
@@ -97,7 +94,6 @@ Dialog {
             visible: root.sticks && root.phase !== CalibrationController.Confirm
                 && root.phase !== CalibrationController.Checking
                 && root.phase !== CalibrationController.Failed
-            trace: root.phase === CalibrationController.Rotating
             guideRadius: root.phase === CalibrationController.Rotating ? 0.8 : 0
             leftCaption: root.phase === CalibrationController.Rotating
                 ? qsTr("%1 / %2 circles").arg(CalibrationController.leftCircles)
@@ -156,43 +152,55 @@ Dialog {
         }
     }
 
-    footer: DialogButtonBox {
-        Button {
-            // A calibration started on the pad and not stored stays open on it
-            // (the pad has a battery, so unplugging does not clear it) and
-            // blocks the next one; closing then resets the pad.
-            text: {
-                const finished = root.phase === CalibrationController.Done
-                    || root.phase === CalibrationController.Failed;
-                if (CalibrationController.startedOnPad) {
-                    return finished ? qsTr("Close and reset controller") : qsTr("Cancel and reset controller");
+    // A plain row rather than a DialogButtonBox: the box sized itself
+    // without the buttons that appear later (the store page's), so they ran
+    // past the dialog's edge. A row's implicit width always includes them.
+    footer: Pane {
+        RowLayout {
+            id: footerRow
+            anchors.fill: parent
+            spacing: 8
+
+            Button {
+                // A calibration started on the pad and not stored stays open
+                // on it (the pad has a battery, so unplugging does not clear
+                // it) and blocks the next one; closing then resets the pad.
+                text: {
+                    const finished = root.phase === CalibrationController.Done
+                        || root.phase === CalibrationController.Failed;
+                    if (CalibrationController.startedOnPad) {
+                        return finished ? qsTr("Close and reset controller") : qsTr("Cancel and reset controller");
+                    }
+                    return finished ? qsTr("Close") : qsTr("Cancel");
                 }
-                return finished ? qsTr("Close") : qsTr("Cancel");
+                enabled: root.phase !== CalibrationController.Working
+                ToolTip.visible: hovered && CalibrationController.startedOnPad
+                ToolTip.text: qsTr("Also drops any calibration not stored permanently")
+                onClicked: root.reject()
             }
-            DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
-            enabled: root.phase !== CalibrationController.Working
-            ToolTip.visible: hovered && CalibrationController.startedOnPad
-            ToolTip.text: qsTr("Also drops any calibration not stored permanently")
-        }
-        Button {
-            visible: root.phase === CalibrationController.Confirm
-                || root.phase === CalibrationController.Instruct
-                || root.phase === CalibrationController.Rotating
-            text: root.phase === CalibrationController.Confirm ? qsTr("Start") : qsTr("Continue")
-            enabled: CalibrationController.canContinue
-            highlighted: true
-            onClicked: CalibrationController.next()
-        }
-        Button {
-            visible: root.phase === CalibrationController.ChooseStore
-            text: qsTr("Store until reset")
-            highlighted: true
-            onClicked: CalibrationController.store(false)
-        }
-        Button {
-            visible: root.phase === CalibrationController.ChooseStore
-            text: qsTr("Store permanently…")
-            onClicked: permanentConfirm.open()
+
+            Item { Layout.fillWidth: true }
+
+            Button {
+                visible: root.phase === CalibrationController.Confirm
+                    || root.phase === CalibrationController.Instruct
+                    || root.phase === CalibrationController.Rotating
+                text: root.phase === CalibrationController.Confirm ? qsTr("Start") : qsTr("Continue")
+                enabled: CalibrationController.canContinue
+                highlighted: true
+                onClicked: CalibrationController.next()
+            }
+            Button {
+                visible: root.phase === CalibrationController.ChooseStore
+                text: qsTr("Store until reset")
+                highlighted: true
+                onClicked: CalibrationController.store(false)
+            }
+            Button {
+                visible: root.phase === CalibrationController.ChooseStore
+                text: qsTr("Store permanently…")
+                onClicked: permanentConfirm.open()
+            }
         }
     }
 
