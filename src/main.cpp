@@ -1906,15 +1906,29 @@ extern "C" void send_physical_output_report(int fd, bool is_bluetooth, uint8_t m
 // method) or its hidraw node (legacy method).
 class PhysicalFeatureIo : public FeatureIo {
 public:
-    PhysicalFeatureIo(int fd, bool via_usb_transport) : fd_(fd), via_usb_transport_(via_usb_transport) {}
+    // How the open physical connection reaches the pad: a hidraw node (legacy
+    // method, or nothing hidden), the daemon's own libusb transport (unbind
+    // on USB), or the kernel module's pad node (driver method). Each needs
+    // its own feature-report call; hidraw ioctls on the other two fail.
+    enum class Path { Hidraw, UsbTransport, Driver };
+
+    PhysicalFeatureIo(int fd, Path path) : fd_(fd), path_(path) {}
 
     int get(uint8_t id, uint8_t* buf, size_t len) override {
-        if (via_usb_transport_) return usb_hid_transport_get_feature_report(fd_, id, buf, len);
+        switch (path_) {
+        case Path::UsbTransport: return usb_hid_transport_get_feature_report(fd_, id, buf, len);
+        case Path::Driver: return driver_transport_get_feature(fd_, id, buf, len);
+        case Path::Hidraw: break;
+        }
         return hidraw_get_feature(fd_, id, buf, len);
     }
 
     bool set(const uint8_t* buf, size_t len) override {
-        if (via_usb_transport_) return usb_hid_transport_set_feature_report(fd_, buf, len);
+        switch (path_) {
+        case Path::UsbTransport: return usb_hid_transport_set_feature_report(fd_, buf, len);
+        case Path::Driver: return driver_transport_set_feature(fd_, buf, len);
+        case Path::Hidraw: break;
+        }
         uint8_t copy[64];
         if (len > sizeof(copy)) return false;
         memcpy(copy, buf, len);
@@ -1928,7 +1942,7 @@ public:
 
 private:
     int fd_;
-    bool via_usb_transport_;
+    Path path_;
 };
 
 // UHID Helper to write events
@@ -2638,6 +2652,12 @@ static std::string physical_feature_io_unavailable() {
     return "";
 }
 
+static PhysicalFeatureIo::Path physical_feature_path() {
+    if (g_phy_is_driver_transport) return PhysicalFeatureIo::Path::Driver;
+    if (g_phy_is_unbind_transport) return PhysicalFeatureIo::Path::UsbTransport;
+    return PhysicalFeatureIo::Path::Hidraw;
+}
+
 // Parses "<target> <step> [position side | permanent]" (see ds4-ctl
 // calibrate) and runs it on the physical pad. The caller has checked that the
 // pad is connected over USB.
@@ -2669,7 +2689,7 @@ static std::string run_calibrate_command(const std::string& args) {
         if (extra1 != "permanent") return "Error: store takes only the optional argument 'permanent'.";
         permanent = true;
     }
-    PhysicalFeatureIo io(phy_fd, g_phy_is_unbind_transport);
+    PhysicalFeatureIo io(phy_fd, physical_feature_path());
     return calibration_run_step(io, target, step, position, side, permanent);
 }
 
@@ -2680,7 +2700,7 @@ static std::string run_pair_command(const std::string& adapter) {
     if (getrandom(key, sizeof(key), 0) != (ssize_t)sizeof(key)) {
         return "Error: Could not generate a link key.";
     }
-    PhysicalFeatureIo io(phy_fd, g_phy_is_unbind_transport);
+    PhysicalFeatureIo io(phy_fd, physical_feature_path());
     const std::string reply = cable_pair(io, BLUEZ_STATE_DIR, adapter, key);
     memset(key, 0, sizeof(key));
     return reply;
@@ -3911,7 +3931,7 @@ int main(int argc, char* argv[]) {
                     } else if (cmd == "reset-controller") {
                         response = physical_feature_io_unavailable();
                         if (response.empty()) {
-                            PhysicalFeatureIo io(phy_fd, g_phy_is_unbind_transport);
+                            PhysicalFeatureIo io(phy_fd, physical_feature_path());
                             response = controller_reset(io);
                         }
                     } else if (cmd == "pair" || cmd.rfind("pair ", 0) == 0) {

@@ -201,6 +201,40 @@ bool driver_transport_get_calibration(int pad_fd, std::vector<uint8_t>& report) 
     return true;
 }
 
+int driver_transport_get_feature(int pad_fd, uint8_t id, uint8_t* buf, size_t len) {
+    struct ds4t_feature feat;
+    memset(&feat, 0, sizeof(feat));
+    if (len == 0 || len > sizeof(feat.data)) {
+        return -1;
+    }
+    feat.len = static_cast<uint16_t>(len);
+    feat.data[0] = id;
+    if (ioctl(pad_fd, DS4T_IOC_GET_FEATURE, &feat) != 0) {
+        std::cerr << "driver: feature report 0x" << std::hex << static_cast<int>(id) << std::dec
+                  << " read failed: " << strerror(errno) << std::endl;
+        return -1;
+    }
+    const size_t got = feat.len < len ? feat.len : len;
+    memcpy(buf, feat.data, got);
+    return static_cast<int>(got);
+}
+
+bool driver_transport_set_feature(int pad_fd, const uint8_t* buf, size_t len) {
+    struct ds4t_feature feat;
+    memset(&feat, 0, sizeof(feat));
+    if (len == 0 || len > sizeof(feat.data)) {
+        return false;
+    }
+    feat.len = static_cast<uint16_t>(len);
+    memcpy(feat.data, buf, len);
+    if (ioctl(pad_fd, DS4T_IOC_SET_FEATURE, &feat) != 0) {
+        std::cerr << "driver: feature report 0x" << std::hex << static_cast<int>(buf[0]) << std::dec
+                  << " write failed: " << strerror(errno) << std::endl;
+        return false;
+    }
+    return true;
+}
+
 bool driver_transport_available() {
     struct stat st;
     return stat(ds4paths::driver_module_dir().c_str(), &st) == 0;

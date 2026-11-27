@@ -23,6 +23,9 @@ RowLayout {
     property string rightCaption: ""
 
     readonly property color accent: "#2d8cf0"
+    // Outline, crosshair and guide ring. A Canvas is not a Control and has no
+    // palette, so this is a fixed grey that reads on light and dark themes.
+    readonly property color frame: "#8a8f98"
 
     function clearTrace() {
         leftDial.clear();
@@ -80,7 +83,7 @@ RowLayout {
                 const cy = height / 2;
                 ctx.reset();
 
-                ctx.strokeStyle = palette.mid;
+                ctx.strokeStyle = root.frame;
                 ctx.lineWidth = 1;
                 ctx.beginPath();
                 ctx.arc(cx, cy, radius, 0, 2 * Math.PI);

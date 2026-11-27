@@ -144,9 +144,9 @@
     "semantic_hash": ""
   },
   "src/main.cpp": {
-    "mtime": 1795792041.4262586,
-    "seen": 1795792424.6739452,
-    "ast_hash": "7f5c1468fd1e40448ec4b1b7f1a6e5fa",
+    "mtime": 1795798649.6933072,
+    "seen": 1795798714.5605583,
+    "ast_hash": "0b469ede34879c793b72ca3da34367d3",
     "semantic_hash": ""
   },
   "src/paths.h": {
@@ -768,15 +768,15 @@
     "semantic_hash": ""
   },
   "src/driver-transport.cpp": {
-    "mtime": 1795790199.4964614,
-    "seen": 1795791686.1279492,
-    "ast_hash": "b61471a19593347376deaf806aed33e6",
+    "mtime": 1795798649.69238,
+    "seen": 1795798714.5604856,
+    "ast_hash": "af99edd55fe329c9273d94148256c7ec",
     "semantic_hash": ""
   },
   "src/driver-transport.h": {
-    "mtime": 1795790199.4979002,
-    "seen": 1795791686.1279528,
-    "ast_hash": "2939a68e94b5ce315154783032cdf69b",
+    "mtime": 1795798649.6921625,
+    "seen": 1795798714.56049,
+    "ast_hash": "caff2edc271070dc4b95d9bf85b64460",
     "semantic_hash": ""
   },
   "tests/completion/test_completion.sh": {
