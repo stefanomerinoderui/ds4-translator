@@ -21,7 +21,6 @@
 #include <linux/unaligned.h>
 #include <linux/workqueue.h>
 
-#include "ds4t-descriptors.h"
 #include "ds4t-internal.h"
 #include "ds4t-translate.h"
 #include "ds4t-vcore.h"
