@@ -59,7 +59,7 @@ bool set_mode(FeatureIo& io, bool permanent) {
 // keeps it open until it resets, and it has a battery, so unplugging it does
 // not count. Only a reset clears it.
 std::string start_refused(FeatureIo& io) {
-    const std::string fix = " Reset the controller (ds4-ctl reset-controller, or Revert in the settings window) "
+    const std::string fix = " Reset the controller (ds4-ctl reset-controller, or Reset controller on the Calibrate tab) "
                             "and start again.";
     uint8_t raw[4] = {};
     if (io.get(kCalibrationState, raw, sizeof(raw)) < (int)sizeof(raw) || raw[0] != kCalibrationState) {

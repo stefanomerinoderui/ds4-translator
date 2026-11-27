@@ -122,7 +122,7 @@ QList<CalibrationController::Action> CalibrationController::buildActions(const Q
 }
 
 void CalibrationController::begin(const QString &target) {
-    if (m_phase != Idle && m_phase != Done && m_phase != Failed) {
+    if (m_phase != Idle && m_phase != Failed) {
         return;
     }
     QString error;
@@ -180,6 +180,7 @@ void CalibrationController::cancel() {
     m_rotateTicker->stop();
     m_actions.clear();
     m_instruction.clear();
+    m_message.clear();
     const bool leftOpen = m_startedOnPad;
     setPhase(Idle);
     // The pad keeps an unstored calibration open until it resets, and the
@@ -302,7 +303,10 @@ void CalibrationController::onReplyReady(const QString &command, bool ok, const 
         if (!m_storingPermanently) {
             m_unsavedChanges = true;
         }
-        setPhase(Done);
+        // Stored: the wizard closes and the page shows the daemon's reply.
+        m_actions.clear();
+        m_instruction.clear();
+        setPhase(Idle);
         return;
     }
     runNext();

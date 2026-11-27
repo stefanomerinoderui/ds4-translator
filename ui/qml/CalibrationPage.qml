@@ -30,6 +30,10 @@ ScrollView {
         return qsTr("Circularity error: %1%").arg(error.toFixed(1));
     }
 
+    // Stopped, the outline stays as it was, so it can be read while the
+    // sticks are let go.
+    property bool circularityRunning: true
+
     CircularityTest {
         id: circularity
     }
@@ -38,7 +42,8 @@ ScrollView {
     // (stick range would otherwise feed the test with calibration moves).
     Connections {
         target: InputMonitor
-        enabled: root.visible && CalibrationController.phase === CalibrationController.Idle
+        enabled: root.visible && root.circularityRunning
+            && CalibrationController.phase === CalibrationController.Idle
         function onInputChanged() {
             if (InputMonitor.hasState && InputMonitor.source === InputMonitor.Physical) {
                 circularity.add(InputMonitor.leftX, InputMonitor.leftY,
@@ -183,10 +188,18 @@ ScrollView {
                     rightCaption: root.circularityCaption(circularity.rightError, circularity.rightCoverage)
                 }
 
-                Button {
-                    text: qsTr("Reset test")
+                RowLayout {
                     Layout.alignment: Qt.AlignHCenter
-                    onClicked: circularity.reset()
+                    spacing: 8
+
+                    Button {
+                        text: root.circularityRunning ? qsTr("Stop test") : qsTr("Resume test")
+                        onClicked: root.circularityRunning = !root.circularityRunning
+                    }
+                    Button {
+                        text: qsTr("Reset test")
+                        onClicked: circularity.reset()
+                    }
                 }
             }
         }

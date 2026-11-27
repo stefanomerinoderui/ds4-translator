@@ -38,7 +38,6 @@ public:
         Instruct,   // an instruction is shown, waiting for Continue
         Rotating,   // stick range: waiting for the sticks to go round
         ChooseStore,// last page: store until reset, or permanently
-        Done,
         Failed,
     };
     Q_ENUM(Phase)
@@ -49,7 +48,8 @@ public:
     Q_PROPERTY(int stepIndex READ stepIndex NOTIFY changed)
     Q_PROPERTY(int stepCount READ stepCount NOTIFY changed)
     Q_PROPERTY(QString instruction READ instruction NOTIFY changed)
-    // The daemon's reply to the last command, or what went wrong.
+    // The daemon's reply to the last command, or what went wrong. After a
+    // successful store the wizard closes and this holds the store's reply.
     Q_PROPERTY(QString message READ message NOTIFY changed)
     Q_PROPERTY(bool canContinue READ canContinue NOTIFY changed)
 

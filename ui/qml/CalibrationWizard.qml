@@ -134,13 +134,13 @@ Dialog {
             Layout.alignment: Qt.AlignHCenter
         }
 
-        // Done / Failed: the daemon's own words.
+        // Failed: the daemon's own words.
         Label {
-            visible: (root.phase === CalibrationController.Done || root.phase === CalibrationController.Failed)
+            visible: root.phase === CalibrationController.Failed
                 && CalibrationController.message.length > 0
             Layout.fillWidth: true
             wrapMode: Text.Wrap
-            color: root.phase === CalibrationController.Failed ? "#c0392b" : palette.text
+            color: "#c0392b"
             text: CalibrationController.message
         }
         Label {
@@ -166,8 +166,7 @@ Dialog {
                 // on it (the pad has a battery, so unplugging does not clear
                 // it) and blocks the next one; closing then resets the pad.
                 text: {
-                    const finished = root.phase === CalibrationController.Done
-                        || root.phase === CalibrationController.Failed;
+                    const finished = root.phase === CalibrationController.Failed;
                     if (CalibrationController.startedOnPad) {
                         return finished ? qsTr("Close and reset controller") : qsTr("Cancel and reset controller");
                     }
@@ -211,11 +210,14 @@ Dialog {
 
         title: qsTr("Store permanently?")
         modal: true
-        anchors.centerIn: Overlay.overlay
+        // On the overlay, not inside the wizard: as the wizard's child it
+        // took the wizard's size and grew past its text.
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        width: Math.min(440, (parent ? parent.width : 440) - 48)
         standardButtons: Dialog.Yes | Dialog.Cancel
 
-        Label {
-            width: 380
+        contentItem: Label {
             wrapMode: Text.Wrap
             text: qsTr("The new calibration replaces the controller's current one for good. It survives "
                 + "resets and works on every computer and console. The only way back is to "
