@@ -2658,8 +2658,13 @@ static std::string run_calibrate_command(const std::string& args) {
     uint8_t position = 0, side = 0;
     bool permanent = false;
     if (step == CAL_STEP_SAMPLE && target == CAL_TRIGGERS) {
-        position = (uint8_t)atoi(extra1.c_str());
-        side = (uint8_t)atoi(extra2.c_str());
+        // Single digits only; anything else stays 0, which
+        // build_calibration_command() refuses.
+        const auto digit = [](const std::string& text) -> uint8_t {
+            return text.size() == 1 && text[0] >= '1' && text[0] <= '9' ? (uint8_t)(text[0] - '0') : 0;
+        };
+        position = digit(extra1);
+        side = digit(extra2);
     } else if (step == CAL_STEP_STORE && !extra1.empty()) {
         if (extra1 != "permanent") return "Error: store takes only the optional argument 'permanent'.";
         permanent = true;

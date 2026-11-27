@@ -428,7 +428,7 @@ UNIT_TEST_BIN = $(TEST_BUILD_DIR)/unit-tests
 UNIT_TEST_SRC = $(wildcard tests/unit/*.cpp)
 # hid-unbind-detect.cpp needs write_hid_driver_sysfs from main.cpp; the stub
 # stands in so it links without the daemon.
-UNIT_LIB_SRC  = src/ipc-client.cpp src/translate.cpp src/calibration.cpp src/pairing.cpp src/fs-util.cpp src/hid-unbind-detect.cpp tests/stubs/hid_driver_sysfs_stub.cpp
+UNIT_LIB_SRC  = src/ipc-client.cpp src/stick-coverage.cpp src/translate.cpp src/calibration.cpp src/pairing.cpp src/fs-util.cpp src/hid-unbind-detect.cpp tests/stubs/hid_driver_sysfs_stub.cpp
 
 $(UNIT_TEST_BIN): $(UNIT_TEST_SRC) $(UNIT_LIB_SRC) $(KTRANSLATE_OBJ) $(wildcard src/*.h)
 	@mkdir -p $(TEST_BUILD_DIR)

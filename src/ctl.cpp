@@ -1,5 +1,5 @@
 #include <iostream>
-#include <sstream>
+#include <algorithm>
 #include <string>
 #include <vector>
 #include <deque>
@@ -734,9 +734,16 @@ static int run_tap(const std::string& button) {
 
 // One calibrate step; prints the daemon's reply. False if it failed, so the
 // caller stops instead of carrying on with a pad in an unknown state.
-static bool calibrate_step(const std::string& args) {
+static bool calibrate_step(const std::string& target, const std::string& step, int position = 0,
+                           int side = 0, bool permanent = false) {
+    std::string error;
+    const std::string command = ds4ipc::build_calibrate(target, step, position, side, permanent, &error);
+    if (command.empty()) {
+        std::cerr << "Error: " << error << std::endl;
+        return false;
+    }
     std::string response;
-    if (!send_command("calibrate " + args, response)) {
+    if (!send_command(command, response)) {
         std::cerr << response << std::endl;
         print_daemon_unreachable_help();
         return false;
@@ -763,8 +770,10 @@ static bool calibrate_triggers(const std::string& target) {
                 return false;
             }
             // The pad wants each position sampled twice.
-            const std::string sample = target + " sample " + std::to_string(position) + " " + std::to_string(side);
-            if (!calibrate_step(sample) || !calibrate_step(sample)) return false;
+            if (!calibrate_step(target, "sample", position, side) ||
+                !calibrate_step(target, "sample", position, side)) {
+                return false;
+            }
         }
     }
     return true;
@@ -774,7 +783,7 @@ static bool calibrate_stick_center(const std::string& target) {
     if (!wait_for_enter("Release both sticks so they rest in the centre.")) return false;
     constexpr int kSamples = 5;
     for (int i = 0; i < kSamples; ++i) {
-        if (!calibrate_step(target + " sample")) return false;
+        if (!calibrate_step(target, "sample")) return false;
         usleep(100000);
     }
     return true;
@@ -811,7 +820,7 @@ static int run_calibrate(const std::string& target, bool permanent) {
     std::cout << "This writes to the controller's calibration memory and can leave it unusable if\n"
                  "interrupted or if the controller does not respond as expected. The result is "
               << (permanent ? "PERMANENT." : "lost on reset or standby.") << std::endl;
-    if (!wait_for_enter("Continue?") || !calibrate_step(target + " start")) return 1;
+    if (!wait_for_enter("Continue?") || !calibrate_step(target, "start")) return 1;
 
     bool ok = false;
     if (target == "stick-center") {
@@ -825,7 +834,7 @@ static int run_calibrate(const std::string& target, bool permanent) {
         std::cerr << "Calibration not stored." << std::endl;
         return 1;
     }
-    return calibrate_step(target + " store" + (permanent ? " permanent" : "")) ? 0 : 1;
+    return calibrate_step(target, "store", 0, 0, permanent) ? 0 : 1;
 }
 
 int main(int argc, char* argv[]) {
@@ -1029,7 +1038,8 @@ int main(int argc, char* argv[]) {
                 break;
             }
         }
-        if (!is_in_list(target, "stick-center stick-range triggers")) {
+        const std::vector<std::string>& targets = ds4ipc::calibration_target_values();
+        if (std::find(targets.begin(), targets.end(), target) == targets.end()) {
             std::cerr << "Error: calibrate requires one of: stick-center stick-range triggers "
                          "(optionally --permanent)" << std::endl;
             return 1;

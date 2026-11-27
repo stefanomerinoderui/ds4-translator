@@ -16,6 +16,7 @@ namespace ds4ipc {
 
 const char *const kIdentifyCommand = "identify";
 const char *const kLedResetCommand = "led --reset";
+const char *const kResetControllerCommand = "reset-controller";
 
 const char *const kSetNameWarning =
     "changing the controller name recreates the virtual device if that type is "
@@ -399,6 +400,49 @@ std::string build_led(int red, int green, int blue, int rumble_left, int rumble_
     (void)snprintf(buf, sizeof(buf), "led %d %d %d %d %d", red, green, blue, rumble_left,
                    rumble_right);
     return std::string(buf);
+}
+
+const std::vector<std::string> &calibration_target_values() {
+    static const std::vector<std::string> values = {"stick-center", "stick-range", "triggers"};
+    return values;
+}
+
+std::string build_calibrate(const std::string &target, const std::string &step, int position,
+                            int side, bool permanent, std::string *error) {
+    auto fail = [error](const std::string &message) {
+        if (error != nullptr) {
+            *error = message;
+        }
+        return std::string();
+    };
+    if (!contains(calibration_target_values(), target)) {
+        return fail("calibration target must be one of: " + join_values(calibration_target_values()));
+    }
+    if (step != "start" && step != "sample" && step != "store") {
+        return fail("calibration step must be one of: start sample store");
+    }
+    if (permanent && step != "store") {
+        return fail("only the store step can be made permanent");
+    }
+    const bool trigger_sample = target == "triggers" && step == "sample";
+    if (trigger_sample) {
+        if (position < 1 || position > 3 || side < 1 || side > 2) {
+            return fail("a trigger sample needs position 1-3 and side 1 (L2) or 2 (R2)");
+        }
+    } else if (position != 0 || side != 0) {
+        return fail("only a trigger sample takes a position and side");
+    }
+    if (target == "stick-range" && step == "sample") {
+        return fail("stick-range has no sample step");
+    }
+    std::string command = "calibrate " + target + " " + step;
+    if (trigger_sample) {
+        command += " " + std::to_string(position) + " " + std::to_string(side);
+    }
+    if (permanent) {
+        command += " permanent";
+    }
+    return command;
 }
 
 // -------------------------------------------------------------- live input
