@@ -92,12 +92,14 @@ ApplicationWindow {
 
             TabButton { text: qsTr("Emulation") }
             TabButton { text: qsTr("Test") }
+            TabButton { text: qsTr("Calibrate") }
             TabButton { text: qsTr("Settings") }
         }
     }
 
-    // Index of the test page in the tab bar / stack above.
+    // Indexes of the pages that show live input, in the tab bar / stack above.
     readonly property int testTabIndex: 1
+    readonly property int calibrateTabIndex: 2
 
     // The live stream makes the daemon poll its input source far harder, so
     // it is subscribed to only while its page is actually on screen (and the
@@ -105,7 +107,18 @@ ApplicationWindow {
     Binding {
         target: InputMonitor
         property: "active"
-        value: window.visible && tabBar.currentIndex === window.testTabIndex
+        value: window.visible && (tabBar.currentIndex === window.testTabIndex
+            || tabBar.currentIndex === window.calibrateTabIndex)
+    }
+
+    // Calibration is about the physical pad, whatever the test page was set
+    // to watch; the test page's choice comes back when leaving.
+    Binding {
+        target: InputMonitor
+        property: "source"
+        value: InputMonitor.Physical
+        when: tabBar.currentIndex === window.calibrateTabIndex
+        restoreMode: Binding.RestoreBindingOrValue
     }
 
     footer: Pane {
@@ -125,6 +138,8 @@ ApplicationWindow {
         EmulationPage {}
 
         TestPage {}
+
+        CalibrationPage {}
 
         AppSettingsPage {}
     }

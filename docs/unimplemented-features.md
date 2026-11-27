@@ -154,7 +154,16 @@ fail or report success without the physical pad being touched.
   between steps. It first forces the temporary flash-mirror mode and checks
   it, and `--permanent` switches to permanent mode only around the store
   step. Refused over Bluetooth. The triggers target is beta upstream and is
-  not checked against `0x91`/`0x92`. Not yet run against real hardware.
+  not checked against `0x91`/`0x92`. Stick centre has been run on a real
+  pad (temporary store).
+- The settings UI has a Calibrate tab that runs the same steps as a wizard,
+  modelled on dualshock-tools. It checks for USB first, and shows a warning
+  page and live stick dials. The stick-range page unlocks once both sticks
+  have gone round 4 full circles (or after 15 s), and the last page offers
+  "store until reset" or "store permanently" (confirmed separately). A
+  banner offers a reset to revert a temporary result. dualshock-tools'
+  "finetune" is DualSense-only: its maintainers say the DS4 firmware does
+  not accept written calibration values (issues #180, #252).
 - `ds4-ctl reset-controller` (`0xA0 = 04 01 00`), USB only.
 - `ds4-ctl pair [adapter MAC]`: cable pairing done by the daemon (feature
   `0x13` plus a BlueZ `info` file with the same link key), because BlueZ's
