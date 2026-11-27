@@ -1,0 +1,16 @@
+# DKMS description of the hid-ds4-translator module, installed as dkms.conf by
+# `make stage-dkms` (the version is the package version). DKMS rebuilds it for
+# every installed kernel that has headers, and again on each kernel upgrade.
+PACKAGE_NAME="ds4-translator"
+PACKAGE_VERSION="@VERSION@"
+BUILT_MODULE_NAME[0]="hid-ds4-translator"
+DEST_MODULE_LOCATION[0]="/kernel/drivers/hid"
+# The kernel-usb backend's USB gadget. Kbuild only builds it on a kernel with
+# gadget support (CONFIG_USB_LIBCOMPOSITE), which every distribution kernel
+# that ships dummy_hcd has.
+BUILT_MODULE_NAME[1]="ds4t-gadget"
+DEST_MODULE_LOCATION[1]="/kernel/drivers/usb/gadget"
+AUTOINSTALL="yes"
+# kernel/Makefile builds with LLVM=1 on its own when the kernel itself was
+# built with Clang (CachyOS and others), as a module has to match.
+MAKE[0]="make KDIR=${kernel_source_dir}"

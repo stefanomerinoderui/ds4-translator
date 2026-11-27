@@ -23,6 +23,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-deps
       - name: Build
         run: make all
@@ -39,6 +41,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-deps
       - name: Run unit and component tests
         run: make test-unit test-component
@@ -57,6 +61,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-deps
       # Includes the daemon security suite, which uses passwordless sudo
       # (available on GitHub runners) to talk to the socket as another uid.
@@ -69,6 +75,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-deps
       - name: Unit tests under ASan + UBSan
         run: make test-sanitize
@@ -97,6 +105,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-deps
       - name: Build and test with ${{ matrix.compiler }}
         run: make all test CXX=${{ matrix.compiler }}
@@ -110,6 +120,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           fetch-depth: 0 # gitleaks scans history
       - uses: ./.github/actions/setup-deps
       - name: Install analysis tools
@@ -158,6 +169,8 @@ jobs:
           pacman -Syu --noconfirm --needed git clang libusb libbpf bpf gtest pkgconf \
             lib32-glibc lib32-gcc-libs systemd python
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - name: Build and test
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -170,6 +183,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-deps
       - name: Performance budgets
         run: |

@@ -70,7 +70,7 @@ sudo pacman -U build/arch/ds4-translator-*.pkg.tar.zst
 sudo systemctl enable --now ds4-translator.service
 ```
 
-This produces two packages: `ds4-translator` (daemon and `ds4-ctl`) and `ds4-translator-ui` (the Qt settings window). Install only the first if you don't want the UI. Unlike `make install`, the package installs under `/usr` (unit, udev rule and modprobe config in `/usr/lib`) and leaves enabling the service to you.
+This produces three packages: `ds4-translator` (daemon and `ds4-ctl`), `ds4-translator-ui` (the Qt settings window) and `ds4-translator-dkms` (the optional kernel module, see [the driver hide method](#the-driver-hide-method-experimental)). Install only the first if you don't want the rest. Unlike `make install`, the package installs under `/usr` (unit, udev rule and modprobe config in `/usr/lib`) and leaves enabling the service to you.
 
 By default, the service starts emulating a virtual **DualShock 4** controller.
 
@@ -133,6 +133,8 @@ ds4-ctl set-backend ds4 functionfs        # default for ds4
 ds4-ctl set-backend ds4 uhid              # not recommended -- known DS4 detection issue in some titles
 ds4-ctl set-backend dualsense uhid        # default for dualsense
 ds4-ctl set-backend dualsense functionfs  # also works, just not the default
+ds4-ctl set-backend ds4 kernel            # kernel module translates (needs set-hide-method driver); like uhid, not detected by some Wine/Proton games as a DS4 -- use functionfs or kernel-usb for those
+ds4-ctl set-backend ds4 kernel-usb        # the same, as a USB gadget on dummy_hcd: a real USB pad to games, as with functionfs, with translation in the kernel
 ```
 
 This takes effect immediately if that controller type is the one currently
@@ -168,6 +170,18 @@ Two caveats:
 - Apps that read the name through libudev sysfs attributes rather than from
   the device itself still see the default Sony string.
 
+### The driver hide method (experimental)
+
+By default the daemon takes the physical pad away from the kernel's `hid-playstation` driver after it has bound, with several workarounds (see [docs/how-it-works.md](docs/how-it-works.md)). The optional `hid-ds4-translator` kernel module ([kernel/README.md](kernel/README.md), design in [docs/kernel-driver.md](docs/kernel-driver.md)) claims the pad first instead, so no other driver ever creates a battery, LED, `hidraw` or input device for it, and the daemon reads it through a private node. It also hands the pad's real IMU calibration to the emulated DualShock 4.
+
+```bash
+sudo pacman -S ds4-translator-dkms linux-headers    # builds the module with DKMS
+sudo systemctl restart ds4-translator.service       # loads it
+ds4-ctl set-hide-method driver
+```
+
+It is opt-in and falls back to the `unbind` method whenever the module is not loaded. While the daemon runs, the module holds the pad; when the daemon stops or crashes, the pad goes straight back to `hid-playstation`. On Secure Boot systems the module must be signed; see [kernel/README.md](kernel/README.md#secure-boot).
+
 ## Uninstalling
 
 To disable the service and remove all installed files:
@@ -196,6 +210,23 @@ make test-security-static  # hardening flags, systemd unit, udev rules, workflow
 make test-hwtest       # the hardware-test runner's own tests (Python, tools/hwtest)
 make test-unit GTEST_FILTER='*Golden*'   # narrow to matching tests
 ```
+
+### Static analysis and warnings
+
+Warnings are errors throughout, in the build and in CI:
+
+```bash
+make lint              # all of the following
+make all debug         # -Wall -Wextra -Werror plus -Wconversion, -Wsign-conversion, -Wmissing-declarations ... (see STRICT_WARNINGS / PRODUCT_WARNINGS in the Makefile)
+make tidy              # clang-tidy over src/, any finding fails (.clang-tidy)
+make kernel-lint       # kernel module: W=1 -Werror, checkpatch --strict, sparse if installed, the Clang static analyzer on a Clang-built kernel
+make test-security-static  # also actionlint, zizmor and shellcheck at every severity
+```
+
+`.github/zizmor.yml` lists the two zizmor rules switched off, with the reason
+for each. clang-tidy is configured for the version CI installs; a much newer
+one (23.x) adds two noisy checks that `.clang-tidy` turns off, with the
+reasons.
 
 `DS4_RUNTIME_DIR`, `DS4_STATE_DIR` and `DS4_CONFIG_PATH` (see `src/paths.h`)
 relocate the daemon's socket, state and config, which is how the integration

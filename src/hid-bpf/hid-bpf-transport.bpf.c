@@ -63,6 +63,12 @@ struct {
 	__uint(max_entries, 64 * 4096);
 } ds4_reports SEC(".maps");
 
+// BPF_PROG() wraps the function below in a generated one whose raw `ctx`
+// argument it leaves unused when the program takes a single argument. That
+// wrapper is the macro's, not ours, so -Wunused-parameter is silenced for this
+// one program rather than for the file.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-parameter"
 SEC(HID_BPF_DEVICE_EVENT)
 int BPF_PROG(ds4_bt_swallow_event, struct hid_bpf_ctx *hid_ctx)
 {
@@ -83,6 +89,7 @@ int BPF_PROG(ds4_bt_swallow_event, struct hid_bpf_ctx *hid_ctx)
 	// clients ever see it. The ring buffer copy above already has it.
 	return -1;
 }
+#pragma clang diagnostic pop
 
 HID_BPF_OPS(ds4_bt_transport) = {
 	.hid_device_event = (void *)ds4_bt_swallow_event,

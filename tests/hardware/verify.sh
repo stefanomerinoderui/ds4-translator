@@ -105,6 +105,7 @@ find_virtual_hidraw() {
 }
 
 # physical_pad_hidraw: hidraw nodes of a real (non-uhid) DualShock 4.
+# shellcheck disable=SC2317,SC2329 # run by name through check/require, not called directly (SC2317 before shellcheck 0.10)
 physical_pad_hidraw() {
     local uevent
     for uevent in /sys/class/hidraw/hidraw*/device/uevent; do
@@ -151,7 +152,11 @@ if [ "$EXERCISE" -eq 1 ] && [ "$CAN_CHANGE" -eq 1 ]; then
     sleep 2
     check "emulation restored to $PREVIOUS_DISPLAY" "$PREVIOUS_DISPLAY" "$CTL" status
 else
-    find_virtual_hidraw >/dev/null 2>&1 && check_virtual_node || skip "virtual hidraw node (use --exercise, or switch to a uhid-backed type)"
+    if find_virtual_hidraw >/dev/null 2>&1; then
+        check_virtual_node
+    else
+        skip "virtual hidraw node (use --exercise, or switch to a uhid-backed type)"
+    fi
 fi
 
 finish hardware

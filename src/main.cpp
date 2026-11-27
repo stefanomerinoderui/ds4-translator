@@ -32,9 +32,11 @@
 #include "descriptors.h"
 #include "functionfs-backend.h"
 #include "hid-driver-sysfs.h"
+#include "bt-suppression.h"
 #include "hid-unbind-detect.h"
 #include "usb-hid-transport.h"
 #include "hid-bpf-transport.h"
+#include "driver-transport.h"
 #include "ipc-client.h"
 #include "fs-util.h"
 #include "paths.h"
@@ -63,7 +65,13 @@ struct PhysicalNode {
 
 std::atomic<bool> running(true);
 
-void signal_handler(int /*sig*/) {
+// pfds is indexed with the -1-means-absent ints the poll set is built with;
+// the conversion to an index happens here, once, only for a present entry.
+static struct pollfd& poll_entry(std::vector<struct pollfd>& pfds, int idx) {
+    return pfds[static_cast<size_t>(idx)];
+}
+
+static void signal_handler(int /*sig*/) {
     running = false;
 }
 
@@ -125,17 +133,14 @@ static bool is_own_virtual_hidraw(const std::string& hidraw_name, uint32_t busty
     std::error_code ec;
     fs::path resolved = fs::canonical("/sys/class/hidraw/" + hidraw_name + "/device", ec);
     if (ec) return false;
-    std::string devpath = resolved.string();
-    if (devpath.find("dummy_hcd") != std::string::npos) return true;
-    if (bustype != 0x05 && devpath.find("/devices/virtual/misc/uhid/") != std::string::npos) return true;
-    return false;
+    return hid_devpath_is_own_virtual(bustype != 0x05, resolved.string());
 }
 
 // Scan /dev/ for physical DualShock 4. USB is always preferred over
 // Bluetooth when both are present -- a full scan is needed for this (unlike
 // the old early-return-on-Bluetooth version) since which one appears first
 // in directory_iterator() order isn't guaranteed.
-std::string find_physical_ds4(bool& out_is_bluetooth) {
+static std::string find_physical_ds4(bool& out_is_bluetooth) {
     std::string usb_match, bt_match;
     for (const auto& entry : fs::directory_iterator("/dev")) {
         std::string name = entry.path().filename().string();
@@ -170,7 +175,7 @@ std::string find_physical_ds4(bool& out_is_bluetooth) {
 }
 
 // Find event nodes for a hidraw device
-std::vector<std::string> get_event_nodes(const std::string& hidraw_name) {
+static std::vector<std::string> get_event_nodes(const std::string& hidraw_name) {
     std::vector<std::string> event_nodes;
     std::string path = "/sys/class/hidraw/" + hidraw_name + "/device/input";
     if (fs::exists(path)) {
@@ -412,6 +417,12 @@ static void background_delayed_udevadm_trigger() {
 // Bluetooth side has no replacement transport (see
 // open_and_hide_physical_unbind()'s bus 0x0005 branch).
 //
+// HIDE_METHOD_DRIVER replaces both transports with the hid-ds4-translator
+// kernel module (see driver-transport.h): the module binds the pad before any
+// other driver, so there is nothing to unbind, intercept or hide. It is
+// opt-in, and every connection falls back to plain unbind behavior when the
+// module is not loaded or not bound to the pad.
+//
 // HIDE_METHOD_UNLINK is HIDE_METHOD_UNBIND plus one extra step, and only
 // on the Bluetooth side: the hidraw/input/js nodes that the still-bound
 // kernel driver creates (unbind's Bluetooth branch can't get rid of the
@@ -423,25 +434,39 @@ static void background_delayed_udevadm_trigger() {
 enum HideMethod {
     HIDE_METHOD_LEGACY,
     HIDE_METHOD_UNBIND,
-    HIDE_METHOD_UNLINK
+    HIDE_METHOD_UNLINK,
+    HIDE_METHOD_DRIVER
 };
 
 // True for every method that behaves like unbind (real transports, HID-bus
 // uevent monitor, no chmod-based hiding on the USB side) -- i.e. everything
 // except legacy. Keeps the call sites from having to list each variant.
 static bool hide_method_is_unbind_family(HideMethod method) {
-    return method == HIDE_METHOD_UNBIND || method == HIDE_METHOD_UNLINK;
+    return method == HIDE_METHOD_UNBIND || method == HIDE_METHOD_UNLINK ||
+           method == HIDE_METHOD_DRIVER;
 }
 
-const char* hide_method_config_str(HideMethod method) {
+static const char* hide_method_config_str(HideMethod method) {
     switch (method) {
         case HIDE_METHOD_UNBIND: return "unbind";
         case HIDE_METHOD_UNLINK: return "unlink";
+        case HIDE_METHOD_DRIVER: return "driver";
         default: return "legacy";
     }
 }
 
-HideMethod read_hide_method_config(HideMethod default_method) {
+// Inverse of hide_method_config_str(); false (out untouched) for anything else.
+static bool hide_method_from_str(const std::string& name, HideMethod& out) {
+    for (HideMethod method : {HIDE_METHOD_LEGACY, HIDE_METHOD_UNBIND, HIDE_METHOD_UNLINK, HIDE_METHOD_DRIVER}) {
+        if (name == hide_method_config_str(method)) {
+            out = method;
+            return true;
+        }
+    }
+    return false;
+}
+
+static HideMethod read_hide_method_config(HideMethod default_method) {
     std::ifstream f(ds4paths::config_path());
     if (!f.is_open()) {
         return default_method;
@@ -453,12 +478,9 @@ HideMethod read_hide_method_config(HideMethod default_method) {
             while (!val.empty() && (val.back() == '\n' || val.back() == '\r' || val.back() == ' ')) {
                 val.pop_back();
             }
-            if (val == "unbind") {
-                return HIDE_METHOD_UNBIND;
-            } else if (val == "unlink") {
-                return HIDE_METHOD_UNLINK;
-            } else if (val == "legacy") {
-                return HIDE_METHOD_LEGACY;
+            HideMethod parsed = default_method;
+            if (hide_method_from_str(val, parsed)) {
+                return parsed;
             }
         }
     }
@@ -469,7 +491,7 @@ HideMethod read_hide_method_config(HideMethod default_method) {
 // keep hid-playstation from probing it at all. Only ever consulted under the
 // unlink hide method -- see the MAC squat block further down for why the other
 // methods can't use it. Defaults to on.
-bool read_mac_squat_config(bool default_enabled) {
+static bool read_mac_squat_config(bool default_enabled) {
     std::ifstream f(ds4paths::config_path());
     if (!f.is_open()) {
         return default_enabled;
@@ -574,6 +596,123 @@ static const std::string kVirtualMacRuntimePath = kVirtualMacRuntimeDir + "/virt
 // uhid's uniq and the USB gadget's serialnumber want the string, DS4 feature
 // reports 0x10/0x12 carry the same address byte-reversed.
 std::string g_virtual_mac_str = kDefaultVirtualMac;
+
+// Control fd of the hid-ds4-translator module while this daemon is attached
+// to it (see driver-transport.h); -1 otherwise. Holding it open is what keeps
+// the module claiming pads: closing it, or this process dying, hands every pad
+// back to its regular driver.
+int g_driver_control_fd = -1;
+
+// True while the open physical connection was made through the driver method,
+// which needs no teardown beyond close() but is what the Bluetooth to USB
+// upgrade below keys on.
+bool g_phy_is_driver_transport = false;
+
+// HID id of the pad open through the driver method; empty otherwise. The
+// "kernel" backend's virtual controller follows it inside the module.
+std::string g_phy_hid_id;
+
+// True while the module's own virtual controller (the "kernel" backend)
+// exists. Its translation runs in the kernel, so the daemon only watches.
+bool g_kernel_vdev = false;
+
+// Points the module's virtual controller at the pad open now, or at none.
+static void kernel_link_virtual() {
+    if (g_kernel_vdev && g_driver_control_fd >= 0) {
+        driver_transport_link_virtual(g_driver_control_fd, g_phy_hid_id);
+    }
+}
+
+// IMU calibration of the physical pad, in the USB layout an emulated DS4
+// serves as feature report 0x02, when the driver method could read it from the
+// module. The other methods do not fetch it, and the emulated pad then serves
+// its fixed built-in values.
+uint8_t g_phy_calibration[DS4_CALIBRATION_SIZE];
+bool g_phy_calibration_valid = false;
+
+static void set_physical_calibration(const uint8_t* cal) {
+    g_phy_calibration_valid = (cal != nullptr);
+    if (cal != nullptr) {
+        memcpy(g_phy_calibration, cal, sizeof(g_phy_calibration));
+    }
+    functionfs_set_calibration(cal);
+}
+
+// Called once a pad is open through the driver method.
+static void load_physical_calibration(int pad_fd) {
+    std::vector<uint8_t> report;
+    uint8_t cal[DS4_CALIBRATION_SIZE];
+    if (driver_transport_get_calibration(pad_fd, report) &&
+        ds4_calibration_to_usb_layout(report.data(), report.size(), cal)) {
+        set_physical_calibration(cal);
+        std::cout << "driver: read the physical pad's IMU calibration (served by an emulated DS4)." << std::endl;
+    } else {
+        set_physical_calibration(nullptr);
+    }
+}
+
+// Tells the module which MAC the emulated controller advertises, so it never
+// claims its own emulated pad. No-op while detached; attaching pushes it
+// before claiming.
+static void driver_push_ignore_mac() {
+    if (g_driver_control_fd >= 0) {
+        driver_transport_set_ignore_mac(g_driver_control_fd, g_virtual_mac_str);
+    }
+}
+
+// Attaches to the module while the driver method is in force and the pad is
+// meant to be hidden, and detaches the rest of the time -- which is what
+// releases the pad to games under `release-physical`, a type of "none", or
+// another hide method. Called on every pass of the main loop, so a failed
+// attach (module not loaded yet) is retried, but not more than every few
+// seconds.
+static void reconcile_driver_attachment(bool want) {
+    static std::chrono::steady_clock::time_point next_attempt;
+    static bool failure_reported = false; // one explanation per episode, not one every retry
+    constexpr auto kRetryInterval = std::chrono::seconds(5);
+
+    if (!want) {
+        if (g_driver_control_fd >= 0) {
+            driver_transport_detach(g_driver_control_fd);
+            g_driver_control_fd = -1;
+            std::cout << "driver: detached; the physical pad is back with its regular driver." << std::endl;
+        }
+        next_attempt = {};
+        failure_reported = false;
+        return;
+    }
+    if (g_driver_control_fd >= 0 || std::chrono::steady_clock::now() < next_attempt) {
+        return;
+    }
+    next_attempt = std::chrono::steady_clock::now() + kRetryInterval;
+    // Once a failure is on record, only try again when the module has shown
+    // up -- and after an ABI mismatch, only once a different instance of it
+    // has (a reload after an update): the same one fails the same way, and
+    // used to log it every five seconds.
+    static unsigned long abi_mismatch_instance = 0;
+    const unsigned long instance = driver_transport_module_instance();
+    if (failure_reported && (instance == 0 || instance == abi_mismatch_instance)) {
+        return;
+    }
+    g_driver_control_fd = driver_transport_attach();
+    if (g_driver_control_fd < 0) {
+        abi_mismatch_instance = (errno == EPROTO) ? instance : 0;
+        failure_reported = true;
+        return;
+    }
+    abi_mismatch_instance = 0;
+    failure_reported = false;
+    // The MAC first: claiming takes over every pad already on the bus, and
+    // the emulated one must not be among them.
+    driver_push_ignore_mac();
+    if (!driver_transport_claim(g_driver_control_fd)) {
+        driver_transport_detach(g_driver_control_fd);
+        g_driver_control_fd = -1;
+        failure_reported = true;
+        return;
+    }
+    std::cout << "driver: attached to hid_ds4_translator." << std::endl;
+}
 uint8_t g_virtual_mac_le[6] = { 0xe8, 0x47, 0x3a, 0xd6, 0xe7, 0x74 };
 
 std::string g_remembered_physical_mac; // learned from the pad; empty until then
@@ -598,10 +737,10 @@ bool g_vdev_exists = false;
 static bool parse_mac(const std::string& s, uint8_t out_le[6]) {
     if (s.size() != 17) return false;
     uint8_t be[6];
-    for (int i = 0; i < 6; i++) {
+    for (size_t i = 0; i < 6; i++) {
         if (i > 0 && s[i * 3 - 1] != ':') return false;
         int byte = 0;
-        for (int nibble = 0; nibble < 2; nibble++) {
+        for (size_t nibble = 0; nibble < 2; nibble++) {
             const char c = s[i * 3 + nibble];
             if (!isxdigit((unsigned char)c)) return false;
             byte = (byte << 4) | (isdigit((unsigned char)c)
@@ -716,6 +855,8 @@ static void select_virtual_mac(ControllerType type) {
     std::error_code ec;
     fs::create_directories(kVirtualMacRuntimeDir, ec);
     (void)ds4fs::write_file_atomic(kVirtualMacRuntimePath, g_virtual_mac_str + "\n", 0644, nullptr);
+
+    driver_push_ignore_mac();
 }
 
 // hid-generic deliberately refuses every device the kernel lists in its
@@ -904,7 +1045,7 @@ static bool kick_bt_full_report_mode(const std::string& hidraw_name) {
 // *before* the old one is ever released -- no window where neither or
 // both are exposed. Returns the opened hidraw fd (-1 on failure); on
 // success fills out_path/out_orig_mode/out_hidden_nodes.
-int open_and_hide_physical(const std::string& dev_name, ControllerType for_type,
+static int open_and_hide_physical(const std::string& dev_name, ControllerType for_type,
                             std::string& out_path, mode_t& out_orig_mode,
                             std::vector<PhysicalNode>& out_hidden_nodes) {
     out_path = "/dev/" + dev_name;
@@ -1021,10 +1162,29 @@ int open_and_hide_physical(const std::string& dev_name, ControllerType for_type,
 // close that gap. The USB branch doesn't need this: unbinding the kernel
 // driver entirely means those nodes are never created in the first
 // place.
-int open_and_hide_physical_unbind(const std::string& hid_id, std::vector<PhysicalNode>& out_hidden_nodes) {
+static int open_and_hide_physical_unbind(const std::string& hid_id, std::vector<PhysicalNode>& out_hidden_nodes) {
     unsigned bus = 0, vendor = 0, product = 0;
     if (!parse_hid_id(hid_id, bus, vendor, product)) {
         return -1;
+    }
+
+    // The kernel module, when it is loaded and holds this pad, replaces
+    // everything below. Its fd needs no teardown beyond close(), which is
+    // what release_physical_connection() already does for a plain fd.
+    if (g_hide_method == HIDE_METHOD_DRIVER) {
+        if (g_driver_control_fd >= 0) {
+            const int fd = driver_transport_open(hid_id);
+            if (fd >= 0) {
+                g_phy_is_driver_transport = true;
+                g_phy_hid_id = hid_id;
+                kernel_link_virtual();
+                load_physical_calibration(fd);
+                return fd;
+            }
+            std::cerr << "driver: falling back to the unbind method for " << hid_id << "." << std::endl;
+        } else {
+            std::cerr << "driver: not attached to hid_ds4_translator; using the unbind method." << std::endl;
+        }
     }
 
     if (bus == 0x0005) {
@@ -1157,8 +1317,17 @@ void stop_bt_output_pacer();
 // ungrabs/closes its event nodes, restores their and the hidraw node's
 // original permissions, and closes fd. Safe to call with fd < 0 or an
 // already-empty hidden_nodes (no-op in that case beyond the mode restore).
-void release_physical_connection(int fd, const std::string& path, mode_t orig_mode,
+static void release_physical_connection(int fd, const std::string& path, mode_t orig_mode,
                                   std::vector<PhysicalNode>& hidden_nodes) {
+    // The next pad has its own calibration (or none, on another method).
+    set_physical_calibration(nullptr);
+    g_phy_is_driver_transport = false;
+    // The module's virtual pad keeps following the pad until the daemon links
+    // it to another one, or the pad leaves the module (unplugged, or handed
+    // back on detach), which unlinks it there. Unlinking here instead would
+    // show neutral input in the middle of a Bluetooth/USB switch.
+    g_phy_hid_id.clear();
+
     // Before fd is closed: a Bluetooth rumble/LED report may still be
     // queued for it, and the pacer's flush thread must not write to a
     // closed (possibly already reused) descriptor.
@@ -1250,9 +1419,7 @@ static std::string find_usb_ds4_hid_id() {
             // bus, and the uhid backend registers under
             // /devices/virtual/misc/uhid/* with bus forced to BUS_USB (0003)
             // -- both need excluding here the same way.
-            std::string devpath = resolved.string();
-            if (devpath.find("dummy_hcd") != std::string::npos) continue;
-            if (devpath.find("/devices/virtual/misc/uhid/") != std::string::npos) continue;
+            if (hid_devpath_is_own_virtual(true, resolved.string())) continue;
             return id;
         }
     }
@@ -1278,11 +1445,7 @@ static bool scan_for_physical_pad(bool require_playstation) {
 
         fs::path resolved = fs::canonical(entry.path(), ec);
         if (ec) { ec.clear(); continue; }
-        if (is_usb) {
-            const std::string devpath = resolved.string();
-            if (devpath.find("dummy_hcd") != std::string::npos) continue;
-            if (devpath.find("/devices/virtual/misc/uhid/") != std::string::npos) continue;
-        }
+        if (is_usb && hid_devpath_is_own_virtual(true, resolved.string())) continue;
 
         if (!require_playstation) return true;
 
@@ -1377,7 +1540,7 @@ static bool parse_unsigned_token(const std::string& tok, int base, unsigned int&
 // settle` blocks until udev's event queue is empty, closing (not
 // necessarily eliminating, since it can't stop a listener from reacting
 // to the raw kernel uevent before udevd does) that window.
-bool rebind_physical_hid_driver(const std::string& hidraw_name) {
+static bool rebind_physical_hid_driver(const std::string& hidraw_name) {
     std::error_code ec;
     fs::path hid_dev = fs::canonical("/sys/class/hidraw/" + hidraw_name + "/device", ec);
     if (ec) return false;
@@ -1454,7 +1617,7 @@ void write_physical_output_report(int fd, bool is_bluetooth, uint8_t motor_left,
         buf[74] = crc & 0xFF;
         buf[75] = (crc >> 8) & 0xFF;
         buf[76] = (crc >> 16) & 0xFF;
-        buf[77] = (crc >> 24) & 0xFF;
+        buf[77] = static_cast<uint8_t>((crc >> 24) & 0xFF);
         
         if (write(fd, buf, 78) < 0) {
             log_physical_write_error("Failed to write Bluetooth output report to physical controller");
@@ -1621,7 +1784,7 @@ void discard_pending_bt_output() {
 // At most one `identify` blink sequence at a time (see the identify command).
 std::atomic<bool> g_identify_running(false);
 
-void flush_bt_output_for_fd(int fd) {
+static void flush_bt_output_for_fd(int fd) {
     g_bt_output_pacer.flush_pending_for_fd(fd);
 }
 
@@ -1630,7 +1793,7 @@ void stop_bt_output_pacer() {
 }
 
 // Send output report to physical controller
-extern "C" void send_physical_output_report(int fd, bool is_bluetooth, uint8_t motor_left, uint8_t motor_right, uint8_t r, uint8_t g, uint8_t b) {
+void send_physical_output_report(int fd, bool is_bluetooth, uint8_t motor_left, uint8_t motor_right, uint8_t r, uint8_t g, uint8_t b) {
     if (!is_bluetooth) {
         write_physical_output_report(fd, false, motor_left, motor_right, r, g, b);
         return;
@@ -1645,7 +1808,7 @@ extern "C" void send_physical_output_report(int fd, bool is_bluetooth, uint8_t m
 }
 
 // UHID Helper to write events
-int uhid_write(int fd, const struct uhid_event& ev) {
+static int uhid_write(int fd, const struct uhid_event& ev) {
     // linux/uhid.h documents that short writes are zero-extended by the
     // kernel, so the hot-path UHID_INPUT2 event only needs type + size +
     // the actual report bytes, not the full ~4.3KB struct (dominated by
@@ -1672,7 +1835,7 @@ constexpr char kControlGroup[] = "ds4-translator";
 // that `status` and the live monitor work for any user; anything that changes
 // settings, drives the pad or injects input needs root, the daemon's own user
 // (a dev daemon run unprivileged), or membership of the ds4-translator group.
-bool ipc_peer_is_privileged(int client_fd) {
+static bool ipc_peer_is_privileged(int client_fd) {
     struct ucred cred;
     socklen_t len = sizeof(cred);
     if (getsockopt(client_fd, SOL_SOCKET, SO_PEERCRED, &cred, &len) != 0) {
@@ -1701,7 +1864,7 @@ bool ipc_peer_is_privileged(int client_fd) {
 }
 
 // Setup IPC Unix Domain Socket
-int setup_ipc_socket() {
+static int setup_ipc_socket() {
     int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (fd < 0) {
         std::cerr << "Failed to create IPC socket: " << strerror(errno) << std::endl;
@@ -1737,7 +1900,7 @@ int setup_ipc_socket() {
     return fd;
 }
 
-ControllerType read_config(ControllerType default_type) {
+static ControllerType read_config(ControllerType default_type) {
     std::ifstream f(ds4paths::config_path());
     if (!f.is_open()) {
         return default_type;
@@ -1760,19 +1923,30 @@ ControllerType read_config(ControllerType default_type) {
 
 enum BackendType {
     BACKEND_UHID,
-    BACKEND_FUNCTIONFS
+    BACKEND_FUNCTIONFS,
+    // The hid-ds4-translator module creates the virtual pad and translates in
+    // the kernel; needs the driver hide method.
+    BACKEND_KERNEL,
+    // The same, with the virtual pad a USB gadget on dummy_hcd (ds4t-gadget):
+    // a real USB device on the host side, as functionfs gives, so Wine finds
+    // the version and strings a real pad has.
+    BACKEND_KERNEL_USB
 };
 
-const char* backend_type_name(BackendType backend) {
+static const char* backend_type_name(BackendType backend) {
     switch (backend) {
         case BACKEND_FUNCTIONFS: return "functionfs";
+        case BACKEND_KERNEL: return "kernel";
+        case BACKEND_KERNEL_USB: return "kernel-usb";
         default: return "uhid";
     }
 }
 
-const char* backend_type_config_str(BackendType backend) {
+static const char* backend_type_config_str(BackendType backend) {
     switch (backend) {
         case BACKEND_FUNCTIONFS: return "functionfs";
+        case BACKEND_KERNEL: return "kernel";
+        case BACKEND_KERNEL_USB: return "kernel-usb";
         default: return "uhid";
     }
 }
@@ -1782,7 +1956,7 @@ const char* backend_type_config_str(BackendType backend) {
 // DS4 detection in some Wine/Proton titles), while functionfs does and is
 // what actually fixed that; DualSense never showed the issue on either.
 // Defaults reflect that: ds4->functionfs, dualsense->uhid.
-BackendType read_backend_config(ControllerType type, BackendType default_backend) {
+static BackendType read_backend_config(ControllerType type, BackendType default_backend) {
     std::ifstream f(ds4paths::config_path());
     if (!f.is_open()) {
         return default_backend;
@@ -1799,6 +1973,10 @@ BackendType read_backend_config(ControllerType type, BackendType default_backend
                 return BACKEND_FUNCTIONFS;
             } else if (val == "uhid") {
                 return BACKEND_UHID;
+            } else if (val == "kernel") {
+                return BACKEND_KERNEL;
+            } else if (val == "kernel-usb") {
+                return BACKEND_KERNEL_USB;
             }
         }
     }
@@ -1808,7 +1986,7 @@ BackendType read_backend_config(ControllerType type, BackendType default_backend
 // Custom controller-name override (ds4-ctl set-name), mirrors
 // read_backend_config() above. Empty return means "no override configured"
 // -- callers fall back to their own backend-specific default name.
-std::string read_name_config(ControllerType type) {
+static std::string read_name_config(ControllerType type) {
     std::ifstream f(ds4paths::config_path());
     if (!f.is_open()) {
         return "";
@@ -1844,7 +2022,7 @@ std::string g_name_ds4;
 std::string g_name_dualsense;
 // Xbox 360 is a vendor-class USB device (bound by xpad, not HID), which uhid
 // cannot express -- it only exists as a functionfs gadget.
-BackendType backend_for_type(ControllerType type) {
+static BackendType backend_for_type(ControllerType type) {
     if (controller_type_is_xbox(type)) return BACKEND_FUNCTIONFS;
     switch (type) {
         case TYPE_DUALSENSE: return backend_for_dualsense;
@@ -1895,7 +2073,7 @@ bool last_virtual_valid = false;
 // only main()'s poll loop writes this.
 bool g_has_test_subscribers = false;
 
-void write_config(ControllerType type, BackendType ds4_backend, BackendType dualsense_backend,
+static void write_config(ControllerType type, BackendType ds4_backend, BackendType dualsense_backend,
                    const std::string& name_ds4, const std::string& name_dualsense) {
     std::ostringstream f;
     f << "type=" << controller_type_config_str(type) << "\n";
@@ -1955,9 +2133,7 @@ static bool own_virtual_hid_bound(int timeout_ms) {
             fs::path resolved = fs::canonical(entry.path(), ec);
             if (ec) { ec.clear(); continue; }
             const std::string devpath = resolved.string();
-            const bool is_ours = (devpath.find("dummy_hcd") != std::string::npos) ||
-                                 (devpath.find("/devices/virtual/misc/uhid/") != std::string::npos);
-            if (!is_ours) continue;
+            if (!hid_devpath_is_own_virtual(true, devpath)) continue;
 
             fs::path driver = fs::read_symlink(entry.path() / "driver", ec);
             if (ec) { ec.clear(); continue; }
@@ -1974,7 +2150,7 @@ static bool own_virtual_hid_bound(int timeout_ms) {
 // by an outgoing daemon instance, in the same moment), and the failure is
 // silent on our side, so it is retried once under the default MAC rather than
 // left as an emulated device no game can see.
-bool create_virtual_device(ControllerType type) {
+static bool create_virtual_device(ControllerType type) {
     g_mac_squat_force_default = false;
     for (int attempt = 0; attempt < 2; ++attempt) {
         if (!create_virtual_device_backend(type)) return false;
@@ -2001,6 +2177,42 @@ static int ffs_target_for_type(ControllerType type) {
     }
 }
 
+// The "kernel" and "kernel-usb" backends: the module creates the virtual pad,
+// follows the open physical one and translates between them. It exists only
+// for as long as the control fd does, and the module needs the driver hide
+// method to hold pads. With usb it is a USB gadget, whose name is the USB
+// product string (the host prefixes the manufacturer), as functionfs's is.
+static bool create_kernel_virtual(ControllerType type, const std::string& custom_name, bool usb) {
+    if (g_hide_method != HIDE_METHOD_DRIVER) {
+        std::cerr << "kernel backend: needs the driver hide method (ds4-ctl set-hide-method driver)." << std::endl;
+        return false;
+    }
+    // Attaches, with the MAC already chosen above, so the module never claims
+    // the pad it is about to create.
+    reconcile_driver_attachment(true);
+    if (g_driver_control_fd < 0) {
+        std::cerr << "kernel backend: hid_ds4_translator is not attached." << std::endl;
+        return false;
+    }
+    const bool dualsense = (type == TYPE_DUALSENSE);
+    std::string name = custom_name;
+    if (name.empty() && usb) {
+        name = dualsense ? "DualSense Wireless Controller" : "Wireless Controller";
+    } else if (name.empty()) {
+        name = dualsense ? "Sony Interactive Entertainment DualSense Wireless Controller"
+                         : "Sony Computer Entertainment Wireless Controller";
+    }
+    if (!driver_transport_create_virtual(g_driver_control_fd, dualsense, usb, name, g_virtual_mac_str,
+                                         g_phy_hid_id)) {
+        return false;
+    }
+    std::cout << (usb ? "Virtual USB Controller created by the kernel module (USB gadget)."
+                      : "Virtual USB Controller created by the kernel module.") << std::endl;
+    g_kernel_vdev = true;
+    g_vdev_exists = true;
+    return true;
+}
+
 static bool create_virtual_device_backend(ControllerType type) {
     // Empty means "no override" -- each backend below falls back to its own
     // default name in that case.
@@ -2013,6 +2225,15 @@ static bool create_virtual_device_backend(ControllerType type) {
     functionfs_set_mac(g_virtual_mac_le, g_virtual_mac_str.c_str());
 
     if (controller_type_is_xbox(type)) backend_type = BACKEND_FUNCTIONFS;
+
+    if (backend_type == BACKEND_KERNEL_USB) {
+        if (create_kernel_virtual(type, custom_name, true)) {
+            return true;
+        }
+        // The nearest thing: also a real USB device, from the daemon.
+        std::cerr << "Failed to create the kernel-usb backend's controller. Falling back to FunctionFS backend..." << std::endl;
+        backend_type = BACKEND_FUNCTIONFS;
+    }
 
     if (backend_type == BACKEND_FUNCTIONFS) {
         const int ffs_target = ffs_target_for_type(type);
@@ -2029,6 +2250,14 @@ static bool create_virtual_device_backend(ControllerType type) {
             std::cerr << "Failed to initialize FunctionFS backend. Falling back to UHID backend..." << std::endl;
             backend_type = BACKEND_UHID;
         }
+    }
+
+    if (backend_type == BACKEND_KERNEL) {
+        if (create_kernel_virtual(type, custom_name, false)) {
+            return true;
+        }
+        std::cerr << "Failed to create the kernel backend's controller. Falling back to UHID backend..." << std::endl;
+        backend_type = BACKEND_UHID;
     }
 
     if (backend_type == BACKEND_UHID) {
@@ -2098,7 +2327,15 @@ void destroy_virtual_device() {
     // A recreated GIP device starts with the Guide button released.
     g_gip_guide_down = false;
 
-    if (backend_type == BACKEND_FUNCTIONFS) {
+    if (backend_type == BACKEND_KERNEL || g_kernel_vdev) {
+        if (g_kernel_vdev) {
+            driver_transport_destroy_virtual(g_driver_control_fd);
+            g_kernel_vdev = false;
+            // Same reason as for uhid below: the old pad's minors and
+            // hid-playstation's player slot must be free before a recreate.
+            usleep(200000);
+        }
+    } else if (backend_type == BACKEND_FUNCTIONFS) {
         functionfs_close(&virtual_functionfs);
         usleep(200000); // Give kernel time to unbind the gadget UDC
     } else {
@@ -2130,7 +2367,7 @@ void destroy_virtual_device() {
 // quick succession must both arrive, which the newest-wins input mailbox
 // cannot guarantee. Option byte 0x20 (internal, no ack requested): xpad only
 // acks the 0x30 variant, and nothing here would handle the ack.
-void send_gip_guide_event(bool pressed) {
+static void send_gip_guide_event(bool pressed) {
     const uint8_t packet[6] = { 0x07, 0x20, g_gip_key_seq, 0x02, (uint8_t)(pressed ? 0x01 : 0x00), 0x5b };
     if (functionfs_send_event_packet(&virtual_functionfs, packet, sizeof(packet))) {
         g_gip_key_seq++;
@@ -2149,7 +2386,7 @@ void send_gip_guide_event(bool pressed) {
 // cable-state data — see decode_ds4_battery() above). The standalone
 // virtual controller has no real battery to report, so it keeps reporting
 // a fixed "fully charged, wired" state instead of a meaningless zero.
-void emit_input_report(ControllerType type, const struct dualshock4_input_report_common& common,
+static void emit_input_report(ControllerType type, const struct dualshock4_input_report_common& common,
                         uint8_t num_touch, const struct dualshock4_touch_report touch_reps[4],
                         bool has_real_battery) {
     if (g_has_test_subscribers) {
@@ -2170,6 +2407,18 @@ void emit_input_report(ControllerType type, const struct dualshock4_input_report
         last_virtual_valid = true;
     }
 
+    if (g_kernel_vdev) {
+        // A physical pad is translated inside the module. Only input of our
+        // own making (the synthetic pad, the neutral report) has to be
+        // handed to it, as a DS4 report it turns into whatever it presents.
+        if (!has_real_battery) {
+            uint8_t report[DS_VIRTUAL_REPORT_SIZE];
+            build_ds4_usb_report(common, num_touch, touch_reps, false, report);
+            driver_transport_inject(g_driver_control_fd, report, sizeof(report));
+        }
+        return;
+    }
+
     if (type == TYPE_XBOX360) {
         uint8_t report[XBOX360_REPORT_SIZE];
         build_xbox360_report(common, report);
@@ -2186,100 +2435,13 @@ void emit_input_report(ControllerType type, const struct dualshock4_input_report
     }
 
     struct uhid_event out_ev;
-    // Only the payload bytes we're about to populate need to start zeroed
-    // (dualshock4_input_report_usb::reserved[3] / touch-padding slots on
-    // the DS4 side, various reserved*[] fields on the DualSense side).
-    // `type` and `input2.size` are both set below, and the ~4.3KB
-    // rd_data/create2/etc. portions of the union are never read for an
-    // INPUT2 event, so they don't need clearing.
-    const size_t payload_len = (type == TYPE_DS4)
-        ? sizeof(struct dualshock4_input_report_usb)
-        : 64; // matches out_ev.u.input2.size = 64; in the DualSense branch below
-    memset(out_ev.u.input2.data, 0, payload_len);
     out_ev.type = UHID_INPUT2;
-
+    out_ev.u.input2.size = DS_VIRTUAL_REPORT_SIZE;
     if (type == TYPE_DS4) {
-        out_ev.u.input2.size = sizeof(struct dualshock4_input_report_usb);
-        struct dualshock4_input_report_usb* out_ds = (struct dualshock4_input_report_usb*)out_ev.u.input2.data;
-        out_ds->report_id = 0x01;
-        out_ds->common = common;
-        if (!has_real_battery) {
-            // No physical hardware behind this device — report a plausible
-            // fixed state (USB-wired, fully charged) instead of whatever
-            // zeroed/synthetic value `common.status` happens to hold.
-            // status[0] bit4 = cable state (1=USB), bits 3:0 = battery level (0-10, 0x0B=full)
-            out_ds->common.status[0] = 0x1B; // cable=1, battery=0x0B (full)
-            out_ds->common.status[1] = 0x00;
-        }
-        // else: common.status[0]/[1] already came straight from the real
-        // controller's own report via `out_ds->common = common` above.
-        out_ds->num_touch_reports = (num_touch > 3) ? 3 : num_touch;
-        for (int i = 0; i < out_ds->num_touch_reports; ++i) {
-            out_ds->touch_reports[i] = touch_reps[i];
-        }
-        // Any remaining slots (all 3, when num_touch is 0 — every
-        // synthetic/standalone report) must have both points marked "not
-        // touching" (contact bit7 set). Real hardware always fills every
-        // slot in the report regardless of how many actually carry a new
-        // touch event; leaving them zeroed (contact=0x00, x=0, y=0) reads
-        // as a genuine touch at (0,0) to any consumer that doesn't
-        // strictly gate on num_touch_reports before reading slot contents.
-        for (int i = out_ds->num_touch_reports; i < 3; ++i) {
-            out_ds->touch_reports[i].points[0].contact = 0x80;
-            out_ds->touch_reports[i].points[1].contact = 0x80;
-        }
+        build_ds4_usb_report(common, num_touch, touch_reps, has_real_battery, out_ev.u.input2.data);
     } else { // DualSense
-        out_ev.u.input2.size = 64;
-        out_ev.u.input2.data[0] = 0x01;
-        struct dualsense_input_report* out_ds5 = (struct dualsense_input_report*)&out_ev.u.input2.data[1];
-
-        out_ds5->x = common.x;
-        out_ds5->y = common.y;
-        out_ds5->rx = common.rx;
-        out_ds5->ry = common.ry;
-
-        out_ds5->z = common.z;
-        out_ds5->rz = common.rz;
-
-        out_ds5->buttons[0] = common.buttons[0];
-        out_ds5->buttons[1] = common.buttons[1];
-        out_ds5->buttons[2] = common.buttons[2] & 0x03;
-        out_ds5->buttons[3] = 0;
-
-        out_ds5->seq_number = sequence_number++;
-        memcpy(out_ds5->gyro, common.gyro, sizeof(out_ds5->gyro));
-        memcpy(out_ds5->accel, common.accel, sizeof(out_ds5->accel));
-        out_ds5->sensor_timestamp = (uint32_t)common.sensor_timestamp;
-
-        if (num_touch > 0) {
-            int latest = num_touch - 1;
-            if (latest > 3) latest = 3;
-            out_ds5->points[0].contact = touch_reps[latest].points[0].contact;
-            out_ds5->points[0].x_lo = touch_reps[latest].points[0].x_lo;
-            out_ds5->points[0].x_hi = touch_reps[latest].points[0].x_hi;
-            out_ds5->points[0].y_lo = touch_reps[latest].points[0].y_lo;
-            out_ds5->points[0].y_hi = touch_reps[latest].points[0].y_hi;
-
-            out_ds5->points[1].contact = touch_reps[latest].points[1].contact;
-            out_ds5->points[1].x_lo = touch_reps[latest].points[1].x_lo;
-            out_ds5->points[1].x_hi = touch_reps[latest].points[1].x_hi;
-            out_ds5->points[1].y_lo = touch_reps[latest].points[1].y_lo;
-            out_ds5->points[1].y_hi = touch_reps[latest].points[1].y_hi;
-        } else {
-            out_ds5->points[0].contact = 0x80;
-            out_ds5->points[1].contact = 0x80;
-        }
-
-        if (has_real_battery) {
-            int percent;
-            BatteryState state;
-            decode_ds4_battery(common.status[0], percent, state);
-            out_ds5->status[0] = encode_dualsense_battery(percent, state);
-        } else {
-            out_ds5->status[0] = 0x2B; // Fully charged, complete
-        }
-        out_ds5->status[1] = 0x00;
-        out_ds5->status[2] = 0x00;
+        build_dualsense_report(common, num_touch, touch_reps, sequence_number++, has_real_battery,
+                               out_ev.u.input2.data);
     }
 
     if (backend_type == BACKEND_FUNCTIONFS) {
@@ -2293,7 +2455,7 @@ void emit_input_report(ControllerType type, const struct dualshock4_input_report
 // into the same DS4-format "common" struct the physical-passthrough path
 // uses, so it can go through the identical emit_input_report() translation
 // for either target type.
-struct dualshock4_input_report_common build_synthetic_common(const SyntheticState& s) {
+static struct dualshock4_input_report_common build_synthetic_common(const SyntheticState& s) {
     struct dualshock4_input_report_common common;
     memset(&common, 0, sizeof(common));
     common.x = s.lx;  common.y = s.ly;
@@ -2334,7 +2496,7 @@ struct dualshock4_input_report_common build_synthetic_common(const SyntheticStat
 // report a game/Wine ever saw for that device — visible as a button
 // appearing stuck "held" until the device is recreated and starts sending
 // fresh reports again.
-void emit_neutral_report(ControllerType type) {
+static void emit_neutral_report(ControllerType type) {
     struct dualshock4_input_report_common neutral = build_synthetic_common(SyntheticState());
     struct dualshock4_touch_report empty_touch[4];
     memset(empty_touch, 0, sizeof(empty_touch));
@@ -2369,8 +2531,8 @@ int main(int argc, char* argv[]) {
             std::cout << "Options:" << std::endl;
             std::cout << "  -t, --type <ds4|dualsense|xbox360|xboxone|xboxseries|none|hidden>   Target virtual controller type (default: ds4)" << std::endl;
             std::cout << "  -h, --help                  Show this help message" << std::endl;
-            std::cout << "Backend (uhid/functionfs) is config/set-backend only -- see 'ds4-ctl set-backend' (the Xbox types are always functionfs)." << std::endl;
-            std::cout << "Hide method (legacy/unbind) is config/set-hide-method only -- see 'ds4-ctl set-hide-method'." << std::endl;
+            std::cout << "Backend (uhid/functionfs/kernel) is config/set-backend only -- see 'ds4-ctl set-backend' (the Xbox types are always functionfs)." << std::endl;
+            std::cout << "Hide method (legacy/unbind/unlink/driver) is config/set-hide-method only -- see 'ds4-ctl set-hide-method'." << std::endl;
             return 0;
         }
     }
@@ -2394,12 +2556,17 @@ int main(int argc, char* argv[]) {
 
     g_hide_method = read_hide_method_config(HIDE_METHOD_UNBIND);
     if (hide_method_is_unbind_family(g_hide_method)) {
-        std::cout << "Using full-unbind hide method (USB: real transport via libusb; "
-                      "Bluetooth: real transport via HID-BPF"
-                  << (g_hide_method == HIDE_METHOD_UNLINK
-                          ? ", with its /dev nodes unlinked outright"
-                          : "")
-                  << " -- see set-hide-method)." << std::endl;
+        if (g_hide_method == HIDE_METHOD_DRIVER) {
+            std::cout << "Using driver hide method (the hid-ds4-translator module claims the pad; "
+                         "falls back to full-unbind without it -- see set-hide-method)." << std::endl;
+        } else {
+            std::cout << "Using full-unbind hide method (USB: real transport via libusb; "
+                          "Bluetooth: real transport via HID-BPF"
+                      << (g_hide_method == HIDE_METHOD_UNLINK
+                              ? ", with its /dev nodes unlinked outright"
+                              : "")
+                      << " -- see set-hide-method)." << std::endl;
+        }
         g_hid_uevent_fd = hid_uevent_monitor_open();
         if (g_hid_uevent_fd < 0) {
             std::cerr << "hid-unbind: failed to open HID-bus uevent monitor; "
@@ -2450,27 +2617,28 @@ int main(int argc, char* argv[]) {
     std::string phy_path = "";
     mode_t orig_mode = 0660;
 
-    // Set when a Bluetooth-bound physical controller is force-unbound from
-    // the playstation driver to let a just-plugged-in USB connection for the
-    // same hardware take over (see the hot-swap check below for why this is
-    // necessary: the kernel driver itself refuses to bind USB while the same
-    // MAC is already bound over Bluetooth, so there's nothing to detect or
-    // switch between at the /dev/hidraw level -- the driver has to be told
-    // to let go first). Holds the Bluetooth hid_device's sysfs bus id (e.g.
-    // "0005:054C:05C4.002E") so it can be handed back to the driver once the
-    // USB connection actually disconnects, restoring Bluetooth input.
-    std::string suppressed_bt_hid_id;
-
-    // Hands a previously-unbound Bluetooth connection back to the driver so
-    // it can reconnect, wherever the USB connection that preempted it gets
-    // torn down (a real disconnect, or a forced release/type/backend change
-    // on our side). No-op if nothing is currently suppressed.
-    auto restore_suppressed_bluetooth = [&]() {
-        if (!suppressed_bt_hid_id.empty()) {
-            write_hid_driver_sysfs("bind", suppressed_bt_hid_id);
-            suppressed_bt_hid_id.clear();
-        }
-    };
+    // The Bluetooth connection unbound so a just-plugged-in USB connection
+    // of the same pad could bind (the kernel driver refuses USB while the
+    // same MAC is bound over Bluetooth; see the hot-swap check below). It is
+    // handed back once no USB connection is left -- see bt-suppression.h for
+    // why not earlier.
+    BtSuppression suppressed_bt({
+        [] { return !find_usb_ds4_hid_id().empty(); },
+        [](const std::string& hid_id) {
+            std::error_code ec;
+            return fs::exists("/sys/bus/hid/devices/" + hid_id, ec);
+        },
+        [](const std::string& hid_id) {
+            write_hid_driver_sysfs("bind", hid_id);
+            std::error_code ec;
+            const bool bound = fs::exists("/sys/bus/hid/devices/" + hid_id + "/driver", ec);
+            if (bound) {
+                std::cout << "Bluetooth connection " << hid_id << " handed back to its driver." << std::endl;
+            }
+            return bound;
+        },
+    });
+    auto last_bt_suppression_poll = std::chrono::steady_clock::now();
 
     bool device_open = false;
 
@@ -2479,6 +2647,7 @@ int main(int argc, char* argv[]) {
     // (UHID has no such concept of its own, so it reuses device_open, which
     // this function's UHID_OPEN/UHID_CLOSE handling below keeps in sync).
     auto vdev_configured = [&]() -> bool {
+        if (g_kernel_vdev) return true;
         if (backend_type == BACKEND_FUNCTIONFS) return virtual_functionfs.configured;
         return device_open;
     };
@@ -2487,6 +2656,7 @@ int main(int argc, char* argv[]) {
     // uhid_fd >= 0 alongside the UHID device_open flag (functionfs has no
     // equivalent fd to check here -- its I/O runs on dedicated threads).
     auto vdev_ready_for_io = [&]() -> bool {
+        if (g_kernel_vdev) return true;
         if (backend_type == BACKEND_FUNCTIONFS) return virtual_functionfs.configured;
         return device_open && uhid_fd >= 0;
     };
@@ -2738,7 +2908,8 @@ int main(int argc, char* argv[]) {
         // one a subscriber wants is its own business.
         std::string virtual_line;
         if (controller_type_emulates(target_type)) {
-            bool vdev_exists = (backend_type == BACKEND_FUNCTIONFS) ? virtual_functionfs.device_open : (uhid_fd >= 0);
+            bool vdev_exists = g_kernel_vdev ||
+                ((backend_type == BACKEND_FUNCTIONFS) ? virtual_functionfs.device_open : (uhid_fd >= 0));
             if (vdev_exists && last_virtual_valid) {
                 virtual_line = state_line("VIRTUAL", last_virtual_common, last_virtual_touch);
             } else {
@@ -2819,6 +2990,18 @@ int main(int argc, char* argv[]) {
 
     std::vector<struct pollfd> pfds; // reused across iterations; cleared and repopulated each pass below
     while (running) {
+        reconcile_driver_attachment(g_hide_method == HIDE_METHOD_DRIVER &&
+                                    controller_type_hides_physical(target_type) &&
+                                    !ignore_physical && !standalone_virtual);
+
+        // A suppressed Bluetooth connection whose USB counterpart has gone
+        // while nothing of ours was connected to notice (see BtSuppression).
+        if (suppressed_bt.pending() &&
+            std::chrono::steady_clock::now() - last_bt_suppression_poll >= std::chrono::seconds(1)) {
+            last_bt_suppression_poll = std::chrono::steady_clock::now();
+            suppressed_bt.poll();
+        }
+
         // If physical controller disconnected, scan & setup. Skipped while a
         // standalone virtual controller (created via `ds4-ctl virtual`, no
         // physical hardware involved) is active, so plugging in real
@@ -2879,7 +3062,7 @@ int main(int argc, char* argv[]) {
             if (!name.empty()) {
                 std::cout << "Found physical DualShock 4: "
                           << (via_unbind ? name : ("/dev/" + name))
-                          << " (Connection: " << (via_unbind ? (via_unbind_is_bt ? "Bluetooth, unbind method" : "USB, unbind method") : (bt ? "Bluetooth" : "USB")) << ")" << std::endl;
+                          << " (Connection: " << (via_unbind ? (via_unbind_is_bt ? "Bluetooth, HID bus" : "USB, HID bus") : (bt ? "Bluetooth" : "USB")) << ")" << std::endl;
 
                 phy_name = name;
                 is_bluetooth = via_unbind ? via_unbind_is_bt : bt;
@@ -2912,6 +3095,12 @@ int main(int argc, char* argv[]) {
                 if (phy_fd < 0) {
                     std::cerr << "Failed to open physical controller: " << strerror(errno) << std::endl;
                     phy_fd = -1;
+                    // A switch that skipped the neutral report (see the USB
+                    // upgrade below) must not leave buttons held down.
+                    if (phy_disconnect_pending_destroy && controller_type_emulates(target_type) &&
+                        vdev_configured()) {
+                        emit_neutral_report(target_type);
+                    }
                     last_open_failure_id = phy_name;
                     last_open_failure_time = std::chrono::steady_clock::now();
                     phy_name = "";
@@ -3006,7 +3195,35 @@ int main(int argc, char* argv[]) {
             if (now - last_usb_upgrade_check >= USB_UPGRADE_CHECK_INTERVAL) {
                 last_usb_upgrade_check = now;
                 std::string usb_hid_id = find_usb_ds4_hid_id();
-                if (!usb_hid_id.empty()) {
+                if (!usb_hid_id.empty() && g_phy_is_driver_transport) {
+                    // The module claims both interfaces of the pad, and the
+                    // duplicate-MAC refusal below is hid-playstation's, which
+                    // never sees either, so nothing has to be unbound: just
+                    // read the USB node instead. Only once the module has
+                    // claimed it; the next check retries otherwise.
+                    if (driver_transport_node_exists(usb_hid_id)) {
+                        std::cout << "USB connection detected for physical controller; switching from Bluetooth ("
+                                  << phy_name << ") to USB (" << usb_hid_id << ") through the driver module..."
+                                  << std::endl;
+                        release_physical_connection(phy_fd, phy_path, orig_mode, hidden_nodes);
+                        phy_fd = -1;
+                        phy_name = "";
+                        // Same as the HID-BPF upgrade below: keep the virtual
+                        // device for the reconnect instead of recreating it.
+                        // No neutral report: the USB node is already there and
+                        // is opened right away, so the game never sees the
+                        // buttons let go (it does if that open fails, below).
+                        if (controller_type_emulates(target_type) && vdev_configured()) {
+                            phy_disconnect_pending_destroy = true;
+                            phy_disconnect_time = std::chrono::steady_clock::now();
+                        }
+                        // The reconnect at the top of the loop opens this one,
+                        // not whichever pad the bus scan happens to list first
+                        // -- now, rather than after the next poll() timeout.
+                        g_pending_unbind_hid_id = usb_hid_id;
+                        continue;
+                    }
+                } else if (!usb_hid_id.empty()) {
                     // Under the BPF transport, phy_name already *is* the
                     // hid_id (see open_and_hide_physical_unbind()'s bus
                     // 0x0005 branch) -- hidraw_to_hid_id() expects a
@@ -3050,7 +3267,7 @@ int main(int argc, char* argv[]) {
                         }
                         write_hid_driver_sysfs("unbind", bt_hid_id);
                         write_hid_driver_sysfs("bind", usb_hid_id);
-                        suppressed_bt_hid_id = bt_hid_id;
+                        suppressed_bt.suppress(bt_hid_id);
                         // For the legacy method (the g_phy_is_bpf_transport
                         // branch above already released everything for the
                         // BPF case): don't touch phy_fd/hidden_nodes here,
@@ -3147,7 +3364,7 @@ int main(int argc, char* argv[]) {
         // top-of-loop auto-scan block to pick up on the next pass rather
         // than opening it here, so there's exactly one place that opens
         // a physical connection.
-        if (uevent_poll_idx >= 0 && (pfds[uevent_poll_idx].revents & POLLIN)) {
+        if (uevent_poll_idx >= 0 && (poll_entry(pfds, uevent_poll_idx).revents & POLLIN)) {
             std::string hid_id;
             if (hid_uevent_monitor_read(g_hid_uevent_fd, hid_id)) {
                 g_pending_unbind_hid_id = hid_id;
@@ -3187,6 +3404,7 @@ int main(int argc, char* argv[]) {
                 ssize_t bytes_read = read(client_fd, rx_buf, sizeof(rx_buf) - 1);
                 if (bytes_read > 0) {
                     std::string cmd(rx_buf);
+                    HideMethod want_method = HIDE_METHOD_LEGACY; // set by the set-hide-method branch below
                     while (!cmd.empty() && (cmd.back() == '\n' || cmd.back() == '\r' || cmd.back() == ' ')) {
                         cmd.pop_back();
                     }
@@ -3204,7 +3422,7 @@ int main(int argc, char* argv[]) {
                         response = "Error: too many live monitors are already connected.";
                     } else if (cmd == "status") {
                         std::string phy_display = phy_name.empty() ? "None" :
-                            ((g_phy_is_unbind_transport || g_phy_is_bpf_transport) ? phy_name : ("/dev/" + phy_name));
+                            ((g_phy_is_unbind_transport || g_phy_is_bpf_transport || g_phy_is_driver_transport) ? phy_name : ("/dev/" + phy_name));
                         response = "Physical Controller: " + phy_display + "\n";
                         response += "Connection Type: " + std::string(
                             phy_fd >= 0 ? (is_bluetooth ? "Bluetooth" : "USB") : "N/A") + "\n";
@@ -3217,7 +3435,7 @@ int main(int argc, char* argv[]) {
                         response += "DualSense Name: " + (g_name_dualsense.empty() ?
                             "Sony Interactive Entertainment DualSense Wireless Controller (default)" : g_name_dualsense) + "\n";
                         response += "Hide Method: " + std::string(hide_method_config_str(g_hide_method)) +
-                            ((g_phy_is_unbind_transport || g_phy_is_bpf_transport) ? " (active on current connection)" : "") + "\n";
+                            ((g_phy_is_unbind_transport || g_phy_is_bpf_transport || g_phy_is_driver_transport) ? " (active on current connection)" : "") + "\n";
                         response += "Device Open by Host: " + std::string((vdev_configured()) ? "Yes" : "No") + "\n";
                         response += "Standalone Virtual (no hardware): " + std::string(standalone_virtual ? "Yes" : "No") + "\n";
                         response += "MAC Squat: " + std::string(g_mac_squat_enabled ? "on" : "off") +
@@ -3229,7 +3447,7 @@ int main(int argc, char* argv[]) {
                         response += "Physical Auto-Scan Disabled (release-physical): " + std::string(ignore_physical ? "Yes" : "No") + "\n";
                         if (phy_fd >= 0 && !is_bluetooth) {
                             response += "Bluetooth Fallback if USB Disconnects: "
-                                + std::string(!suppressed_bt_hid_id.empty() ? "Yes (will re-bind automatically)" : "Unknown")
+                                + std::string(suppressed_bt.pending() ? "Yes (will re-bind automatically)" : "Unknown")
                                 + "\n";
                         }
                         if (phy_disconnect_pending_destroy) {
@@ -3289,7 +3507,7 @@ int main(int argc, char* argv[]) {
                             release_physical_connection(phy_fd, phy_path, orig_mode, hidden_nodes);
                             phy_fd = -1;
                             phy_name = "";
-                            restore_suppressed_bluetooth();
+                            suppressed_bt.release();
                             phy_disconnect_pending_destroy = false;
                             device_open = false;
                             ignore_physical = true;
@@ -3371,8 +3589,11 @@ int main(int argc, char* argv[]) {
                         } else {
                             response = "Already set to Hidden";
                         }
-                    } else if (cmd == "set-backend ds4 uhid" || cmd == "set-backend ds4 functionfs") {
-                        BackendType want_backend = (cmd == "set-backend ds4 uhid") ? BACKEND_UHID : BACKEND_FUNCTIONFS;
+                    } else if (cmd == "set-backend ds4 uhid" || cmd == "set-backend ds4 functionfs" ||
+                               cmd == "set-backend ds4 kernel" || cmd == "set-backend ds4 kernel-usb") {
+                        BackendType want_backend = (cmd == "set-backend ds4 uhid") ? BACKEND_UHID
+                            : (cmd == "set-backend ds4 kernel") ? BACKEND_KERNEL
+                            : (cmd == "set-backend ds4 kernel-usb") ? BACKEND_KERNEL_USB : BACKEND_FUNCTIONFS;
                         if (backend_for_ds4 != want_backend) {
                             backend_for_ds4 = want_backend;
                             write_config(target_type, backend_for_ds4, backend_for_dualsense, g_name_ds4, g_name_dualsense);
@@ -3380,6 +3601,10 @@ int main(int argc, char* argv[]) {
                                 pending_backend_change = want_backend;
                                 backend_change_requested = true;
                                 response = "OK: Changing DS4 backend to " + std::string(backend_type_name(want_backend)) + "...";
+                                if (want_backend != BACKEND_FUNCTIONFS && want_backend != BACKEND_KERNEL_USB) {
+                                    response += "\nNote: some Wine/Proton games never detect a DS4 on this backend "
+                                                "(no real USB enumeration); functionfs and kernel-usb are the ones that do.";
+                                }
                             } else {
                                 response = "OK: DS4 backend set to " + std::string(backend_type_name(want_backend)) +
                                             " (applies next time emulation type is switched to ds4)";
@@ -3387,8 +3612,11 @@ int main(int argc, char* argv[]) {
                         } else {
                             response = "DS4 already set to use backend " + std::string(backend_type_name(want_backend));
                         }
-                    } else if (cmd == "set-backend dualsense uhid" || cmd == "set-backend dualsense functionfs") {
-                        BackendType want_backend = (cmd == "set-backend dualsense uhid") ? BACKEND_UHID : BACKEND_FUNCTIONFS;
+                    } else if (cmd == "set-backend dualsense uhid" || cmd == "set-backend dualsense functionfs" ||
+                               cmd == "set-backend dualsense kernel" || cmd == "set-backend dualsense kernel-usb") {
+                        BackendType want_backend = (cmd == "set-backend dualsense uhid") ? BACKEND_UHID
+                            : (cmd == "set-backend dualsense kernel") ? BACKEND_KERNEL
+                            : (cmd == "set-backend dualsense kernel-usb") ? BACKEND_KERNEL_USB : BACKEND_FUNCTIONFS;
                         if (backend_for_dualsense != want_backend) {
                             backend_for_dualsense = want_backend;
                             write_config(target_type, backend_for_ds4, backend_for_dualsense, g_name_ds4, g_name_dualsense);
@@ -3439,14 +3667,8 @@ int main(int argc, char* argv[]) {
                                 }
                             }
                         }
-                    } else if (cmd == "set-hide-method legacy" || cmd == "set-hide-method unbind" ||
-                               cmd == "set-hide-method unlink") {
-                        HideMethod want_method = HIDE_METHOD_LEGACY;
-                        if (cmd == "set-hide-method unbind") {
-                            want_method = HIDE_METHOD_UNBIND;
-                        } else if (cmd == "set-hide-method unlink") {
-                            want_method = HIDE_METHOD_UNLINK;
-                        }
+                    } else if (cmd.rfind("set-hide-method ", 0) == 0 &&
+                               hide_method_from_str(cmd.substr(strlen("set-hide-method ")), want_method)) {
                         if (g_hide_method == want_method) {
                             response = "Hide method already set to " + std::string(hide_method_config_str(want_method));
                         } else {
@@ -3654,7 +3876,7 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        if (server_poll_idx >= 0 && (pfds[server_poll_idx].revents & POLLIN)) {
+        if (server_poll_idx >= 0 && (poll_entry(pfds, server_poll_idx).revents & POLLIN)) {
             for (int accepted = 0; accepted < 16; ++accepted) {
                 const int new_fd = accept4(server_fd, nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC);
                 if (new_fd < 0) {
@@ -3739,7 +3961,9 @@ int main(int argc, char* argv[]) {
                 phy_fd = -1;
                 phy_name = "";
             }
-            restore_suppressed_bluetooth();
+            // Only if USB is gone too; otherwise the poll below does it once
+            // the cable is pulled.
+            suppressed_bt.release();
 
             // `udevadm trigger` (no args) replays a "change" event for
             // *every* device on the system, which existing comments here
@@ -3793,8 +4017,14 @@ int main(int argc, char* argv[]) {
             // had the physical device open, and doesn't notify hotplug-
             // aware apps of a newly-visible device either. Only force this
             // when hidden-ness actually changed (not e.g. ds4<->dualsense,
-            // which doesn't affect what other apps can see).
-            if (had_physical &&
+            // which doesn't affect what other apps can see). Never under the
+            // driver hide method: the module taking the pad over (or handing
+            // it back and rescanning) already is a genuine remove+add, and a
+            // rebind on top of it makes the pad vanish, come back and vanish
+            // again within a second -- which Wine's HID bus (winedevice.exe)
+            // has been seen not to survive, leaving a running game with no
+            // controller at all.
+            if (had_physical && g_hide_method != HIDE_METHOD_DRIVER &&
                 controller_type_hides_physical(old_type) != controller_type_hides_physical(target_type)) {
                 std::cout << "Forcing physical controller re-enumeration (unbind/rebind) so already-running apps pick up the visibility change..." << std::endl;
                 rebind_physical_hid_driver(disconnected_phy_name);
@@ -3821,7 +4051,7 @@ int main(int argc, char* argv[]) {
         }
 
         // Handle physical controller connection dropped
-        if (phy_poll_idx >= 0 && (pfds[phy_poll_idx].revents & (POLLERR | POLLHUP))) {
+        if (phy_poll_idx >= 0 && (poll_entry(pfds, phy_poll_idx).revents & (POLLERR | POLLHUP))) {
             std::cout << "Physical controller connection dropped." << std::endl;
             // Only restore a suppressed Bluetooth connection when it's the
             // USB side that just dropped (a real disconnect after the
@@ -3838,7 +4068,7 @@ int main(int argc, char* argv[]) {
             phy_name = "";
 
             if (!was_bluetooth) {
-                restore_suppressed_bluetooth();
+                suppressed_bt.release();
             }
 
             // Don't tear the virtual device down yet — clear its input state
@@ -3871,7 +4101,7 @@ int main(int argc, char* argv[]) {
         }
 
         // Forward physical controller inputs to virtual controller
-        if (phy_poll_idx >= 0 && (pfds[phy_poll_idx].revents & POLLIN)) {
+        if (phy_poll_idx >= 0 && (poll_entry(pfds, phy_poll_idx).revents & POLLIN)) {
             uint8_t in_buf[128];
             ssize_t bytes_read = read(phy_fd, in_buf, sizeof(in_buf));
             if (bytes_read <= 0) {
@@ -3880,7 +4110,7 @@ int main(int argc, char* argv[]) {
                 } else {
                     std::cerr << "Error reading physical controller: " << strerror(errno) << std::endl;
                     // Trigger disconnect manually
-                    pfds[phy_poll_idx].revents |= POLLHUP;
+                    poll_entry(pfds, phy_poll_idx).revents |= POLLHUP;
                 }
             } else {
                 if (!logged_first_report) {
@@ -3991,7 +4221,7 @@ int main(int argc, char* argv[]) {
         // Handle virtual controller state/queries from Kernel. uhid_poll_idx
         // is only ever set for the uhid backend (see the poll-setup gate
         // above), so this is always the uhid device.
-        if (uhid_poll_idx >= 0 && (pfds[uhid_poll_idx].revents & (POLLERR | POLLHUP))) {
+        if (uhid_poll_idx >= 0 && (poll_entry(pfds, uhid_poll_idx).revents & (POLLERR | POLLHUP))) {
             std::cerr << "UHID device dropped." << std::endl;
             close(uhid_fd);
             uhid_fd = -1;
@@ -3999,7 +4229,7 @@ int main(int argc, char* argv[]) {
             continue;
         }
 
-        if (uhid_poll_idx >= 0 && (pfds[uhid_poll_idx].revents & POLLIN)) {
+        if (uhid_poll_idx >= 0 && (poll_entry(pfds, uhid_poll_idx).revents & POLLIN)) {
             {
                 struct uhid_event kernel_ev;
                 ssize_t bytes_read = read(uhid_fd, &kernel_ev, sizeof(kernel_ev));
@@ -4049,7 +4279,8 @@ int main(int argc, char* argv[]) {
                                         0x00, 0xe0, 0x00, 0x20, 0x00, 0xe0,
                                         0x00, 0x20, 0x00, 0xe0, 0x00, 0x00
                                     };
-                                    memcpy(&reply_ev.u.get_report_reply.data[1], ds4_cal, 36);
+                                    memcpy(&reply_ev.u.get_report_reply.data[1],
+                                           g_phy_calibration_valid ? g_phy_calibration : ds4_cal, 36);
                                 } else if (rnum == 0x10 || rnum == 0x12) {
                                     reply_ev.u.get_report_reply.size = 16;
                                     reply_ev.u.get_report_reply.data[0] = rnum;
@@ -4277,7 +4508,10 @@ int main(int argc, char* argv[]) {
         std::cout << "Releasing physical controller grab..." << std::endl;
         release_physical_connection(phy_fd, phy_path, orig_mode, hidden_nodes);
     }
-    restore_suppressed_bluetooth();
+    // After the virtual device is gone (see the player-slot note above), so
+    // the pad is handed back to hid-playstation only now.
+    reconcile_driver_attachment(false);
+    suppressed_bt.restore_now();
     // The release above may have recreated nodes for a device that's
     // already gone; without the main loop left to sweep, this is the last
     // chance to not leave an orphan behind.

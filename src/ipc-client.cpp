@@ -209,12 +209,12 @@ const std::vector<std::string> &type_values() {
 }
 
 const std::vector<std::string> &backend_values() {
-    static const std::vector<std::string> values = {"uhid", "functionfs"};
+    static const std::vector<std::string> values = {"uhid", "functionfs", "kernel", "kernel-usb"};
     return values;
 }
 
 const std::vector<std::string> &hide_method_values() {
-    static const std::vector<std::string> values = {"legacy", "unbind", "unlink"};
+    static const std::vector<std::string> values = {"legacy", "unbind", "unlink", "driver"};
     return values;
 }
 

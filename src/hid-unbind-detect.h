@@ -59,6 +59,20 @@ bool hid_uevent_monitor_read(int fd, std::string& out_hid_id);
 // the check can be tested without a real netlink socket.
 bool hid_uevent_sender_is_kernel(const void* addr, unsigned addr_len);
 
+// True when `devpath` (a resolved /sys/bus/hid/devices entry) is this
+// daemon's own emulated controller rather than real hardware:
+// - functionfs: a real USB gadget under dummy_hcd's virtual bus;
+// - uhid: under /devices/virtual/misc/uhid/ with the bus forced to USB (a
+//   real Bluetooth pad lives there too when bluetoothd bridges it, but with
+//   bus 0005, so only `bus_usb` entries count);
+// - kernel: the hid-ds4-translator module's virtual pad, which hangs off its
+//   control node (/devices/virtual/misc/ds4t-control/).
+// DS4_TEST_UHID_USB_IS_PHYSICAL=1 lets USB-bus uhid devices count as real
+// hardware, for the VM tests' fake pads; with it, only the dummy_hcd and
+// kernel module rules identify the emulated pad, so those tests use one of
+// those backends.
+bool hid_devpath_is_own_virtual(bool bus_usb, const std::string& devpath);
+
 // Synchronous scan of /sys/bus/hid/devices for a physical USB or
 // Bluetooth DS4/DualSense hid_device that's currently bound to a driver
 // (i.e. still needs unbinding -- an already-unbound entry is either
@@ -68,6 +82,7 @@ bool hid_uevent_sender_is_kernel(const void* addr, unsigned addr_len);
 // devices whose "add" event already fired before
 // hid_uevent_monitor_open() was called. Excludes this daemon's own
 // virtual device the same way find_usb_ds4_hid_id() in main.cpp does.
+// Prefers USB over Bluetooth when both are there (see the definition).
 // Returns "" if none found.
 std::string hid_bus_scan_existing();
 

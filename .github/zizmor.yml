@@ -1,0 +1,17 @@
+# zizmor runs on every workflow in tests/security/static_checks.sh and any
+# finding fails it. Two rules are configured away, each for a reason that
+# applies to this repository only; everything else is at full strictness.
+rules:
+  # Recommends `uses: $/.github/actions/...` over `./.github/actions/...`.
+  # actionlint, which runs next to it, rejects that form ("ref is missing"), so
+  # the two linters contradict each other. Revisit when actionlint accepts it.
+  self-repository:
+    disable: true
+
+  # Suggests a `gh release` script step in place of softprops/action-gh-release,
+  # which is pinned to a commit. Replacing the publishing step is a change to
+  # the release pipeline that cannot be tried without cutting a release, and
+  # the action is the better-known way to attach the tarball.
+  superfluous-actions:
+    ignore:
+      - release.yml

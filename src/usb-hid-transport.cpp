@@ -407,7 +407,7 @@ int usb_hid_transport_open(const std::string& hid_id, uint16_t vid, uint16_t pid
         if (libusb_claim_interface(handle, interface_number) != 0) {
             std::cerr << "hid-unbind: libusb_claim_interface failed for interface " << interface_number
                       << " (attempt " << attempt << ")" << std::endl;
-            usleep(200000 * attempt);
+            usleep(static_cast<useconds_t>(200000 * attempt));
             continue;
         }
 
@@ -426,7 +426,7 @@ int usb_hid_transport_open(const std::string& hid_id, uint16_t vid, uint16_t pid
                   << " was reclaimed by the kernel right after our claim (attempt "
                   << attempt << "/" << kMaxClaimAttempts << "), retrying..." << std::endl;
         libusb_release_interface(handle, interface_number);
-        usleep(200000 * attempt);
+        usleep(static_cast<useconds_t>(200000 * attempt));
     }
 
     if (!claimed) {

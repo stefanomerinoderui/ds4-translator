@@ -37,7 +37,10 @@ cleanup_scratch() {
 # start_daemon [daemon args...]; fails the script if the socket is not in the
 # scratch dir within 5s.
 start_daemon() {
-    [ -n "${DS4_RUNTIME_DIR:-}" ] && [ "$DS4_RUNTIME_DIR" != "/run" ] || { echo "refusing to run without a scratch DS4_RUNTIME_DIR"; exit 2; }
+    if [ -z "${DS4_RUNTIME_DIR:-}" ] || [ "$DS4_RUNTIME_DIR" = "/run" ]; then
+        echo "refusing to run without a scratch DS4_RUNTIME_DIR"
+        exit 2
+    fi
     # DAEMON_NOFILE lowers the descriptor limit for descriptor-exhaustion tests.
     (
         [ -z "${DAEMON_NOFILE:-}" ] || ulimit -n "$DAEMON_NOFILE"

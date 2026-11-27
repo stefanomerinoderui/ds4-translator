@@ -170,9 +170,7 @@ bool hid_uevent_monitor_read(int fd, std::string& out_hid_id) {
     // gate, only 0003 needs the uhid-devpath exclusion -- a bus 0005 hid_id
     // under /devices/virtual/misc/uhid/* is a real Bluetooth controller
     // bridged by bluetoothd's own userspace HID handling, not us.
-    bool is_bus_0003 = hid_id_env.rfind("0003:", 0) == 0;
-    if (devpath.find("dummy_hcd") != std::string::npos) return false;
-    if (is_bus_0003 && devpath.find("/devices/virtual/misc/uhid/") != std::string::npos) return false;
+    if (hid_devpath_is_own_virtual(hid_id_env.rfind("0003:", 0) == 0, devpath)) return false;
 
     size_t slash = devpath.find_last_of('/');
     std::string tail = (slash == std::string::npos) ? devpath : devpath.substr(slash + 1);
@@ -183,8 +181,17 @@ bool hid_uevent_monitor_read(int fd, std::string& out_hid_id) {
     return true;
 }
 
+bool hid_devpath_is_own_virtual(bool bus_usb, const std::string& devpath) {
+    if (devpath.find("dummy_hcd") != std::string::npos) return true;
+    if (devpath.find("/devices/virtual/misc/ds4t-control/") != std::string::npos) return true;
+    if (!bus_usb || devpath.find("/devices/virtual/misc/uhid/") == std::string::npos) return false;
+    const char* test_hook = std::getenv("DS4_TEST_UHID_USB_IS_PHYSICAL");
+    return test_hook == nullptr || std::string(test_hook) != "1";
+}
+
 std::string hid_bus_scan_existing() {
     std::error_code ec;
+    std::string bt_match;
     for (const auto& entry : fs::directory_iterator("/sys/bus/hid/devices", ec)) {
         std::string id = entry.path().filename().string();
         if (id.rfind("0003:054C:05C4.", 0) != 0 &&
@@ -208,8 +215,7 @@ std::string hid_bus_scan_existing() {
         // controller" the way it can for bus 0003. Mirrors
         // is_own_virtual_hidraw()'s identical bus-aware check in main.cpp.
         std::string devpath = resolved.string();
-        if (devpath.find("dummy_hcd") != std::string::npos) continue;
-        if (id.rfind("0003:", 0) == 0 && devpath.find("/devices/virtual/misc/uhid/") != std::string::npos) continue;
+        if (hid_devpath_is_own_virtual(id.rfind("0003:", 0) == 0, devpath)) continue;
         // A USB device with no driver is one already claimed via libusb
         // (tracked by phy_fd being valid, so this scan wouldn't even run
         // for it); re-surfacing it as "newly found" would be a no-op at
@@ -222,9 +228,14 @@ std::string hid_bus_scan_existing() {
         // uevent was missed -- a daemon restarted while the pad stayed
         // connected, most obviously.
         if (id.rfind("0005:", 0) != 0 && !fs::exists(entry.path() / "driver", ec)) continue;
-        return id;
+        // USB wins over Bluetooth, as in find_physical_ds4(): with both
+        // present, Bluetooth is the connection that was (or is about to be)
+        // unbound for the hot-swap, so opening it would only start the swap
+        // over -- or, when its rebind was refused, open a pad with no driver.
+        if (id.rfind("0003:", 0) == 0) return id;
+        if (bt_match.empty()) bt_match = id;
     }
-    return "";
+    return bt_match;
 }
 
 bool hid_id_unbind(const std::string& hid_id) {

@@ -95,6 +95,12 @@ TEST=="/run/ds4-translator.sock", TEST!="/run/ds4-translator.none", SUBSYSTEM=="
 # -----------------------------------------------------------------------------
 # Virtual controller USB emulation properties injection (so Steam/Proton/Wine recognize it as a real USB gamepad)
 #
+# Two homes for the emulated pad: the uhid backend's /devices/virtual/misc/uhid/
+# and the kernel backend's, under the hid-ds4-translator module's control node
+# (/devices/virtual/misc/ds4t-control/). Without these properties a game takes
+# the kernel backend's pad for a Bluetooth one and sends rumble in the
+# Bluetooth layout.
+#
 # KERNELS is pinned to bus 0003 (the daemon always creates its UHID device
 # with bus=BUS_USB) rather than wildcarded to "any bus". A Bluetooth-paired
 # *physical* controller is also bridged through the kernel's own internal
@@ -104,7 +110,7 @@ TEST=="/run/ds4-translator.sock", TEST!="/run/ds4-translator.none", SUBSYSTEM=="
 # the real physical device and undoing the hiding rules above for it.
 
 # Match virtual DualShock 4 controller (UHID, bus 0003 only, force ID_BUS=usb)
-SUBSYSTEM=="input", DEVPATH=="/devices/virtual/misc/uhid/*", KERNELS=="0003:054C:05C4.*", \
+SUBSYSTEM=="input", DEVPATH=="/devices/virtual/misc/uhid/*|/devices/virtual/misc/ds4t-control/*", KERNELS=="0003:054C:05C4.*", \
   ENV{ID_BUS}="usb", ENV{ID_VENDOR_ID}="054c", ENV{ID_MODEL_ID}="05c4", \
   ENV{ID_MODEL}="Wireless_Controller", ENV{ID_MODEL_ENC}="Wireless\x20Controller", \
   ENV{ID_VENDOR}="Sony_Computer_Entertainment", ENV{ID_VENDOR_ENC}="Sony\x20Computer\x20Entertainment", \
@@ -115,7 +121,7 @@ SUBSYSTEM=="input", DEVPATH=="/devices/virtual/misc/uhid/*", KERNELS=="0003:054C
   ENV{ID_USB_INTERFACES}=":030000:", ENV{ID_USB_INTERFACE_NUM}="00", ENV{ID_USB_DRIVER}="usbhid", \
   SYMLINK+="input/by-id/usb-Sony_Computer_Entertainment_Wireless_Controller-event-joystick"
 
-KERNEL=="js*", DEVPATH=="/devices/virtual/misc/uhid/*", KERNELS=="0003:054C:05C4.*", \
+KERNEL=="js*", DEVPATH=="/devices/virtual/misc/uhid/*|/devices/virtual/misc/ds4t-control/*", KERNELS=="0003:054C:05C4.*", \
   ENV{ID_BUS}="usb", ENV{ID_VENDOR_ID}="054c", ENV{ID_MODEL_ID}="05c4", \
   ENV{ID_MODEL}="Wireless_Controller", ENV{ID_VENDOR}="Sony_Computer_Entertainment", \
   ENV{ID_SERIAL}="Sony_Computer_Entertainment_Wireless_Controller", \
@@ -124,7 +130,7 @@ KERNEL=="js*", DEVPATH=="/devices/virtual/misc/uhid/*", KERNELS=="0003:054C:05C4
   ENV{ID_USB_INTERFACE_NUM}="00", ENV{ID_USB_DRIVER}="usbhid", \
   SYMLINK+="input/by-id/usb-Sony_Computer_Entertainment_Wireless_Controller-joystick"
 
-SUBSYSTEM=="hidraw", DEVPATH=="/devices/virtual/misc/uhid/*", KERNELS=="0003:054C:05C4.*", \
+SUBSYSTEM=="hidraw", DEVPATH=="/devices/virtual/misc/uhid/*|/devices/virtual/misc/ds4t-control/*", KERNELS=="0003:054C:05C4.*", \
   MODE="0660", TAG+="uaccess", TAG+="seat", \
   ENV{ID_BUS}="usb", ENV{ID_VENDOR_ID}="054c", ENV{ID_MODEL_ID}="05c4", \
   ENV{ID_MODEL}="Wireless_Controller", ENV{ID_MODEL_ENC}="Wireless\x20Controller", \
@@ -138,7 +144,7 @@ SUBSYSTEM=="hidraw", DEVPATH=="/devices/virtual/misc/uhid/*", KERNELS=="0003:054
   ENV{SOUND_FORM_FACTOR}="controller"
 
 # Match virtual DualSense controller (UHID, bus 0003 only, force ID_BUS=usb)
-SUBSYSTEM=="input", DEVPATH=="/devices/virtual/misc/uhid/*", KERNELS=="0003:054C:0CE6.*", \
+SUBSYSTEM=="input", DEVPATH=="/devices/virtual/misc/uhid/*|/devices/virtual/misc/ds4t-control/*", KERNELS=="0003:054C:0CE6.*", \
   ENV{ID_BUS}="usb", ENV{ID_VENDOR_ID}="054c", ENV{ID_MODEL_ID}="0ce6", \
   ENV{ID_MODEL}="Wireless_Controller", ENV{ID_MODEL_ENC}="Wireless\x20Controller", \
   ENV{ID_VENDOR}="Sony_Interactive_Entertainment", ENV{ID_VENDOR_ENC}="Sony\x20Interactive\x20Entertainment", \
@@ -149,7 +155,7 @@ SUBSYSTEM=="input", DEVPATH=="/devices/virtual/misc/uhid/*", KERNELS=="0003:054C
   ENV{ID_USB_INTERFACES}=":030000:", ENV{ID_USB_INTERFACE_NUM}="00", ENV{ID_USB_DRIVER}="usbhid", \
   SYMLINK+="input/by-id/usb-Sony_Interactive_Entertainment_DualSense_Wireless_Controller-event-joystick"
 
-KERNEL=="js*", DEVPATH=="/devices/virtual/misc/uhid/*", KERNELS=="0003:054C:0CE6.*", \
+KERNEL=="js*", DEVPATH=="/devices/virtual/misc/uhid/*|/devices/virtual/misc/ds4t-control/*", KERNELS=="0003:054C:0CE6.*", \
   ENV{ID_BUS}="usb", ENV{ID_VENDOR_ID}="054c", ENV{ID_MODEL_ID}="0ce6", \
   ENV{ID_MODEL}="Wireless_Controller", ENV{ID_VENDOR}="Sony_Interactive_Entertainment", \
   ENV{ID_SERIAL}="Sony_Interactive_Entertainment_DualSense_Wireless_Controller", \
@@ -158,7 +164,7 @@ KERNEL=="js*", DEVPATH=="/devices/virtual/misc/uhid/*", KERNELS=="0003:054C:0CE6
   ENV{ID_USB_INTERFACE_NUM}="00", ENV{ID_USB_DRIVER}="usbhid", \
   SYMLINK+="input/by-id/usb-Sony_Interactive_Entertainment_DualSense_Wireless_Controller-joystick"
 
-SUBSYSTEM=="hidraw", DEVPATH=="/devices/virtual/misc/uhid/*", KERNELS=="0003:054C:0CE6.*", \
+SUBSYSTEM=="hidraw", DEVPATH=="/devices/virtual/misc/uhid/*|/devices/virtual/misc/ds4t-control/*", KERNELS=="0003:054C:0CE6.*", \
   MODE="0660", TAG+="uaccess", TAG+="seat", \
   ENV{ID_BUS}="usb", ENV{ID_VENDOR_ID}="054c", ENV{ID_MODEL_ID}="0ce6", \
   ENV{ID_MODEL}="Wireless_Controller", ENV{ID_MODEL_ENC}="Wireless\x20Controller", \

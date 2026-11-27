@@ -10,13 +10,13 @@ BUILD_DIR="$SCRIPT_DIR/build"
 
 mkdir -p "$BUILD_DIR"
 
-gcc -O3 -Wall -fPIC -shared \
+gcc -O3 -Wall -Wextra -Werror -fPIC -shared \
     -o "$BUILD_DIR/libds4-intercept.so" "$SCRIPT_DIR/intercept.c" \
     -ldl -lpthread
 
 echo "Built: $BUILD_DIR/libds4-intercept.so"
 
-gcc -m32 -O3 -Wall -fPIC -shared \
+gcc -m32 -O3 -Wall -Wextra -Werror -fPIC -shared \
     -o "$BUILD_DIR/libds4-intercept32.so" "$SCRIPT_DIR/intercept.c" \
     -ldl -lpthread
 

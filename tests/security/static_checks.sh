@@ -24,6 +24,7 @@ require "Makefile links PIE" grep -q -- '-pie' Makefile
 require "Makefile requests full RELRO (-z now)" grep -q 'z,relro,-z,now' Makefile
 
 # hardening_status <binary> <PIE|RELRO|BIND_NOW|CANARY|FORTIFY>
+# shellcheck disable=SC2317,SC2329 # run by name through require, not called directly (SC2317 before shellcheck 0.10)
 hardening_status() {
     local bin="$1"
     case "$2" in
@@ -67,6 +68,7 @@ require "no udev rule makes a node world-accessible (MODE 0666)" bash -c "! grep
 
 # ------------------------------------------------------ L7: CI supply chain
 workflow_files=$(ls .github/workflows/*.yml .github/actions/*/action.yml)
+# shellcheck disable=SC2317,SC2329 # run by name through require, not called directly (SC2317 before shellcheck 0.10)
 unpinned() {
     # shellcheck disable=SC2086 # intentional word splitting over the file list
     ! grep -hE '^\s*-?\s*uses:\s+[^.[:space:]]' $workflow_files | grep -vE '@[0-9a-f]{40}(\s|$)' | grep -q .
@@ -80,13 +82,18 @@ require "the signing key is not available to the build step" \
     bash -c "! awk '/name: Build packages\$/,/name: Sign packages/' .github/workflows/release.yml | grep -q ARCH_GPG_PRIVATE_KEY"
 
 if have actionlint; then
-    actionlint && pass "actionlint: workflows are well-formed" || fail "actionlint: workflows are well-formed"
+    if actionlint; then pass "actionlint: workflows are well-formed"; else fail "actionlint: workflows are well-formed"; fi
 else
     skip "actionlint not installed"
 fi
 if have zizmor; then
-    zizmor --no-progress .github >"$BUILD_DIR/zizmor.txt" 2>&1
-    echo "ZIZMOR findings: $(grep -c '^\(error\|warning\)' "$BUILD_DIR/zizmor.txt") (see $BUILD_DIR/zizmor.txt)"
+    # Any finding fails, whatever its severity; zizmor suppresses nothing here.
+    if zizmor --no-progress .github >"$BUILD_DIR/zizmor.txt" 2>&1; then
+        pass "zizmor: workflows have no findings"
+    else
+        grep -E '^(error|warning|info|note)' "$BUILD_DIR/zizmor.txt" | head -20
+        fail "zizmor: workflows have no findings (see $BUILD_DIR/zizmor.txt)"
+    fi
 else
     skip "zizmor not installed"
 fi
@@ -94,21 +101,31 @@ fi
 # ------------------------------------------------------------ shell scripts
 if have shellcheck; then
     # shellcheck disable=SC2046 # file list, one path per word
-    shellcheck -x -P SCRIPTDIR --severity=warning rebind-unbound-controllers.sh tools/ds4-intercept/build.sh \
-        $(git ls-files 'tests/*.sh') tests/lib/assert.sh tests/lib/daemon.sh \
-        && pass "shellcheck: scripts are clean" || fail "shellcheck: scripts are clean"
+    # Every severity, notes and style included: the scripts are held to zero.
+    if shellcheck -x -P SCRIPTDIR rebind-unbound-controllers.sh tools/ds4-intercept/build.sh \
+        $(git ls-files 'tests/*.sh') tests/lib/assert.sh tests/lib/daemon.sh; then
+        pass "shellcheck: scripts are clean"
+    else
+        fail "shellcheck: scripts are clean"
+    fi
 else
     skip "shellcheck not installed"
 fi
 
 # ------------------------------------------------------------ leaked secrets
 if have gitleaks; then
-    gitleaks detect --no-banner --redact >/dev/null 2>&1 && pass "gitleaks: no secrets in history" \
-        || fail "gitleaks: no secrets in history"
+    if gitleaks detect --no-banner --redact >/dev/null 2>&1; then
+        pass "gitleaks: no secrets in history"
+    else
+        fail "gitleaks: no secrets in history"
+    fi
 else
     skip "gitleaks not installed"
 fi
-git ls-files | grep -qE '(^|/)\.signing/|\.(key|pem|gpg)$|id_rsa' \
-    && fail "no key material tracked by git" || pass "no key material tracked by git"
+if git ls-files | grep -qE '(^|/)\.signing/|\.(key|pem|gpg)$|id_rsa'; then
+    fail "no key material tracked by git"
+else
+    pass "no key material tracked by git"
+fi
 
 finish security-static

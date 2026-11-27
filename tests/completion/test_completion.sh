@@ -31,10 +31,12 @@ ZSH_SCRIPT="$ROOT/_ds4-ctl"
 # offers for the command line `ds4-ctl <word>...`, where the last word is the
 # one being completed (pass "" for "right after a space").
 
+# shellcheck disable=SC2317,SC2329 # run by name through expect, not called directly (SC2317 before shellcheck 0.10)
 complete_binary() {
     ds4-ctl --complete-args "${@:1:$#-1}"
 }
 
+# shellcheck disable=SC2317,SC2329 # run by name through expect, not called directly (SC2317 before shellcheck 0.10)
 complete_bash() {
     bash --norc --noprofile -c '
         source "$1"; shift
@@ -45,6 +47,7 @@ complete_bash() {
         exit 0' _ "$BASH_SCRIPT" "$@"
 }
 
+# shellcheck disable=SC2317,SC2329 # run by name through expect, not called directly (SC2317 before shellcheck 0.10)
 complete_fish() {
     local line="ds4-ctl" w
     for w in "$@"; do line+=" $w"; done
@@ -53,6 +56,7 @@ complete_fish() {
     fish --no-config -c 'source $argv[1]; complete -C $argv[2]' "$FISH_SCRIPT" "$line" | cut -f1
 }
 
+# shellcheck disable=SC2317,SC2329 # run by name through expect, not called directly (SC2317 before shellcheck 0.10)
 complete_zsh() {
     # compadd only exists inside the completion system, so stand in for it:
     # filter the candidate array by the typed prefix, as the real one does.
@@ -105,10 +109,10 @@ run_cases() {
     expect "$shell" "set-backend set-hide-method set-mac-squat set-name set-type" set-
     expect "$shell" "ds4 dualsense" set-backend ""
     expect "$shell" "dualsense" set-backend du
-    expect "$shell" "uhid functionfs" set-backend ds4 ""
+    expect "$shell" "uhid functionfs kernel kernel-usb" set-backend ds4 ""
     expect "$shell" "ds4 dualsense" set-name ""
     expect "$shell" "on off" set-mac-squat ""
-    expect "$shell" "legacy unbind unlink" set-hide-method ""
+    expect "$shell" "driver legacy unbind unlink" set-hide-method ""
     expect_includes "$shell" cross tap ""
     expect_includes "$shell" xboxone set-type ""
 }
@@ -116,7 +120,7 @@ run_cases() {
 # The binary's own output contract: one candidate per line. Prefix filtering
 # is the shell's job, so only whole-list cases apply here.
 expect binary "ds4 dualsense" set-backend ""
-expect binary "uhid functionfs" set-backend ds4 ""
+expect binary "uhid functionfs kernel kernel-usb" set-backend ds4 ""
 expect binary "on off" set-mac-squat ""
 
 for shell in bash fish zsh; do

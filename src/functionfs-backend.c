@@ -30,7 +30,6 @@ extern bool is_bluetooth;
 extern uint8_t cur_motor_left, cur_motor_right;
 extern uint8_t cur_r, cur_g, cur_b;
 extern bool g_suppress_next_led_update; // see its doc comment in main.cpp
-extern void send_physical_output_report(int fd, bool bluetooth, uint8_t motor_left, uint8_t motor_right, uint8_t r, uint8_t g, uint8_t b);
 
 #define GADGET_DIR "/sys/kernel/config/usb_gadget/ds4translatorffs"
 #define FUNCTION_NAME "ds4emu0"
@@ -65,6 +64,17 @@ void functionfs_set_mac(const uint8_t mac_le[6], const char *mac_str) {
     (void)snprintf(virtual_mac_str, sizeof(virtual_mac_str), "%s", mac_str);
 }
 
+static pthread_mutex_t calibration_mutex = PTHREAD_MUTEX_INITIALIZER;
+static uint8_t physical_calibration[36];
+static bool physical_calibration_valid;
+
+void functionfs_set_calibration(const uint8_t cal[36]) {
+    pthread_mutex_lock(&calibration_mutex);
+    physical_calibration_valid = (cal != NULL);
+    if (cal) memcpy(physical_calibration, cal, sizeof(physical_calibration));
+    pthread_mutex_unlock(&calibration_mutex);
+}
+
 // Same data tables raw-gadget-backend.c's/hidg-backend.c's/main.cpp's
 // GET_REPORT cases answer with -- see hidg-backend.c's build_feature_report()
 // doc comment for why this isn't shared via a header.
@@ -83,7 +93,13 @@ static size_t build_feature_report(int target_type, uint8_t rnum, uint8_t *out) 
                 0x00, 0xe0, 0x00, 0x20, 0x00, 0xe0,
                 0x00, 0x20, 0x00, 0xe0, 0x00, 0x00
             };
-            memcpy(&out[1], ds4_cal, 36);
+            pthread_mutex_lock(&calibration_mutex);
+            if (physical_calibration_valid) {
+                memcpy(&out[1], physical_calibration, 36);
+            } else {
+                memcpy(&out[1], ds4_cal, 36);
+            }
+            pthread_mutex_unlock(&calibration_mutex);
             return 37;
         } else if (rnum == 0x10 || rnum == 0x12) {
             out[0] = rnum;
@@ -285,7 +301,7 @@ static size_t build_ffs_descriptors(int target_type, uint8_t *buf) {
             p[4] = 0; // bCountryCode
             p[5] = 1; // bNumDescriptors
             p[6] = 0x22; // Report
-            p[7] = rdesc_len & 0xFF; p[8] = rdesc_len >> 8;
+            p[7] = (uint8_t)(rdesc_len & 0xFF); p[8] = (uint8_t)(rdesc_len >> 8);
             p += 9;
         }
 
@@ -384,8 +400,8 @@ static void handle_setup(struct FunctionFSDevice *dev, const struct usb_ctrlrequ
 
     if (req_type == USB_TYPE_CLASS && recip == USB_RECIP_INTERFACE) {
         if (setup->bRequest == 0x01 && dir_in) { // GET_REPORT
-            uint8_t rtype = setup->wValue >> 8;
-            uint8_t rnum = setup->wValue & 0xFF;
+            uint8_t rtype = (uint8_t)(setup->wValue >> 8);
+            uint8_t rnum = (uint8_t)(setup->wValue & 0xFF);
             size_t len = 0;
             if (rtype == 3) { // Feature
                 len = build_feature_report(dev->target_type, rnum, buf);
@@ -666,12 +682,16 @@ struct GadgetIdentity {
 };
 
 static const struct GadgetIdentity *gadget_identity(int target_type) {
+    // bcdDevice 0x0100, as on the real pads. (0x8111 is not theirs: it is
+    // what hid-playstation turns their version into on the input device.)
+    // Sony's own pad library -- Unreal's WinDualShock, behind Proton --
+    // looks at the version and skips a pad that has any other.
     static const struct GadgetIdentity ds4 = {
-        "0x054c\n", "0x05c4\n", "0x8111\n", "Sony Computer Entertainment\n",
+        "0x054c\n", "0x05c4\n", "0x0100\n", "Sony Computer Entertainment\n",
         "Wireless Controller", true, NULL, NULL, NULL
     };
     static const struct GadgetIdentity dualsense = {
-        "0x054c\n", "0x0ce6\n", "0x8111\n", "Sony Interactive Entertainment\n",
+        "0x054c\n", "0x0ce6\n", "0x0100\n", "Sony Interactive Entertainment\n",
         "DualSense Wireless Controller", true, NULL, NULL, NULL
     };
     static const struct GadgetIdentity xbox360 = {
