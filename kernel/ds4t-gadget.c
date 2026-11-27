@@ -162,21 +162,27 @@ static int ds4t_gadget_config_desc(const struct ds4t_gadget *g, u8 *buf)
 /* ------------------------------------------------------------------ input */
 
 /*
- * Queues req_in with the newest report; g->lock held on entry, dropped on
- * return either way, as the UDC must not be entered holding it (a completion
- * may run before usb_ep_queue() returns).
+ * Takes the newest report into req_in and marks it in flight; g->lock held.
+ * The caller queues it with ds4t_gadget_queue_in() once the lock is dropped,
+ * as the UDC must not be entered holding it (a completion may run before
+ * usb_ep_queue() returns).
  */
-static void ds4t_gadget_send_unlock(struct ds4t_gadget *g, unsigned long flags)
+static void ds4t_gadget_take_next(struct ds4t_gadget *g)
 {
 	struct usb_request *req = g->req_in;
 
+	lockdep_assert_held(&g->lock);
 	memcpy(req->buf, g->in_next, g->in_next_len);
 	req->length = g->in_next_len;
 	g->in_pending = false;
 	g->in_busy = true;
-	spin_unlock_irqrestore(&g->lock, flags);
+}
 
-	if (usb_ep_queue(g->ep_in, req, GFP_ATOMIC)) {
+static void ds4t_gadget_queue_in(struct ds4t_gadget *g)
+{
+	unsigned long flags;
+
+	if (usb_ep_queue(g->ep_in, g->req_in, GFP_ATOMIC)) {
 		spin_lock_irqsave(&g->lock, flags);
 		g->in_busy = false;
 		spin_unlock_irqrestore(&g->lock, flags);
@@ -187,14 +193,17 @@ static void ds4t_gadget_in_complete(struct usb_ep *ep, struct usb_request *req)
 {
 	struct ds4t_gadget *g = req->context;
 	unsigned long flags;
+	bool send;
 
 	spin_lock_irqsave(&g->lock, flags);
 	g->in_busy = false;
-	if (req->status || !g->configured || !g->in_pending) {
-		spin_unlock_irqrestore(&g->lock, flags);
-		return;
-	}
-	ds4t_gadget_send_unlock(g, flags);
+	send = !req->status && g->configured && g->in_pending;
+	if (send)
+		ds4t_gadget_take_next(g);
+	spin_unlock_irqrestore(&g->lock, flags);
+
+	if (send)
+		ds4t_gadget_queue_in(g);
 }
 
 /* Core callback; atomic, the core's v->lock held. Newest report wins. */
@@ -202,6 +211,7 @@ static void ds4t_gadget_input(struct ds4t_virtual *v, u8 *report, size_t len)
 {
 	struct ds4t_gadget *g = v->front;
 	unsigned long flags;
+	bool send;
 
 	if (WARN_ON_ONCE(len > sizeof(g->in_next)))
 		return;
@@ -209,12 +219,15 @@ static void ds4t_gadget_input(struct ds4t_virtual *v, u8 *report, size_t len)
 	spin_lock_irqsave(&g->lock, flags);
 	memcpy(g->in_next, report, len);
 	g->in_next_len = len;
-	if (!g->configured || g->in_busy) {
+	send = g->configured && !g->in_busy;
+	if (send)
+		ds4t_gadget_take_next(g);
+	else
 		g->in_pending = g->configured;
-		spin_unlock_irqrestore(&g->lock, flags);
-		return;
-	}
-	ds4t_gadget_send_unlock(g, flags);
+	spin_unlock_irqrestore(&g->lock, flags);
+
+	if (send)
+		ds4t_gadget_queue_in(g);
 }
 
 /* ----------------------------------------------------------------- output */
