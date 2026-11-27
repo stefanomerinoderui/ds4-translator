@@ -19,6 +19,34 @@ ScrollView {
 
     contentWidth: availableWidth
 
+    // The error says little until most of the edge has been reached.
+    function circularityCaption(error, coverage) {
+        if (coverage === 0) {
+            return qsTr("Rotate the stick");
+        }
+        if (coverage < 0.9) {
+            return qsTr("%1% of the edge reached").arg(Math.round(coverage * 100));
+        }
+        return qsTr("Circularity error: %1%").arg(error.toFixed(1));
+    }
+
+    CircularityTest {
+        id: circularity
+    }
+
+    // Only while the page shows the physical pad, and not during a wizard
+    // (stick range would otherwise feed the test with calibration moves).
+    Connections {
+        target: InputMonitor
+        enabled: root.visible && CalibrationController.phase === CalibrationController.Idle
+        function onInputChanged() {
+            if (InputMonitor.hasState && InputMonitor.source === InputMonitor.Physical) {
+                circularity.add(InputMonitor.leftX, InputMonitor.leftY,
+                                InputMonitor.rightX, InputMonitor.rightY);
+            }
+        }
+    }
+
     component TargetCard: GroupBox {
         id: card
 
@@ -120,13 +148,38 @@ ScrollView {
         }
 
         GroupBox {
-            title: qsTr("Current sticks")
+            title: qsTr("Current sticks and circularity test")
             Layout.fillWidth: true
             Layout.leftMargin: 12
             Layout.rightMargin: 12
 
-            StickDials {
+            ColumnLayout {
                 anchors.fill: parent
+                spacing: 8
+
+                Label {
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
+                    opacity: 0.75
+                    text: qsTr("Rotate each stick slowly round its edge, pushed all the way, a few times. "
+                        + "The orange outline is how far it reached at each angle, and the error is how far "
+                        + "that is from a perfect circle: lower is rounder. Too high means the stick falls "
+                        + "short somewhere or reaches too far on the diagonals.")
+                }
+
+                StickDials {
+                    Layout.fillWidth: true
+                    leftShape: circularity.leftShape
+                    rightShape: circularity.rightShape
+                    leftCaption: root.circularityCaption(circularity.leftError, circularity.leftCoverage)
+                    rightCaption: root.circularityCaption(circularity.rightError, circularity.rightCoverage)
+                }
+
+                Button {
+                    text: qsTr("Reset test")
+                    Layout.alignment: Qt.AlignHCenter
+                    onClicked: circularity.reset()
+                }
             }
         }
 

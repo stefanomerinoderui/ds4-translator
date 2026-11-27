@@ -180,7 +180,14 @@ void CalibrationController::cancel() {
     m_rotateTicker->stop();
     m_actions.clear();
     m_instruction.clear();
+    const bool leftOpen = m_startedOnPad;
     setPhase(Idle);
+    // The pad keeps an unstored calibration open until it resets, and the
+    // next start is refused until then; it has a battery, so unplugging it
+    // does not help.
+    if (leftOpen) {
+        resetController();
+    }
 }
 
 void CalibrationController::resetController() {

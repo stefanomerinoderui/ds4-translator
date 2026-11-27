@@ -75,6 +75,8 @@ qt_add_qml_module(ds4-translator-ui
         src/inputmonitor.cpp
         src/calibrationcontroller.h
         src/calibrationcontroller.cpp
+        src/circularitytest.h
+        src/circularitytest.cpp
 )
 
 # The controller drawing the live view overlays button state onto. Kept in
@@ -89,7 +91,7 @@ qt_add_resources(ds4-translator-ui "controller_art"
 set_source_files_properties(
     src/main.cpp src/ipcclient.cpp src/daemoncontroller.cpp
     src/trayicon.cpp src/appcontroller.cpp src/inputmonitor.cpp
-    src/singleinstance.cpp src/calibrationcontroller.cpp
+    src/singleinstance.cpp src/calibrationcontroller.cpp src/circularitytest.cpp
     ${DS4_SHARED_DIR}/ipc-client.cpp ${DS4_SHARED_DIR}/stick-coverage.cpp
     PROPERTIES COMPILE_OPTIONS "${DS4_UI_STRICT_WARNINGS}"
 )

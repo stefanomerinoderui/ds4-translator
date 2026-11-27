@@ -606,9 +606,9 @@
     "semantic_hash": "71a498131b3c6242e5046f274e832869"
   },
   "ui/CMakeLists.txt": {
-    "mtime": 1795791891.94626,
-    "seen": 1795792424.6742506,
-    "ast_hash": "2b73bf988a6cebe88b7903f402c431a0",
+    "mtime": 1795800766.1851885,
+    "seen": 1795800864.4620712,
+    "ast_hash": "9a394ac4523f381744b4a91b8e91e661",
     "semantic_hash": ""
   },
   "assets/Dualshock_4_Layout.svg": {
@@ -630,9 +630,9 @@
     "semantic_hash": ""
   },
   "src/calibration.cpp": {
-    "mtime": 1795461527.8997433,
-    "seen": 1795461641.4610913,
-    "ast_hash": "1c6e8f5ea97d0adc80f1ea79b4b27e66",
+    "mtime": 1795800693.6692624,
+    "seen": 1795800864.4615245,
+    "ast_hash": "bc5e8a59daf5235a431c30e8e6f866bf",
     "semantic_hash": ""
   },
   "src/calibration.h": {
@@ -642,9 +642,9 @@
     "semantic_hash": ""
   },
   "tests/unit/test_calibration.cpp": {
-    "mtime": 1795461527.9031687,
-    "seen": 1795461641.461307,
-    "ast_hash": "57073c58e4dcbce7a65b5952d5259132",
+    "mtime": 1795800693.6694179,
+    "seen": 1795800864.461841,
+    "ast_hash": "2267332a64e05947a531d8deb6a6f046",
     "semantic_hash": ""
   },
   "src/pairing.cpp": {
@@ -900,33 +900,45 @@
     "semantic_hash": ""
   },
   "src/stick-coverage.cpp": {
-    "mtime": 1795791737.2455118,
-    "seen": 1795792424.6739573,
-    "ast_hash": "71f10afdb992a543c0986912c86c9c9a",
+    "mtime": 1795800709.1373267,
+    "seen": 1795800864.4616296,
+    "ast_hash": "4d06a1d3732ff8e478fd01c1c57a16c9",
     "semantic_hash": ""
   },
   "src/stick-coverage.h": {
-    "mtime": 1795791737.2445118,
-    "seen": 1795792424.6739602,
-    "ast_hash": "999eea8d286335645d84222c16585621",
+    "mtime": 1795800709.1371899,
+    "seen": 1795800864.4616334,
+    "ast_hash": "a3ff7727836cd781391ce7cad4f474d9",
     "semantic_hash": ""
   },
   "tests/unit/test_stick_coverage.cpp": {
-    "mtime": 1795791737.2480032,
-    "seen": 1795792424.674124,
-    "ast_hash": "03b26a58834ba56bfcefeb1ad5c7d0ae",
+    "mtime": 1795800709.1374311,
+    "seen": 1795800864.4618697,
+    "ast_hash": "b2d687966798e7287492d2e08979a139",
     "semantic_hash": ""
   },
   "ui/src/calibrationcontroller.cpp": {
-    "mtime": 1795791837.049665,
-    "seen": 1795792424.6741807,
-    "ast_hash": "d610945fd824b6d7c226bfb93b5d2b64",
+    "mtime": 1795800766.1859932,
+    "seen": 1795800864.4619539,
+    "ast_hash": "78e51fe31bb46cfe11e4f25ec9059da3",
     "semantic_hash": ""
   },
   "ui/src/calibrationcontroller.h": {
-    "mtime": 1795791832.5471134,
-    "seen": 1795792424.6741834,
-    "ast_hash": "1df439827105016882a0de53c1e9e34f",
+    "mtime": 1795800766.1862276,
+    "seen": 1795800864.4619572,
+    "ast_hash": "cc1098d76da54c6425118580f9ae9b75",
+    "semantic_hash": ""
+  },
+  "ui/src/circularitytest.cpp": {
+    "mtime": 1795800766.1737628,
+    "seen": 1795800864.461961,
+    "ast_hash": "cd07c1d6b7ac063e81b7277e240466fd",
+    "semantic_hash": ""
+  },
+  "ui/src/circularitytest.h": {
+    "mtime": 1795800766.1727126,
+    "seen": 1795800864.4619646,
+    "ast_hash": "f3005229dc35529111de1b717b393ff0",
     "semantic_hash": ""
   }
 }

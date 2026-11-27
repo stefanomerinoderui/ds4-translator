@@ -2,6 +2,8 @@
 
 #include <string.h>
 
+#include <string>
+
 namespace {
 
 constexpr uint8_t kCalibrationControl = 0x90;
@@ -52,6 +54,24 @@ bool set_mode(FeatureIo& io, bool permanent) {
     return send(io, report, build_flash_mode_report(permanent, report));
 }
 
+// Why a stick calibration did not start. The usual cause is a calibration
+// that was started and never stored (a cancelled trigger run, say): the pad
+// keeps it open until it resets, and it has a battery, so unplugging it does
+// not count. Only a reset clears it.
+std::string start_refused(FeatureIo& io) {
+    const std::string fix = " Reset the controller (ds4-ctl reset-controller, or Revert in the settings window) "
+                            "and start again.";
+    uint8_t raw[4] = {};
+    if (io.get(kCalibrationState, raw, sizeof(raw)) < (int)sizeof(raw) || raw[0] != kCalibrationState) {
+        return error("the pad did not report calibration as running." + fix);
+    }
+    if (raw[1] == kDeviceTriggers) {
+        return error("a trigger calibration is still open on the controller (it was started and not stored)." + fix);
+    }
+    return error("the pad did not report calibration as running (it reports device " + std::to_string(raw[1]) +
+                 ", target " + std::to_string(raw[2]) + ", state " + std::to_string(raw[3]) + ")." + fix);
+}
+
 std::string start_step(FeatureIo& io, CalibrationTarget target) {
     // Never start from a pad left in permanent mode: that would make a
     // half-finished or wrong calibration stick.
@@ -67,7 +87,7 @@ std::string start_step(FeatureIo& io, CalibrationTarget target) {
     if (target != CAL_TRIGGERS) {
         uint8_t state = 0;
         if (!read_status(io, kCalibrationState, target, state) || state != kStateRunning) {
-            return error("the pad did not report calibration as running");
+            return start_refused(io);
         }
     }
     return std::string("OK: ") + calibration_target_name(target) + " calibration started (temporary mode).";

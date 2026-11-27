@@ -23,13 +23,14 @@ public:
     std::vector<Report> sent;    // every report written, in order
     uint16_t selected_offset = 0;
     bool mode_was_permanent_during_store = false;
+    uint8_t open_device = 0;     // nonzero: 0x91 reports this device instead
 
     int get(uint8_t id, uint8_t* buf, size_t len) override {
         Report r;
         if (id == 0x11 && answer_mode_read) {
             r = {0x11, (uint8_t)(selected_offset == 12 && temporary ? 1 : 0), 0};
         } else if (id == 0x91) {
-            r = {0x91, 1, last_target, state};
+            r = {0x91, (uint8_t)(open_device ? open_device : 1), last_target, state};
         } else if (id == 0x92) {
             r = {0x92, 1, last_target, result};
         } else {
@@ -127,6 +128,15 @@ TEST(CalibrationRun, StartRefusesWhenTemporaryModeIsNotConfirmed) {
     const std::string reply = calibration_run_step(pad, CAL_STICK_CENTER, CAL_STEP_START, 0, 0, false);
     EXPECT_EQ(reply.rfind("Error:", 0), 0u) << reply;
     for (const Report& r : pad.sent) EXPECT_NE(r[0], 0x90) << "calibration must not start";
+}
+
+TEST(CalibrationRun, StartExplainsAnUnfinishedTriggerCalibration) {
+    FakePad pad;
+    pad.open_device = 3; // triggers, left open by a cancelled run
+    const std::string reply = calibration_run_step(pad, CAL_STICK_RANGE, CAL_STEP_START, 0, 0, false);
+    EXPECT_EQ(reply.rfind("Error:", 0), 0u);
+    EXPECT_NE(reply.find("trigger calibration is still open"), std::string::npos);
+    EXPECT_NE(reply.find("reset-controller"), std::string::npos);
 }
 
 TEST(CalibrationRun, StartFailsWhenPadRejectsReports) {

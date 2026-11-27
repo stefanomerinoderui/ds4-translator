@@ -21,7 +21,9 @@ Dialog {
     modal: true
     closePolicy: Popup.NoAutoClose
     anchors.centerIn: Overlay.overlay
-    width: Math.min(560, (parent ? parent.width : 560) - 24)
+    // Wide enough for the footer's buttons (the store page has three), but
+    // never wider than the window.
+    width: Math.min(Math.max(560, root.implicitFooterWidth), (parent ? parent.width : 560) - 24)
     // Opened by CalibrationController.begin(), closed once the controller goes
     // back to Idle. Not a binding on `visible`: closing the dialog would
     // break it.
@@ -149,22 +151,28 @@ Dialog {
             visible: root.phase === CalibrationController.Failed && CalibrationController.startedOnPad
             Layout.fillWidth: true
             wrapMode: Text.Wrap
-            text: qsTr("The calibration was started on the controller but not stored. Resetting the "
-                + "controller makes sure it goes back to its previous calibration.")
+            text: qsTr("The calibration was started on the controller but not stored. Closing resets the "
+                + "controller, which ends it; otherwise it blocks the next calibration.")
         }
     }
 
     footer: DialogButtonBox {
         Button {
-            text: root.phase === CalibrationController.Done || root.phase === CalibrationController.Failed
-                ? qsTr("Close") : qsTr("Cancel")
+            // A calibration started on the pad and not stored stays open on it
+            // (the pad has a battery, so unplugging does not clear it) and
+            // blocks the next one; closing then resets the pad.
+            text: {
+                const finished = root.phase === CalibrationController.Done
+                    || root.phase === CalibrationController.Failed;
+                if (CalibrationController.startedOnPad) {
+                    return finished ? qsTr("Close and reset controller") : qsTr("Cancel and reset controller");
+                }
+                return finished ? qsTr("Close") : qsTr("Cancel");
+            }
             DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
             enabled: root.phase !== CalibrationController.Working
-        }
-        Button {
-            visible: root.phase === CalibrationController.Failed && CalibrationController.startedOnPad
-            text: qsTr("Reset controller")
-            onClicked: CalibrationController.resetController()
+            ToolTip.visible: hovered && CalibrationController.startedOnPad
+            ToolTip.text: qsTr("Also drops any calibration not stored permanently")
         }
         Button {
             visible: root.phase === CalibrationController.Confirm

@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
 
 #include "stick-coverage.h"
@@ -70,4 +71,53 @@ TEST(StickCoverage, ResetForgetsEverything) {
     c.reset();
     EXPECT_EQ(c.circles(StickCoverage::Left), 0);
     EXPECT_DOUBLE_EQ(c.progress(), 0.0);
+}
+
+namespace {
+
+// One turn at `radius`, or a square path (|x| or |y| at 1) with `square`.
+void circle_into(StickCircularity &c, double radius, bool square = false) {
+    for (int deg = 0; deg < 360; ++deg) {
+        const double a = deg * M_PI / 180.0;
+        double x = radius * std::cos(a);
+        double y = radius * std::sin(a);
+        if (square) {
+            const double scale = 1.0 / std::max(std::fabs(x), std::fabs(y));
+            x *= scale;
+            y *= scale;
+        }
+        c.add(axis(std::clamp(x, -1.0, 1.0)), axis(std::clamp(y, -1.0, 1.0)));
+    }
+}
+
+} // namespace
+
+TEST(StickCircularity, PerfectCircleScoresNearZero) {
+    StickCircularity c;
+    circle_into(c, 1.0);
+    EXPECT_DOUBLE_EQ(c.coverage(), 1.0);
+    EXPECT_LT(c.error_percent(), 1.5);
+}
+
+TEST(StickCircularity, ShortRangeScoresItsShortfall) {
+    StickCircularity c;
+    circle_into(c, 0.9);
+    EXPECT_NEAR(c.error_percent(), 10.0, 1.5);
+}
+
+TEST(StickCircularity, SquareRangeScoresHigh) {
+    StickCircularity c;
+    circle_into(c, 1.0, true);
+    EXPECT_GT(c.error_percent(), 15.0);
+}
+
+TEST(StickCircularity, CentreSamplesAreIgnoredAndBucketZeroPointsRight) {
+    StickCircularity c;
+    c.add(128, 128);
+    EXPECT_DOUBLE_EQ(c.coverage(), 0.0);
+    EXPECT_DOUBLE_EQ(c.error_percent(), 0.0);
+    c.add(255, 128); // full right
+    EXPECT_NEAR(c.max_radius()[0], 1.0, 1e-9);
+    c.reset();
+    EXPECT_DOUBLE_EQ(c.coverage(), 0.0);
 }

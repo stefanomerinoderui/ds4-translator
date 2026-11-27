@@ -50,4 +50,34 @@ private:
     std::array<State, 2> m_sticks{};
 };
 
+// How round one stick's outer range is: the circularity test of the GUI
+// calibrators. The user rotates the stick round its edge; for each angle the
+// furthest the stick reached is kept, and the error is the RMS distance of
+// those maxima from the unit circle, in percent. 0 is a perfect circle. A
+// stick whose range is too square (it reaches past 1 on the diagonals) and one
+// that falls short somewhere both score high.
+class StickCircularity {
+public:
+    static constexpr size_t kBuckets = 72; // 5 degrees each
+
+    // Raw stick values, 0..255 with 128 centred.
+    void add(uint8_t x, uint8_t y);
+    void reset();
+
+    // Fraction of the angle buckets reached at all (radius > kMinRadius).
+    double coverage() const;
+    // RMS error over the reached buckets, in percent; 0 with none reached.
+    double error_percent() const;
+    // Furthest normalised radius per bucket (0 = not reached), bucket 0 at
+    // angle 0 (pointing right), counting towards +y.
+    const std::array<double, kBuckets> &max_radius() const { return m_max; }
+
+    // Below this the sample is near the centre and says nothing about the
+    // edge.
+    static constexpr double kMinRadius = 0.5;
+
+private:
+    std::array<double, kBuckets> m_max{};
+};
+
 #endif // DS4_STICK_COVERAGE_H

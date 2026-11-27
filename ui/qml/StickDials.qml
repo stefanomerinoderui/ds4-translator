@@ -21,6 +21,10 @@ RowLayout {
     // Text under each dial, e.g. circles done.
     property string leftCaption: ""
     property string rightCaption: ""
+    // Furthest radius reached per angle (CircularityTest), drawn as the
+    // outline the stick has traced; empty draws nothing.
+    property var leftShape: []
+    property var rightShape: []
 
     readonly property color accent: "#2d8cf0"
     // Outline, crosshair and guide ring. A Canvas is not a Control and has no
@@ -41,6 +45,7 @@ RowLayout {
         property string caption: ""
         property int axisX: 128
         property int axisY: 128
+        property var shape: []
 
         // -1..1 each way, 128 centred (as the input stream reports them).
         readonly property real nx: dial.axisX >= 128 ? (dial.axisX - 128) / 127 : (dial.axisX - 128) / 128
@@ -54,6 +59,7 @@ RowLayout {
         spacing: 4
         onNxChanged: canvas.addPoint()
         onNyChanged: canvas.addPoint()
+        onShapeChanged: canvas.requestPaint()
 
         Label {
             text: dial.title
@@ -103,6 +109,34 @@ RowLayout {
                     ctx.setLineDash([]);
                 }
 
+                // Reached edge: one point per angle bucket, joined round,
+                // skipping the angles not reached yet.
+                const shape = dial.shape;
+                if (shape && shape.length > 0) {
+                    ctx.strokeStyle = "#f39c12";
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    let drawing = false;
+                    for (let i = 0; i <= shape.length; ++i) {
+                        const r = shape[i % shape.length];
+                        if (r <= 0) {
+                            drawing = false;
+                            continue;
+                        }
+                        const a = (i + 0.5) * 2 * Math.PI / shape.length;
+                        const px = cx + Math.cos(a) * r * radius;
+                        const py = cy + Math.sin(a) * r * radius;
+                        if (drawing) {
+                            ctx.lineTo(px, py);
+                        } else {
+                            ctx.moveTo(px, py);
+                            drawing = true;
+                        }
+                    }
+                    ctx.stroke();
+                    ctx.lineWidth = 1;
+                }
+
                 if (points.length > 1) {
                     ctx.strokeStyle = root.accent;
                     ctx.globalAlpha = 0.5;
@@ -136,6 +170,7 @@ RowLayout {
         id: leftDial
         title: qsTr("Left stick")
         caption: root.leftCaption
+        shape: root.leftShape
         axisX: InputMonitor.hasState ? InputMonitor.leftX : 128
         axisY: InputMonitor.hasState ? InputMonitor.leftY : 128
     }
@@ -144,6 +179,7 @@ RowLayout {
         id: rightDial
         title: qsTr("Right stick")
         caption: root.rightCaption
+        shape: root.rightShape
         axisX: InputMonitor.hasState ? InputMonitor.rightX : 128
         axisY: InputMonitor.hasState ? InputMonitor.rightY : 128
     }

@@ -93,8 +93,8 @@ public:
     Q_INVOKABLE void next();
     // ChooseStore page.
     Q_INVOKABLE void store(bool permanent);
-    // Closes the wizard. Nothing is sent: a calibration that was started and
-    // not stored is simply never committed (a reset clears it).
+    // Closes the wizard. If a calibration was started on the pad and not
+    // stored, also resets the pad to end it.
     Q_INVOKABLE void cancel();
     // Reboots the pad: undoes anything not stored permanently.
     Q_INVOKABLE void resetController();
