@@ -21,7 +21,6 @@ PREFIX    = /usr/local
 BINDIR    = $(PREFIX)/bin
 SYSTEMDDIR = /etc/systemd/system
 UDEVRULESDIR = /etc/udev/rules.d
-MODPROBEDIR  = /etc/modprobe.d
 
 # This project talks to the kernel through raw ioctls, configfs, and manual
 # struct-packed HID reports -- exactly the code where an unnoticed implicit
@@ -329,7 +328,6 @@ stage-cli: all
 	install -D -m 644 ds4-ctl-completion.bash $(DESTDIR)/usr/share/bash-completion/completions/ds4-ctl
 	install -D -m 644 ds4-ctl.fish $(DESTDIR)/usr/share/fish/vendor_completions.d/ds4-ctl.fish
 	install -D -m 644 _ds4-ctl $(DESTDIR)/usr/share/zsh/site-functions/_ds4-ctl
-	install -D -m 644 dummy_hcd.conf $(DESTDIR)$(MODPROBEDIR)/dummy_hcd.conf
 	install -D -m 644 ds4-translator.sysusers $(DESTDIR)/usr/lib/sysusers.d/ds4-translator.conf
 	install -D -m 644 $(HIDBPF_BPF_OBJ) $(DESTDIR)$(HIDBPF_INSTALL_PATH)
 
@@ -586,7 +584,6 @@ uninstall-cli:
 	rm -f $(DESTDIR)/usr/share/bash-completion/completions/ds4-ctl
 	rm -f $(DESTDIR)/usr/share/fish/vendor_completions.d/ds4-ctl.fish
 	rm -f $(DESTDIR)/usr/share/zsh/site-functions/_ds4-ctl
-	rm -f $(DESTDIR)$(MODPROBEDIR)/dummy_hcd.conf
 	rm -f $(DESTDIR)/usr/lib/sysusers.d/ds4-translator.conf
 	rm -f $(DESTDIR)$(HIDBPF_INSTALL_PATH)
 	udevadm control --reload-rules
