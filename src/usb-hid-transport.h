@@ -28,6 +28,7 @@
 // with output reports, and closes/EOFs like a real disconnect if the
 // USB device goes away.
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 
@@ -68,6 +69,20 @@ int usb_hid_transport_open(const std::string& hid_id, uint16_t vid, uint16_t pid
 // virtual device is fully up, so the two USB-core operations never
 // overlap in time. No-op if already started or if fd is unknown.
 void usb_hid_transport_start(int fd);
+
+// Reads HID feature report `report_id` from the claimed interface with a
+// class GET_REPORT control transfer (no hidraw node exists for it). `buf`
+// receives the report including its leading report ID byte. Returns the
+// number of bytes read, or -1 if `fd` is not an open transport or the
+// transfer failed. Call it from the thread that opens and closes the
+// transport, never concurrently with usb_hid_transport_close().
+int usb_hid_transport_get_feature_report(int fd, uint8_t report_id, uint8_t* buf, size_t len);
+
+// Sends HID feature report `buf[0]` (the report ID, followed by its payload;
+// `len` includes the ID) with a class SET_REPORT control transfer. Returns
+// true if the pad accepted all of it. Same threading rule as
+// usb_hid_transport_get_feature_report().
+bool usb_hid_transport_set_feature_report(int fd, const uint8_t* buf, size_t len);
 
 // Tears down the transport for an fd previously returned by
 // usb_hid_transport_open(): stops the shuttle thread, releases the

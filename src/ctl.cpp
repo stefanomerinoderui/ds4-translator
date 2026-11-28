@@ -1,4 +1,5 @@
 #include <iostream>
+#include <algorithm>
 #include <string>
 #include <vector>
 #include <deque>
@@ -66,6 +67,15 @@ static void print_usage() {
     std::cout << "  identify                         Blink the physical controller's light bar (and pulse its" << std::endl;
     std::cout << "                                   heavy motor once) so you can tell which pad the daemon is" << std::endl;
     std::cout << "                                   actually holding" << std::endl;
+    std::cout << "  reset-controller                 Reboot the physical controller (USB only); it disconnects" << std::endl;
+    std::cout << "                                   and reconnects by itself" << std::endl;
+    std::cout << "  pair [adapter MAC]               Pair the physical controller (USB only) with this PC's" << std::endl;
+    std::cout << "                                   Bluetooth adapter by cable, for when BlueZ cannot see it" << std::endl;
+    std::cout << "                                   (needs a restart of bluetoothd afterwards)" << std::endl;
+    std::cout << "  calibrate <target> [--permanent] Recalibrate the physical controller (USB only), prompting" << std::endl;
+    std::cout << "    <stick-center|stick-range|     between steps. Results are lost on reset or standby" << std::endl;
+    std::cout << "     triggers>                     unless --permanent is given. Can damage the controller;" << std::endl;
+    std::cout << "                                   triggers is beta upstream." << std::endl;
     std::cout << "  led <r> <g> <b> <left> <right>   Send a light bar colour and rumble levels (each 0-255)" << std::endl;
     std::cout << "                                   straight to the physical controller, to test them. Not a" << std::endl;
     std::cout << "                                   setting: the next output report from the emulated device" << std::endl;
@@ -213,6 +223,9 @@ static const CommandSpec kCommands[] = {
     {"tap",              nullptr},
     {"test",             nullptr},
     {"identify",         nullptr},
+    {"reset-controller", nullptr},
+    {"pair",             nullptr},
+    {"calibrate",        "stick-center stick-range triggers --permanent"},
     {"led",              "--reset"},
     {"set-hide-method",  "legacy unbind unlink driver"},
     {"set-mac-squat",    "on off"},
@@ -717,6 +730,113 @@ static int run_tap(const std::string& button) {
     return 0;
 }
 
+// ---------- Calibration ----------
+
+// One calibrate step; prints the daemon's reply. False if it failed, so the
+// caller stops instead of carrying on with a pad in an unknown state.
+static bool calibrate_step(const std::string& target, const std::string& step, int position = 0,
+                           int side = 0, bool permanent = false) {
+    std::string error;
+    const std::string command = ds4ipc::build_calibrate(target, step, position, side, permanent, &error);
+    if (command.empty()) {
+        std::cerr << "Error: " << error << std::endl;
+        return false;
+    }
+    std::string response;
+    if (!send_command(command, response)) {
+        std::cerr << response << std::endl;
+        print_daemon_unreachable_help();
+        return false;
+    }
+    const bool ok = response.rfind("OK:", 0) == 0;
+    (ok ? std::cout : std::cerr) << response << std::endl;
+    return ok;
+}
+
+// False if the user closed stdin, so a piped-in empty stream can not run a
+// calibration unattended.
+static bool wait_for_enter(const std::string& prompt) {
+    std::cout << prompt << " [Enter to continue, Ctrl-C to abort] " << std::flush;
+    std::string line;
+    return static_cast<bool>(std::getline(std::cin, line));
+}
+
+static bool calibrate_triggers(const std::string& target) {
+    static const char *const kSides[] = {"L2", "R2"};
+    static const char *const kPositions[] = {"fully released", "half pressed", "fully pressed"};
+    for (int side = 1; side <= 2; ++side) {
+        for (int position = 1; position <= 3; ++position) {
+            if (!wait_for_enter(std::string("Hold ") + kSides[side - 1] + " " + kPositions[position - 1] + ".")) {
+                return false;
+            }
+            // The pad wants each position sampled twice.
+            if (!calibrate_step(target, "sample", position, side) ||
+                !calibrate_step(target, "sample", position, side)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+static bool calibrate_stick_center(const std::string& target) {
+    if (!wait_for_enter("Release both sticks so they rest in the centre.")) return false;
+    constexpr int kSamples = 5;
+    for (int i = 0; i < kSamples; ++i) {
+        if (!calibrate_step(target, "sample")) return false;
+        usleep(100000);
+    }
+    return true;
+}
+
+// Calibration is USB only, and the daemon refuses it over Bluetooth. Checking
+// the connection before the confirmation prompt means the user is not asked to
+// confirm something that would then be refused.
+static bool check_pad_connected_over_usb() {
+    std::string response;
+    if (!send_command("status", response)) {
+        std::cerr << response << std::endl;
+        print_daemon_unreachable_help();
+        return false;
+    }
+    const std::string key = "Connection Type: ";
+    const size_t start = response.find(key);
+    if (start == std::string::npos) {
+        std::cerr << "Error: could not read the controller's connection type from the daemon." << std::endl;
+        return false;
+    }
+    const size_t value_start = start + key.size();
+    const std::string connection = response.substr(value_start, response.find('\n', value_start) - value_start);
+    if (connection != "USB") {
+        std::cerr << "Error: calibration needs the controller on USB, but it is connected over " << connection
+                  << ". Unplug its USB cable (or unpair the Bluetooth link) and try again." << std::endl;
+        return false;
+    }
+    return true;
+}
+
+static int run_calibrate(const std::string& target, bool permanent) {
+    if (!check_pad_connected_over_usb()) return 1;
+    std::cout << "This writes to the controller's calibration memory and can leave it unusable if\n"
+                 "interrupted or if the controller does not respond as expected. The result is "
+              << (permanent ? "PERMANENT." : "lost on reset or standby.") << std::endl;
+    if (!wait_for_enter("Continue?") || !calibrate_step(target, "start")) return 1;
+
+    bool ok = false;
+    if (target == "stick-center") {
+        ok = calibrate_stick_center(target);
+    } else if (target == "stick-range") {
+        ok = wait_for_enter("Rotate both sticks through their full range several times, then stop.");
+    } else {
+        ok = calibrate_triggers(target);
+    }
+    if (!ok) {
+        std::cerr << "Calibration not stored." << std::endl;
+        return 1;
+    }
+    return calibrate_step(target, "store", 0, 0, permanent) ? 0 : 1;
+}
+
 int main(int argc, char* argv[]) {
     if (argc < 2) {
         print_usage();
@@ -898,6 +1018,33 @@ int main(int argc, char* argv[]) {
             full_cmd = ds4ipc::build_led(values[0], values[1], values[2], values[3], values[4],
                                           &build_error);
         }
+    } else if (cmd == "pair") {
+        if (argc > 3) {
+            std::cerr << "Error: pair takes at most one argument, the adapter MAC" << std::endl;
+            return 1;
+        }
+        if (argc == 3) full_cmd += std::string(" ") + argv[2];
+    } else if (cmd == "calibrate") {
+        std::string target;
+        bool permanent = false;
+        for (int i = 2; i < argc; ++i) {
+            const std::string arg = argv[i];
+            if (arg == "--permanent") {
+                permanent = true;
+            } else if (target.empty()) {
+                target = arg;
+            } else {
+                target = "";
+                break;
+            }
+        }
+        const std::vector<std::string>& targets = ds4ipc::calibration_target_values();
+        if (std::find(targets.begin(), targets.end(), target) == targets.end()) {
+            std::cerr << "Error: calibrate requires one of: stick-center stick-range triggers "
+                         "(optionally --permanent)" << std::endl;
+            return 1;
+        }
+        return run_calibrate(target, permanent);
     } else if (cmd == "create-virtual") {
         if (argc < 3) {
             std::cerr << "Error: create-virtual requires a target type (" << spec->arg_completions

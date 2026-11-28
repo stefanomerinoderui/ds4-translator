@@ -27,6 +27,16 @@ namespace fakeusb {
 
 Controls controls;
 std::atomic<int> violations{0};
+std::atomic<int> last_feature_request{-1};
+namespace {
+std::mutex g_set_mutex;
+std::vector<uint8_t> g_last_set;
+} // namespace
+
+std::vector<uint8_t> last_feature_set() {
+    std::lock_guard<std::mutex> lock(g_set_mutex);
+    return g_last_set;
+}
 std::atomic<int> release_calls{0};
 std::atomic<int> attach_calls{0};
 
@@ -66,6 +76,11 @@ void reset() {
     controls.wedge = false;
     controls.feed = false;
     violations = 0;
+    last_feature_request = -1;
+    {
+        std::lock_guard<std::mutex> lock(g_set_mutex);
+        g_last_set.clear();
+    }
     release_calls = 0;
     attach_calls = 0;
 }
@@ -292,6 +307,26 @@ int libusb_interrupt_transfer(libusb_device_handle *handle, unsigned char endpoi
         sleep_ms(1);
         lock.lock();
     }
+}
+
+int libusb_control_transfer(libusb_device_handle *handle, uint8_t request_type, uint8_t request,
+                            uint16_t value, uint16_t, unsigned char *data, uint16_t length, unsigned int) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (!live_locked(handle)) return LIBUSB_ERROR_NO_DEVICE;
+    if (controls.gone.load()) return LIBUSB_ERROR_NO_DEVICE;
+    if (request_type == 0x21 && request == 0x09 && (value >> 8) == 3) {
+        std::lock_guard<std::mutex> set_lock(g_set_mutex);
+        g_last_set.assign(data, data + length);
+        return length;
+    }
+    // Only the HID class GET_REPORT for a feature report is faked.
+    if (request_type != 0xA1 || request != 0x01 || (value >> 8) != 3 || length == 0) {
+        return LIBUSB_ERROR_PIPE;
+    }
+    last_feature_request = value & 0xFF;
+    memset(data, 0x5A, length);
+    data[0] = (uint8_t)(value & 0xFF);
+    return length;
 }
 
 } // extern "C"

@@ -128,7 +128,7 @@ TARGET_CTL    = $(BUILD_DIR)/ds4-ctl
 TARGET_SPOOF  = $(BUILD_DIR)/libudev-sony-spoof.so
 TARGET_SPOOF32 = $(BUILD_DIR)/libudev-sony-spoof32.so
 
-DAEMON_SRC = src/main.cpp src/translate.cpp src/fs-util.cpp src/functionfs-backend.c $(UNBIND_SRC) $(IPC_SRC)
+DAEMON_SRC = src/main.cpp src/translate.cpp src/calibration.cpp src/pairing.cpp src/fs-util.cpp src/functionfs-backend.c $(UNBIND_SRC) $(IPC_SRC)
 # The control protocol itself: the client transport/command rules used by
 # ds4-ctl and the Qt UI in ui/ (which compiles src/ipc-client.cpp into its
 # own binary), plus the live-monitor STATE line format, which the daemon
@@ -137,7 +137,7 @@ IPC_SRC    = src/ipc-client.cpp
 CTL_SRC    = src/ctl.cpp $(IPC_SRC)
 SPOOF_SRC  = src/udev-spoof.c
 
-DAEMON_OBJ = $(BUILD_DIR)/main.o $(BUILD_DIR)/translate.o $(BUILD_DIR)/fs-util.o $(BUILD_DIR)/functionfs-backend.o $(UNBIND_OBJ) $(HIDBPF_OBJ) \
+DAEMON_OBJ = $(BUILD_DIR)/main.o $(BUILD_DIR)/translate.o $(BUILD_DIR)/calibration.o $(BUILD_DIR)/pairing.o $(BUILD_DIR)/fs-util.o $(BUILD_DIR)/functionfs-backend.o $(UNBIND_OBJ) $(HIDBPF_OBJ) \
              $(BUILD_DIR)/ipc-client.o
 CTL_OBJ    = $(BUILD_DIR)/ctl.o $(BUILD_DIR)/ipc-client.o
 
@@ -426,7 +426,7 @@ UNIT_TEST_BIN = $(TEST_BUILD_DIR)/unit-tests
 UNIT_TEST_SRC = $(wildcard tests/unit/*.cpp)
 # hid-unbind-detect.cpp needs write_hid_driver_sysfs from main.cpp; the stub
 # stands in so it links without the daemon.
-UNIT_LIB_SRC  = src/ipc-client.cpp src/translate.cpp src/fs-util.cpp src/hid-unbind-detect.cpp tests/stubs/hid_driver_sysfs_stub.cpp
+UNIT_LIB_SRC  = src/ipc-client.cpp src/stick-coverage.cpp src/translate.cpp src/calibration.cpp src/pairing.cpp src/fs-util.cpp src/hid-unbind-detect.cpp tests/stubs/hid_driver_sysfs_stub.cpp
 
 $(UNIT_TEST_BIN): $(UNIT_TEST_SRC) $(UNIT_LIB_SRC) $(KTRANSLATE_OBJ) $(wildcard src/*.h)
 	@mkdir -p $(TEST_BUILD_DIR)

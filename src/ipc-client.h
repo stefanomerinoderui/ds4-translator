@@ -118,6 +118,20 @@ std::string build_led(int red, int green, int blue, int rumble_left, int rumble_
 // for.
 extern const char *const kLedResetCommand;
 
+// Reboots the physical controller (USB only). It disconnects and comes back,
+// and anything calibrated without "store permanent" is lost.
+extern const char *const kResetControllerCommand;
+
+// Stick/trigger calibration of the physical controller (USB only), driven one
+// step at a time: start, then the samples the target needs, then store.
+// target: stick-center | stick-range | triggers. step: start | sample | store.
+// A trigger sample takes position 1-3 (released, half, full) and side 1 = L2
+// or 2 = R2; every other step takes 0 for both. stick-range has no sample
+// step. permanent only applies to store and makes the result survive a reset.
+const std::vector<std::string> &calibration_target_values();
+std::string build_calibrate(const std::string &target, const std::string &step, int position,
+                            int side, bool permanent, std::string *error);
+
 // Warning to show before a name change: it recreates the virtual device if
 // that type is currently active.
 extern const char *const kSetNameWarning;

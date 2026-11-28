@@ -1,5 +1,6 @@
 #include "translate.h"
 
+#include <stdio.h>
 #include <string.h>
 
 // The Xbox types are vendor-class USB devices bound by xpad rather than HID
@@ -185,6 +186,103 @@ uint8_t xbox_dpad_bits(uint8_t hat) {
     return (hat < 8) ? hat_to_dpad[hat] : 0;
 }
 
+bool parse_bt_basic_input_report(const uint8_t* data, size_t len,
+                                 dualshock4_input_report_common& out) {
+    if (len != BT_BASIC_REPORT_SIZE || data[0] != 0x01) {
+        return false;
+    }
+    memset(&out, 0, sizeof(out));
+    // x, y, rx, ry, buttons[3], z, rz: bytes 1-9, as in the common block.
+    memcpy(&out, data + 1, BT_BASIC_REPORT_SIZE - 1);
+    return true;
+}
+
+size_t select_usb_touch_reports(uint8_t num_touch, const dualshock4_touch_report in[4],
+                                dualshock4_touch_report out[3]) {
+    const size_t available = num_touch > 4 ? 4 : num_touch;
+    const size_t count = available > 3 ? 3 : available;
+    const size_t first = available - count;
+    for (size_t i = 0; i < count; ++i) {
+        out[i] = in[first + i];
+    }
+    return count;
+}
+
+size_t build_ds4_output_report(bool bluetooth, const Ds4Output& o, uint8_t out[DS4_BT_OUTPUT_SIZE]) {
+    memset(out, 0, DS4_BT_OUTPUT_SIZE);
+    if (bluetooth) {
+        out[0] = 0x11; // report ID
+        out[1] = 0xC0; // hw_control: HID | CRC32
+        out[3] = 0x07; // valid_flag0: motor | led | led_blink
+        out[6] = o.motor_right;
+        out[7] = o.motor_left;
+        out[8] = o.r;
+        out[9] = o.g;
+        out[10] = o.b;
+        out[11] = o.flash_on;
+        out[12] = o.flash_off;
+        const uint32_t crc = calculate_crc32(0xA2, out, 74);
+        for (int i = 0; i < 4; ++i) out[74 + i] = static_cast<uint8_t>(crc >> (8 * i));
+        return DS4_BT_OUTPUT_SIZE;
+    }
+    out[0] = 0x05; // report ID
+    out[1] = 0x07; // valid_flag0: motor | led | led_blink
+    out[4] = o.motor_right;
+    out[5] = o.motor_left;
+    out[6] = o.r;
+    out[7] = o.g;
+    out[8] = o.b;
+    out[9] = o.flash_on;
+    out[10] = o.flash_off;
+    return DS4_USB_OUTPUT_SIZE;
+}
+
+std::string ds4_pairing_info_mac(const uint8_t* data, size_t len) {
+    if (len != DS4_PAIRING_INFO_SIZE || data[0] != DS4_PAIRING_INFO_ID) return "";
+    static const char kHex[] = "0123456789abcdef";
+    bool any = false;
+    std::string out;
+    out.reserve(17);
+    for (int i = 0; i < 6; ++i) {
+        const uint8_t byte = data[6 - i]; // stored least significant byte first
+        any = any || byte != 0;
+        if (i > 0) out += ':';
+        out += kHex[byte >> 4];
+        out += kHex[byte & 0x0F];
+    }
+    return any ? out : "";
+}
+
+bool is_valid_ds4_firmware_report(const uint8_t* data, size_t len) {
+    return len == DS4_FIRMWARE_REPORT_SIZE && data[0] == DS4_FIRMWARE_REPORT_ID;
+}
+
+namespace {
+uint32_t read_le(const uint8_t* p, int bytes) {
+    uint32_t v = 0;
+    for (int i = bytes - 1; i >= 0; --i) v = (v << 8) | p[i];
+    return v;
+}
+
+// A zero-padded ASCII field of `max` bytes, without the padding.
+std::string ascii_field(const uint8_t* p, size_t max) {
+    size_t n = 0;
+    while (n < max && p[n] != 0) ++n;
+    return std::string(reinterpret_cast<const char*>(p), n);
+}
+} // namespace
+
+std::string describe_ds4_firmware(const uint8_t* data, size_t len) {
+    if (!is_valid_ds4_firmware_report(data, len)) return "";
+    // Offsets are +1 from the documented payload layout: byte 0 is the report ID.
+    char versions[96];
+    const int written = snprintf(versions, sizeof(versions), "hw 0x%04x.%04x, fw 0x%08x.%04x",
+                                 read_le(data + 33, 2), read_le(data + 35, 2), read_le(data + 37, 4),
+                                 read_le(data + 41, 2));
+    if (written < 0) return "";
+    return ascii_field(data + 1, 16) + " " + ascii_field(data + 17, 16) + ", " + versions;
+}
+
 void put_le16(uint8_t* out, uint16_t value) {
     out[0] = (uint8_t)(value & 0xFF);
     out[1] = (uint8_t)(value >> 8);
@@ -288,10 +386,9 @@ void build_ds4_usb_report(const dualshock4_input_report_common& common, uint8_t 
         report->common.status[0] = 0x1B;
         report->common.status[1] = 0x00;
     }
-    report->num_touch_reports = (num_touch > 3) ? 3 : num_touch;
-    for (int i = 0; i < report->num_touch_reports; ++i) {
-        report->touch_reports[i] = touch_reps[i];
-    }
+    // A Bluetooth report can carry a fourth packet the USB layout has no room
+    // for; keep the three newest rather than dropping the latest.
+    report->num_touch_reports = (uint8_t)select_usb_touch_reports(num_touch, touch_reps, report->touch_reports);
     // Real hardware fills every slot; leaving unused ones zeroed (contact 0,
     // x 0, y 0) reads as a touch at (0,0) to any consumer that does not gate
     // on num_touch_reports, so mark both points "not touching" (bit 7).

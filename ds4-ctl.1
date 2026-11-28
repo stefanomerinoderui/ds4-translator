@@ -42,6 +42,15 @@ Restores the default Sony name for that controller type.
 .B identify
 Blinks the physical controller's light bar three times and pulses its heavy motor once, so you can tell which pad the daemon is holding.
 .TP
+.B reset-controller
+Reboots the physical controller (USB only). It disconnects and reconnects by itself, which the daemon treats as an ordinary reconnect.
+.TP
+.B pair [adapter MAC]
+Pairs the physical controller (USB only) with this PC's Bluetooth adapter by cable, as BlueZ's sixaxis plugin does but from the daemon, because that plugin never sees a pad the daemon has detached from the kernel. It generates a link key, writes it and the adapter's MAC to the controller, and records the key under /var/lib/bluetooth. The adapter MAC is only needed with several adapters. bluetoothd reads its state at startup, so restart it afterwards (systemctl restart bluetooth), then unplug the controller and press its PS button. Refuses a controller BlueZ already knows (remove it first with bluetoothctl remove).
+.TP
+.B calibrate <stick-center|stick-range|triggers> [--permanent]
+Recalibrates the physical controller (USB only; refused over Bluetooth, where these vendor reports have not been verified), prompting between steps. By default the result is kept in the controller's temporary flash mirror and is lost on reset or standby; --permanent switches it to permanent mode only for the store step. This writes to the controller's calibration memory and can leave it unusable if interrupted; the triggers target is marked beta by the upstream ds4-tools project.
+.TP
 .B led <r> <g> <b> <rumble-left> <rumble-right>
 Sends a light bar colour and rumble levels (each 0-255) straight to the physical controller, to test them. Not a setting: the next output report from the emulated device overwrites it.
 .TP

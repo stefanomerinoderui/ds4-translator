@@ -5,6 +5,7 @@
 #include <cerrno>
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <iostream>
@@ -490,6 +491,51 @@ void usb_hid_transport_start(int fd) {
         t->pump_thread = std::thread(pump_thread_fn, t);
         t->watchdog_thread = std::thread(watchdog_thread_fn, t);
     }
+}
+
+namespace {
+
+TransportState* find_transport(int fd) {
+    std::lock_guard<std::mutex> lock(g_registry_mutex);
+    auto it = g_registry.find(fd);
+    return it == g_registry.end() ? nullptr : it->second;
+}
+
+// HID class GET_REPORT / SET_REPORT of a feature report: wValue is
+// (report type << 8) | report ID, with type 3 = feature.
+int feature_control_transfer(TransportState* t, bool set, uint8_t report_id, uint8_t* buf, size_t len) {
+    constexpr uint8_t kGetReport = 0x01;
+    constexpr uint8_t kSetReport = 0x09;
+    constexpr uint16_t kFeatureReportType = 3;
+    constexpr unsigned kTimeoutMs = 500;
+    const uint8_t direction = set ? LIBUSB_ENDPOINT_OUT : LIBUSB_ENDPOINT_IN;
+    const int rc = libusb_control_transfer(
+        t->handle, direction | LIBUSB_REQUEST_TYPE_CLASS | LIBUSB_RECIPIENT_INTERFACE,
+        set ? kSetReport : kGetReport, (uint16_t)((kFeatureReportType << 8) | report_id),
+        (uint16_t)t->interface_number, buf, (uint16_t)len, kTimeoutMs);
+    if (rc < 0) {
+        std::cerr << "hid-unbind: " << (set ? "SET" : "GET") << "_REPORT feature 0x" << std::hex
+                  << (int)report_id << std::dec << " failed: " << libusb_error_name(rc) << std::endl;
+    }
+    return rc;
+}
+
+} // namespace
+
+int usb_hid_transport_get_feature_report(int fd, uint8_t report_id, uint8_t* buf, size_t len) {
+    TransportState* t = find_transport(fd);
+    if (!t || t->lost.load(std::memory_order_relaxed) || len == 0 || len > UINT16_MAX) return -1;
+    const int rc = feature_control_transfer(t, false, report_id, buf, len);
+    return rc < 0 ? -1 : rc;
+}
+
+bool usb_hid_transport_set_feature_report(int fd, const uint8_t* buf, size_t len) {
+    TransportState* t = find_transport(fd);
+    if (!t || t->lost.load(std::memory_order_relaxed) || len == 0 || len > UINT16_MAX) return false;
+    uint8_t copy[kMaxReportSize];
+    if (len > sizeof(copy)) return false;
+    memcpy(copy, buf, len);
+    return feature_control_transfer(t, true, copy[0], copy, len) == (int)len;
 }
 
 void usb_hid_transport_close(int fd) {

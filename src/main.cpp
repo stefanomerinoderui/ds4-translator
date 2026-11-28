@@ -36,11 +36,15 @@
 #include "hid-unbind-detect.h"
 #include "usb-hid-transport.h"
 #include "hid-bpf-transport.h"
+#include <sys/random.h>
+
 #include "driver-transport.h"
 #include "ipc-client.h"
 #include "fs-util.h"
 #include "paths.h"
 #include "translate.h"
+#include "calibration.h"
+#include "pairing.h"
 
 #ifndef DS4_VERSION
 #define DS4_VERSION "unknown"
@@ -1038,6 +1042,106 @@ static bool kick_bt_full_report_mode(const std::string& hidraw_name) {
     return any_ok;
 }
 
+// The pad's own firmware report (feature 0xA3), read once per connection and
+// served to games in place of a canned one. Only touched from the main thread.
+static uint8_t g_phy_firmware[DS4_FIRMWARE_REPORT_SIZE];
+static bool g_have_phy_firmware = false;
+
+static void store_physical_firmware(const uint8_t* data, size_t len) {
+    if (!is_valid_ds4_firmware_report(data, len)) {
+        std::cerr << "Physical firmware report malformed (" << len << " bytes); keeping the canned one." << std::endl;
+        return;
+    }
+    memcpy(g_phy_firmware, data, sizeof(g_phy_firmware));
+    g_have_phy_firmware = true;
+    functionfs_set_ds4_firmware(g_phy_firmware);
+    std::cout << "Physical controller firmware: " << describe_ds4_firmware(data, len) << std::endl;
+}
+
+static void clear_physical_firmware() {
+    g_have_phy_firmware = false;
+    functionfs_set_ds4_firmware(nullptr);
+}
+
+// The firmware report is not cleared on disconnect, only replaced by the next
+// capture; the IMU calibration is (release_physical_connection()).
+// Reads one feature report from a hidraw node; returns its length or -1.
+static int hidraw_get_feature(int fd, uint8_t id, uint8_t* buf, size_t len) {
+    memset(buf, 0, len);
+    buf[0] = id; // report number, as HIDIOCGFEATURE expects
+    int ret = ioctl(fd, HIDIOCGFEATURE(len), buf);
+    if (ret < 0) {
+        std::cerr << "Feature report 0x" << std::hex << (int)id << std::dec << " read failed: "
+                  << strerror(errno) << std::endl;
+    }
+    return ret;
+}
+
+// Over Bluetooth the calibration comes as report 0x05 (with CRC), over USB as
+// 0x02; either way the emulated device serves the USB layout.
+static void store_physical_imu_cal(const uint8_t* report, size_t len) {
+    uint8_t cal[DS4_CALIBRATION_SIZE];
+    if (ds4_calibration_to_usb_layout(report, len, cal)) {
+        set_physical_calibration(cal);
+        std::cout << "Physical controller motion calibration captured." << std::endl;
+    } else {
+        std::cerr << "Physical controller motion calibration malformed; keeping the canned one." << std::endl;
+    }
+}
+
+// Each capture starts by clearing, so a failed read never leaves another
+// pad's data behind. Best-effort: a pad that won't answer just keeps the
+// canned reports.
+//
+// `fd` is a hidraw node.
+static void capture_physical_features_hidraw(int fd) {
+    clear_physical_firmware();
+    set_physical_calibration(nullptr);
+
+    struct hidraw_devinfo info;
+    const bool bluetooth = ioctl(fd, HIDIOCGRAWINFO, &info) == 0 && info.bustype == BUS_BLUETOOTH;
+
+    uint8_t fw[DS4_FIRMWARE_REPORT_SIZE];
+    int ret = hidraw_get_feature(fd, DS4_FIRMWARE_REPORT_ID, fw, sizeof(fw));
+    if (ret >= 0) store_physical_firmware(fw, (size_t)ret);
+
+    if (!bluetooth) {
+        uint8_t pairing[DS4_PAIRING_INFO_SIZE];
+        ret = hidraw_get_feature(fd, DS4_PAIRING_INFO_ID, pairing, sizeof(pairing));
+        if (ret >= 0) remember_physical_mac(ds4_pairing_info_mac(pairing, (size_t)ret));
+    }
+
+    if (bluetooth) {
+        uint8_t cal[DS4_IMU_CAL_BT_SIZE];
+        ret = hidraw_get_feature(fd, DS4_IMU_CAL_BT_ID, cal, sizeof(cal));
+        if (ret >= 0) store_physical_imu_cal(cal, (size_t)ret);
+    } else {
+        uint8_t cal[DS4_IMU_CAL_USB_SIZE];
+        ret = hidraw_get_feature(fd, DS4_IMU_CAL_USB_ID, cal, sizeof(cal));
+        if (ret >= 0) store_physical_imu_cal(cal, (size_t)ret);
+    }
+}
+
+// `fd` is a libusb transport fd (unbind method on USB).
+static void capture_physical_features_usb(int fd) {
+    clear_physical_firmware();
+    set_physical_calibration(nullptr);
+
+    uint8_t fw[DS4_FIRMWARE_REPORT_SIZE] = {};
+    int ret = usb_hid_transport_get_feature_report(fd, DS4_FIRMWARE_REPORT_ID, fw, sizeof(fw));
+    if (ret >= 0) store_physical_firmware(fw, (size_t)ret);
+
+    uint8_t cal[DS4_IMU_CAL_USB_SIZE] = {};
+    ret = usb_hid_transport_get_feature_report(fd, DS4_IMU_CAL_USB_ID, cal, sizeof(cal));
+    if (ret >= 0) store_physical_imu_cal(cal, (size_t)ret);
+
+    // A pad first seen on a cable still needs its MAC remembered, or its
+    // first Bluetooth connection would not be squatted.
+    uint8_t pairing[DS4_PAIRING_INFO_SIZE] = {};
+    ret = usb_hid_transport_get_feature_report(fd, DS4_PAIRING_INFO_ID, pairing, sizeof(pairing));
+    if (ret >= 0) remember_physical_mac(ds4_pairing_info_mac(pairing, (size_t)ret));
+}
+
 // Opens dev_name's /dev/hidraw node and (unless for_type == TYPE_NONE)
 // restricts + grabs it and its event/js siblings, exactly like a fresh
 // physical-controller connect. Used both for that initial connect and for
@@ -1053,6 +1157,7 @@ static int open_and_hide_physical(const std::string& dev_name, ControllerType fo
     if (fd < 0) {
         return -1;
     }
+    capture_physical_features_hidraw(fd);
 
     // TYPE_NONE is a fully hands-off passthrough mode: the physical
     // controller is left completely untouched (no hidraw/event hiding, no
@@ -1219,6 +1324,13 @@ static int open_and_hide_physical_unbind(const std::string& hid_id, std::vector<
         if (!g_bt_generic_hid_id.empty()) {
             kick_bt_full_report_mode(hidraw_name);
         }
+        {
+            int raw_fd = open(("/dev/" + hidraw_name).c_str(), O_RDWR | O_NONBLOCK);
+            if (raw_fd >= 0) {
+                capture_physical_features_hidraw(raw_fd);
+                close(raw_fd);
+            }
+        }
 
         for (const auto& ev_path : get_event_nodes(hidraw_name)) {
             PhysicalNode node;
@@ -1304,6 +1416,7 @@ static int open_and_hide_physical_unbind(const std::string& hid_id, std::vector<
     }
 
     g_phy_is_unbind_transport = true;
+    capture_physical_features_usb(fd);
     return fd;
 }
 
@@ -1597,47 +1710,22 @@ void log_physical_write_error(const char* what) {
 // Performs the actual output report write. Bluetooth reports go through
 // BtOutputPacer below; USB ones are written straight from
 // send_physical_output_report().
-void write_physical_output_report(int fd, bool is_bluetooth, uint8_t motor_left, uint8_t motor_right, uint8_t r, uint8_t g, uint8_t b) {
-    if (is_bluetooth) {
-        uint8_t buf[78];
-        memset(buf, 0, sizeof(buf));
-        buf[0] = 0x11; // Report ID
-        buf[1] = 0xC0; // hw_control: HID | CRC32
-        buf[2] = 0x00; // audio_control
-        buf[3] = 0x07; // valid_flag0: motor | led | led_blink
-        buf[4] = 0x00; // valid_flag1
-        buf[5] = 0x00; // reserved
-        buf[6] = motor_right;
-        buf[7] = motor_left;
-        buf[8] = r;
-        buf[9] = g;
-        buf[10] = b;
-        
-        uint32_t crc = calculate_crc32(0xA2, buf, 74);
-        buf[74] = crc & 0xFF;
-        buf[75] = (crc >> 8) & 0xFF;
-        buf[76] = (crc >> 16) & 0xFF;
-        buf[77] = static_cast<uint8_t>((crc >> 24) & 0xFF);
-        
-        if (write(fd, buf, 78) < 0) {
-            log_physical_write_error("Failed to write Bluetooth output report to physical controller");
-        }
-    } else {
-        uint8_t buf[32];
-        memset(buf, 0, sizeof(buf));
-        buf[0] = 0x05; // Report ID
-        buf[1] = 0x07; // valid_flag0: motor | led | led_blink
-        buf[2] = 0x00; // valid_flag1
-        buf[3] = 0x00; // reserved
-        buf[4] = motor_right;
-        buf[5] = motor_left;
-        buf[6] = r;
-        buf[7] = g;
-        buf[8] = b;
-        
-        if (write(fd, buf, 32) < 0) {
-            log_physical_write_error("Failed to write USB output report to physical controller");
-        }
+void write_physical_output_report(int fd, bool is_bluetooth, uint8_t motor_left, uint8_t motor_right, uint8_t r, uint8_t g, uint8_t b,
+                                   uint8_t flash_on, uint8_t flash_off) {
+    Ds4Output output;
+    output.motor_left = motor_left;
+    output.motor_right = motor_right;
+    output.r = r;
+    output.g = g;
+    output.b = b;
+    output.flash_on = flash_on;
+    output.flash_off = flash_off;
+
+    uint8_t buf[DS4_BT_OUTPUT_SIZE];
+    const size_t size = build_ds4_output_report(is_bluetooth, output, buf);
+    if (write(fd, buf, size) < 0) {
+        log_physical_write_error(is_bluetooth ? "Failed to write Bluetooth output report to physical controller"
+                                              : "Failed to write USB output report to physical controller");
     }
 }
 
@@ -1675,6 +1763,8 @@ public:
         uint8_t r = 0;
         uint8_t g = 0;
         uint8_t b = 0;
+        uint8_t flash_on = 0;
+        uint8_t flash_off = 0;
     };
 
     // 40 Hz: fast enough that neither rumble nor lightbar changes feel
@@ -1735,7 +1825,7 @@ public:
 
 private:
     void write_locked(int fd, const State& s) {
-        write_physical_output_report(fd, true, s.motor_left, s.motor_right, s.r, s.g, s.b);
+        write_physical_output_report(fd, true, s.motor_left, s.motor_right, s.r, s.g, s.b, s.flash_on, s.flash_off);
     }
 
     // Started on the first throttled report rather than at daemon startup,
@@ -1793,9 +1883,10 @@ void stop_bt_output_pacer() {
 }
 
 // Send output report to physical controller
-void send_physical_output_report(int fd, bool is_bluetooth, uint8_t motor_left, uint8_t motor_right, uint8_t r, uint8_t g, uint8_t b) {
+extern "C" void send_physical_output_report(int fd, bool is_bluetooth, uint8_t motor_left, uint8_t motor_right, uint8_t r, uint8_t g, uint8_t b,
+                                            uint8_t flash_on, uint8_t flash_off) {
     if (!is_bluetooth) {
-        write_physical_output_report(fd, false, motor_left, motor_right, r, g, b);
+        write_physical_output_report(fd, false, motor_left, motor_right, r, g, b, flash_on, flash_off);
         return;
     }
     BtOutputPacer::State state;
@@ -1804,8 +1895,55 @@ void send_physical_output_report(int fd, bool is_bluetooth, uint8_t motor_left, 
     state.r = r;
     state.g = g;
     state.b = b;
+    state.flash_on = flash_on;
+    state.flash_off = flash_off;
     g_bt_output_pacer.submit(fd, state);
 }
+
+// The physical pad's vendor feature reports (calibration, reset), over USB
+// only: neither report set has been verified over Bluetooth, and a bad write
+// can brick the pad. Reaches the pad through the libusb transport (unbind
+// method) or its hidraw node (legacy method).
+class PhysicalFeatureIo : public FeatureIo {
+public:
+    // How the open physical connection reaches the pad: a hidraw node (legacy
+    // method, or nothing hidden), the daemon's own libusb transport (unbind
+    // on USB), or the kernel module's pad node (driver method). Each needs
+    // its own feature-report call; hidraw ioctls on the other two fail.
+    enum class Path { Hidraw, UsbTransport, Driver };
+
+    PhysicalFeatureIo(int fd, Path path) : fd_(fd), path_(path) {}
+
+    int get(uint8_t id, uint8_t* buf, size_t len) override {
+        switch (path_) {
+        case Path::UsbTransport: return usb_hid_transport_get_feature_report(fd_, id, buf, len);
+        case Path::Driver: return driver_transport_get_feature(fd_, id, buf, len);
+        case Path::Hidraw: break;
+        }
+        return hidraw_get_feature(fd_, id, buf, len);
+    }
+
+    bool set(const uint8_t* buf, size_t len) override {
+        switch (path_) {
+        case Path::UsbTransport: return usb_hid_transport_set_feature_report(fd_, buf, len);
+        case Path::Driver: return driver_transport_set_feature(fd_, buf, len);
+        case Path::Hidraw: break;
+        }
+        uint8_t copy[64];
+        if (len > sizeof(copy)) return false;
+        memcpy(copy, buf, len);
+        if (ioctl(fd_, HIDIOCSFEATURE(len), copy) < 0) {
+            std::cerr << "Feature report 0x" << std::hex << (int)buf[0] << std::dec << " write failed: "
+                      << strerror(errno) << std::endl;
+            return false;
+        }
+        return true;
+    }
+
+private:
+    int fd_;
+    Path path_;
+};
 
 // UHID Helper to write events
 static int uhid_write(int fd, const struct uhid_event& ev) {
@@ -2036,6 +2174,8 @@ int phy_fd = -1;
 int uhid_fd = -1;
 bool is_bluetooth = false;
 uint8_t cur_motor_left = 0, cur_motor_right = 0;
+// Light bar flash durations the emulated device last asked for; 0/0 = steady.
+uint8_t cur_flash_on = 0, cur_flash_off = 0;
 uint8_t cur_r = 0, cur_g = 0, cur_b = 255;
 // hid-playstation assigns a default LED color to every hid_device it
 // probes, based on a global ida player-slot counter (see
@@ -2501,6 +2641,69 @@ static void emit_neutral_report(ControllerType type) {
     struct dualshock4_touch_report empty_touch[4];
     memset(empty_touch, 0, sizeof(empty_touch));
     emit_input_report(type, neutral, 0, empty_touch, false);
+}
+
+// Why the vendor feature reports can't be used right now, or "" if they can.
+static std::string physical_feature_io_unavailable() {
+    if (phy_fd < 0) return "Error: No physical controller connected.";
+    if (is_bluetooth) {
+        return "Error: Only supported over USB: these reports have not been verified over Bluetooth.";
+    }
+    return "";
+}
+
+static PhysicalFeatureIo::Path physical_feature_path() {
+    if (g_phy_is_driver_transport) return PhysicalFeatureIo::Path::Driver;
+    if (g_phy_is_unbind_transport) return PhysicalFeatureIo::Path::UsbTransport;
+    return PhysicalFeatureIo::Path::Hidraw;
+}
+
+// Parses "<target> <step> [position side | permanent]" (see ds4-ctl
+// calibrate) and runs it on the physical pad. The caller has checked that the
+// pad is connected over USB.
+static std::string run_calibrate_command(const std::string& args) {
+    std::istringstream in(args);
+    std::string target_name, step_name, extra1, extra2;
+    in >> target_name >> step_name >> extra1 >> extra2;
+    CalibrationTarget target;
+    if (!parse_calibration_target(target_name, target)) {
+        return "Error: Invalid calibration target '" + target_name + "'. Supported: stick-center stick-range triggers";
+    }
+    CalibrationStep step;
+    if (step_name == "start") step = CAL_STEP_START;
+    else if (step_name == "sample") step = CAL_STEP_SAMPLE;
+    else if (step_name == "store") step = CAL_STEP_STORE;
+    else return "Error: Invalid calibration step '" + step_name + "'. Supported: start sample store";
+
+    uint8_t position = 0, side = 0;
+    bool permanent = false;
+    if (step == CAL_STEP_SAMPLE && target == CAL_TRIGGERS) {
+        // Single digits only; anything else stays 0, which
+        // build_calibration_command() refuses.
+        const auto digit = [](const std::string& text) -> uint8_t {
+            return text.size() == 1 && text[0] >= '1' && text[0] <= '9' ? (uint8_t)(text[0] - '0') : 0;
+        };
+        position = digit(extra1);
+        side = digit(extra2);
+    } else if (step == CAL_STEP_STORE && !extra1.empty()) {
+        if (extra1 != "permanent") return "Error: store takes only the optional argument 'permanent'.";
+        permanent = true;
+    }
+    PhysicalFeatureIo io(phy_fd, physical_feature_path());
+    return calibration_run_step(io, target, step, position, side, permanent);
+}
+
+// Cable-pairs the physical pad (see pairing.h) with a fresh random link key.
+// `adapter` is the optional adapter MAC argument of ds4-ctl pair.
+static std::string run_pair_command(const std::string& adapter) {
+    uint8_t key[BT_LINK_KEY_SIZE];
+    if (getrandom(key, sizeof(key), 0) != (ssize_t)sizeof(key)) {
+        return "Error: Could not generate a link key.";
+    }
+    PhysicalFeatureIo io(phy_fd, physical_feature_path());
+    const std::string reply = cable_pair(io, BLUEZ_STATE_DIR, adapter, key);
+    memset(key, 0, sizeof(key));
+    return reply;
 }
 
 int main(int argc, char* argv[]) {
@@ -3170,7 +3373,7 @@ int main(int argc, char* argv[]) {
                             int dup_fd = dup(phy_fd);
                             if (dup_fd >= 0) {
                                 std::thread([fd = dup_fd, bt = is_bluetooth, r = cur_r, g = cur_g, b = cur_b]() {
-                                    send_physical_output_report(fd, bt, 0, 0, r, g, b);
+                                    send_physical_output_report(fd, bt, 0, 0, r, g, b, cur_flash_on, cur_flash_off);
                                     close(fd);
                                 }).detach();
                             }
@@ -3426,6 +3629,10 @@ int main(int argc, char* argv[]) {
                         response = "Physical Controller: " + phy_display + "\n";
                         response += "Connection Type: " + std::string(
                             phy_fd >= 0 ? (is_bluetooth ? "Bluetooth" : "USB") : "N/A") + "\n";
+                        if (phy_fd >= 0 && g_have_phy_firmware) {
+                            response += "Physical Firmware: " +
+                                describe_ds4_firmware(g_phy_firmware, sizeof(g_phy_firmware)) + "\n";
+                        }
                         response += "Virtual Emulation: " + std::string(controller_type_name(target_type)) + "\n";
                         response += "Active Backend: " + std::string(backend_type_name(backend_type)) + "\n";
                         response += "DS4 Backend: " + std::string(backend_type_name(backend_for_ds4)) + "\n";
@@ -3721,6 +3928,22 @@ int main(int argc, char* argv[]) {
                             response = "OK: forgot controller MAC " + forgotten +
                                        ". It is learned again on the next Bluetooth connection.";
                         }
+                    } else if (cmd == "reset-controller") {
+                        response = physical_feature_io_unavailable();
+                        if (response.empty()) {
+                            PhysicalFeatureIo io(phy_fd, physical_feature_path());
+                            response = controller_reset(io);
+                        }
+                    } else if (cmd == "pair" || cmd.rfind("pair ", 0) == 0) {
+                        response = physical_feature_io_unavailable();
+                        if (response.empty()) {
+                            response = run_pair_command(cmd.size() > 5 ? cmd.substr(5) : "");
+                        }
+                    } else if (cmd.rfind("calibrate ", 0) == 0) {
+                        response = physical_feature_io_unavailable();
+                        if (response.empty()) {
+                            response = run_calibrate_command(cmd.substr(strlen("calibrate ")));
+                        }
                     } else if (cmd == "identify") {
                         if (phy_fd < 0) {
                             response = "Error: No physical controller connected.";
@@ -3746,14 +3969,14 @@ int main(int argc, char* argv[]) {
                                         // motor: on a controller across the
                                         // room the light alone is easy to miss.
                                         send_physical_output_report(fd, bt, i == 0 ? 160 : 0, 0,
-                                                                     255, 255, 255);
+                                                                     255, 255, 255, 0, 0);
                                         usleep(180000);
-                                        send_physical_output_report(fd, bt, 0, 0, 0, 0, 0);
+                                        send_physical_output_report(fd, bt, 0, 0, 0, 0, 0, 0, 0);
                                         usleep(180000);
                                     }
                                     send_physical_output_report(fd, bt, cur_motor_left,
                                                                  cur_motor_right, cur_r, cur_g,
-                                                                 cur_b);
+                                                                 cur_b, cur_flash_on, cur_flash_off);
                                     // The pacer may still hold this fd as its
                                     // pending target; settle it before the fd
                                     // number can be reused.
@@ -3772,7 +3995,8 @@ int main(int argc, char* argv[]) {
                             // for; the next output report from a game replaces
                             // it anyway.
                             send_physical_output_report(phy_fd, is_bluetooth, cur_motor_left,
-                                                         cur_motor_right, cur_r, cur_g, cur_b);
+                                                         cur_motor_right, cur_r, cur_g, cur_b,
+                                                         cur_flash_on, cur_flash_off);
                             response = "OK: Light bar and motors handed back to the emulated device.";
                         }
                     } else if (cmd.rfind("led ", 0) == 0) {
@@ -3798,7 +4022,7 @@ int main(int argc, char* argv[]) {
                             // takes the controller straight back.
                             send_physical_output_report(phy_fd, is_bluetooth, (uint8_t)left,
                                                          (uint8_t)right, (uint8_t)red,
-                                                         (uint8_t)green, (uint8_t)blue);
+                                                         (uint8_t)green, (uint8_t)blue, 0, 0);
                             response = "OK: Sent to the physical controller.";
                         }
                     } else if (cmd == "test" || cmd == "test all") {
@@ -4119,7 +4343,7 @@ int main(int argc, char* argv[]) {
                               << (int)in_buf[0] << std::dec << ", " << bytes_read << " bytes."
                               << ((in_buf[0] == 0x01 && bytes_read < 64)
                                       ? " Basic Bluetooth mode -- the full-report kick did not take,"
-                                        " so nothing will be forwarded."
+                                        " so only sticks, buttons and triggers will be forwarded."
                                       : "")
                               << std::endl;
                 }
@@ -4129,6 +4353,9 @@ int main(int argc, char* argv[]) {
                 // physical reports at all.
                 struct dualshock4_input_report_common common;
                 bool got_report = false;
+                // The basic report has no battery byte, so the emulated pad
+                // shows its fixed "full, wired" state instead of 0%.
+                bool has_real_battery = true;
                 uint8_t num_touch = 0;
                 struct dualshock4_touch_report touch_reps[4];
                 memset(&common, 0, sizeof(common));
@@ -4161,6 +4388,9 @@ int main(int argc, char* argv[]) {
                         }
                         got_report = true;
                     }
+                } else if (in_buf[0] == 0x01) {
+                    got_report = parse_bt_basic_input_report(in_buf, (size_t)bytes_read, common);
+                    has_real_battery = false;
                 }
 
                 if (got_report) {
@@ -4199,7 +4429,7 @@ int main(int argc, char* argv[]) {
                         last_phy_valid = true;
                     }
                     if (vdev_ready_for_io()) {
-                        emit_input_report(target_type, common, num_touch, touch_reps, true);
+                        emit_input_report(target_type, common, num_touch, touch_reps, has_real_battery);
                         if (g_has_test_subscribers) {
                             // Translation cost only: the write to the emulated
                             // device has returned, what the game does with it
@@ -4296,6 +4526,10 @@ int main(int argc, char* argv[]) {
                                 } else if (rnum == 0x31 || rnum == 0xa3) {
                                     reply_ev.u.get_report_reply.size = 49;
                                     reply_ev.u.get_report_reply.data[0] = rnum;
+                                    if (g_have_phy_firmware) {
+                                        memcpy(reply_ev.u.get_report_reply.data, g_phy_firmware, sizeof(g_phy_firmware));
+                                        reply_ev.u.get_report_reply.data[0] = rnum;
+                                    } else {
                                     // DS4 HW/FW version & extended capabilities.
                                     // Layout reverse-engineered from real hardware
                                     // (see senseshock's structs.h): report_id(1) +
@@ -4318,6 +4552,7 @@ int main(int argc, char* argv[]) {
                                     reply_ev.u.get_report_reply.data[40] = 0x00;
                                     reply_ev.u.get_report_reply.data[41] = 0x33; // fw_version_minor (captured)
                                     reply_ev.u.get_report_reply.data[42] = 0x20;
+                                    }
                                 }
                             } else { // DualSense
                                 if (rnum == 0x05) {
@@ -4377,6 +4612,7 @@ int main(int argc, char* argv[]) {
                         uint8_t motor_left = cur_motor_left;
                         uint8_t motor_right = cur_motor_right;
                         uint8_t r = cur_r, g = cur_g, b = cur_b;
+                        uint8_t flash_on = cur_flash_on, flash_off = cur_flash_off;
                         bool update = false;
                         
                         if (target_type == TYPE_DS4) {
@@ -4397,6 +4633,11 @@ int main(int argc, char* argv[]) {
                                         update = true;
                                     }
                                 }
+                                if ((flags & 0x04) && size >= 11) {
+                                    flash_on = data[9];
+                                    flash_off = data[10];
+                                    update = true;
+                                }
                             } else if (data[0] == 0x11 && size >= 11) { // BT format output report
                                 uint8_t flags = data[3];
                                 if (flags & 0x01) {
@@ -4413,6 +4654,11 @@ int main(int argc, char* argv[]) {
                                         b = data[10];
                                         update = true;
                                     }
+                                }
+                                if ((flags & 0x04) && size >= 13) {
+                                    flash_on = data[11];
+                                    flash_off = data[12];
+                                    update = true;
                                 }
                             }
                         } else { // DualSense
@@ -4444,7 +4690,8 @@ int main(int argc, char* argv[]) {
                         }
 
                         if (update) {
-                            if (motor_left != cur_motor_left || motor_right != cur_motor_right || r != cur_r || g != cur_g || b != cur_b) {
+                            if (motor_left != cur_motor_left || motor_right != cur_motor_right || r != cur_r || g != cur_g || b != cur_b ||
+                                flash_on != cur_flash_on || flash_off != cur_flash_off) {
                                 if (r != cur_r || g != cur_g || b != cur_b) {
                                     char buf[64];
                                     (void)snprintf(buf, sizeof(buf), "LED r=%u g=%u b=%u", r, g, b);
@@ -4460,8 +4707,11 @@ int main(int argc, char* argv[]) {
                                 cur_r = r;
                                 cur_g = g;
                                 cur_b = b;
+                                cur_flash_on = flash_on;
+                                cur_flash_off = flash_off;
                                 if (phy_fd >= 0) {
-                                    send_physical_output_report(phy_fd, is_bluetooth, cur_motor_left, cur_motor_right, cur_r, cur_g, cur_b);
+                                    send_physical_output_report(phy_fd, is_bluetooth, cur_motor_left, cur_motor_right, cur_r, cur_g, cur_b,
+                                                                cur_flash_on, cur_flash_off);
                                 }
                             }
                         }

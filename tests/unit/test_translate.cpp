@@ -255,6 +255,176 @@ TEST(GipReport, UnusedBytesAreZeroed) {
     for (size_t i = 18; i < size; ++i) EXPECT_EQ(out[i], 0);
 }
 
+// ------------------------------------------------------ Bluetooth basic report
+
+TEST(BtBasicReport, MapsSticksButtonsAndTriggers) {
+    const uint8_t report[BT_BASIC_REPORT_SIZE] = {0x01, 10, 20, 30, 40, 0x58, 0xA1, 0x03, 200, 100};
+    dualshock4_input_report_common c;
+    ASSERT_TRUE(parse_bt_basic_input_report(report, sizeof(report), c));
+    EXPECT_EQ(c.x, 10);
+    EXPECT_EQ(c.y, 20);
+    EXPECT_EQ(c.rx, 30);
+    EXPECT_EQ(c.ry, 40);
+    EXPECT_EQ(c.buttons[0], 0x58);
+    EXPECT_EQ(c.buttons[1], 0xA1);
+    EXPECT_EQ(c.buttons[2], 0x03);
+    EXPECT_EQ(c.z, 200);
+    EXPECT_EQ(c.rz, 100);
+    EXPECT_EQ(c.gyro[0], 0);
+    EXPECT_EQ(c.status[0], 0);
+}
+
+TEST(BtBasicReport, RejectsWrongIdOrLength) {
+    uint8_t report[BT_BASIC_REPORT_SIZE] = {0x01};
+    dualshock4_input_report_common c;
+    EXPECT_FALSE(parse_bt_basic_input_report(report, BT_BASIC_REPORT_SIZE - 1, c));
+    EXPECT_FALSE(parse_bt_basic_input_report(report, BT_BASIC_REPORT_SIZE + 1, c));
+    report[0] = 0x11;
+    EXPECT_FALSE(parse_bt_basic_input_report(report, BT_BASIC_REPORT_SIZE, c));
+}
+
+// --------------------------------------------------------------- touch packets
+
+namespace {
+void fill_touch(dualshock4_touch_report in[4]) {
+    std::memset(in, 0, 4 * sizeof(in[0]));
+    for (int i = 0; i < 4; ++i) {
+        in[i].timestamp = static_cast<uint8_t>(i + 1);
+    }
+}
+} // namespace
+
+TEST(SelectUsbTouchReports, FourPacketsKeepsNewestThree) {
+    dualshock4_touch_report in[4], out[3];
+    fill_touch(in);
+    ASSERT_EQ(select_usb_touch_reports(4, in, out), 3u);
+    EXPECT_EQ(out[0].timestamp, 2);
+    EXPECT_EQ(out[1].timestamp, 3);
+    EXPECT_EQ(out[2].timestamp, 4);
+}
+
+TEST(SelectUsbTouchReports, FewerThanThreeAreCopiedInOrder) {
+    dualshock4_touch_report in[4], out[3];
+    fill_touch(in);
+    ASSERT_EQ(select_usb_touch_reports(2, in, out), 2u);
+    EXPECT_EQ(out[0].timestamp, 1);
+    EXPECT_EQ(out[1].timestamp, 2);
+    EXPECT_EQ(select_usb_touch_reports(0, in, out), 0u);
+}
+
+TEST(SelectUsbTouchReports, OversizedCountIsClampedToFour) {
+    dualshock4_touch_report in[4], out[3];
+    fill_touch(in);
+    ASSERT_EQ(select_usb_touch_reports(200, in, out), 3u);
+    EXPECT_EQ(out[2].timestamp, 4);
+}
+
+// -------------------------------------------------------------- firmware info
+
+namespace {
+// What a real pad answers feature 0xA3 with: ID, date, time, hw, fw, series, size.
+void make_firmware_report(uint8_t out[DS4_FIRMWARE_REPORT_SIZE]) {
+    std::memset(out, 0, DS4_FIRMWARE_REPORT_SIZE);
+    out[0] = DS4_FIRMWARE_REPORT_ID;
+    std::memcpy(out + 1, "Sep  2 2020", 11);
+    std::memcpy(out + 17, "14:45:10", 8);
+    out[33] = 0x00; out[34] = 0x01;                         // hw major 0x0100
+    out[35] = 0x38; out[36] = 0x54;                         // hw minor 0x5438
+    out[37] = 0x04; out[38] = 0x00; out[39] = 0x00; out[40] = 0x00; // fw major 4
+    out[41] = 0x33; out[42] = 0x20;                         // fw minor 0x2033
+}
+} // namespace
+
+TEST(Firmware, ValidReportIsRecognised) {
+    uint8_t report[DS4_FIRMWARE_REPORT_SIZE];
+    make_firmware_report(report);
+    EXPECT_TRUE(is_valid_ds4_firmware_report(report, sizeof(report)));
+}
+
+TEST(Firmware, WrongIdOrLengthIsRejected) {
+    uint8_t report[DS4_FIRMWARE_REPORT_SIZE];
+    make_firmware_report(report);
+    EXPECT_FALSE(is_valid_ds4_firmware_report(report, sizeof(report) - 1));
+    report[0] = 0x31;
+    EXPECT_FALSE(is_valid_ds4_firmware_report(report, sizeof(report)));
+    EXPECT_EQ(describe_ds4_firmware(report, sizeof(report)), "");
+}
+
+TEST(Firmware, DescribesDateTimeAndVersions) {
+    uint8_t report[DS4_FIRMWARE_REPORT_SIZE];
+    make_firmware_report(report);
+    EXPECT_EQ(describe_ds4_firmware(report, sizeof(report)),
+              "Sep  2 2020 14:45:10, hw 0x0100.5438, fw 0x00000004.2033");
+}
+
+// ------------------------------------------------------------- output reports
+
+namespace {
+Ds4Output sample_output() {
+    Ds4Output o;
+    o.motor_left = 11;
+    o.motor_right = 22;
+    o.r = 1;
+    o.g = 2;
+    o.b = 3;
+    o.flash_on = 40;
+    o.flash_off = 50;
+    return o;
+}
+} // namespace
+
+TEST(Ds4OutputReport, UsbLayoutCarriesMotorsColourAndFlash) {
+    uint8_t buf[DS4_BT_OUTPUT_SIZE];
+    ASSERT_EQ(build_ds4_output_report(false, sample_output(), buf), DS4_USB_OUTPUT_SIZE);
+    EXPECT_EQ(buf[0], 0x05);
+    EXPECT_EQ(buf[1], 0x07);
+    EXPECT_EQ(buf[4], 22); // right
+    EXPECT_EQ(buf[5], 11); // left
+    EXPECT_EQ(buf[6], 1);
+    EXPECT_EQ(buf[7], 2);
+    EXPECT_EQ(buf[8], 3);
+    EXPECT_EQ(buf[9], 40);
+    EXPECT_EQ(buf[10], 50);
+}
+
+TEST(Ds4OutputReport, BluetoothLayoutCarriesFlashAndValidCrc) {
+    uint8_t buf[DS4_BT_OUTPUT_SIZE];
+    ASSERT_EQ(build_ds4_output_report(true, sample_output(), buf), DS4_BT_OUTPUT_SIZE);
+    EXPECT_EQ(buf[0], 0x11);
+    EXPECT_EQ(buf[1], 0xC0);
+    EXPECT_EQ(buf[3], 0x07);
+    EXPECT_EQ(buf[6], 22);
+    EXPECT_EQ(buf[7], 11);
+    EXPECT_EQ(buf[8], 1);
+    EXPECT_EQ(buf[10], 3);
+    EXPECT_EQ(buf[11], 40);
+    EXPECT_EQ(buf[12], 50);
+    const uint32_t crc = buf[74] | (buf[75] << 8) | (buf[76] << 16) | (static_cast<uint32_t>(buf[77]) << 24);
+    EXPECT_EQ(crc, calculate_crc32(0xA2, buf, 74));
+}
+
+TEST(Ds4OutputReport, DefaultIsSteadyLight) {
+    uint8_t buf[DS4_BT_OUTPUT_SIZE];
+    build_ds4_output_report(true, Ds4Output{}, buf);
+    EXPECT_EQ(buf[11], 0);
+    EXPECT_EQ(buf[12], 0);
+}
+
+// ---------------------------------------------------------------- pairing info
+
+TEST(PairingInfo, MacIsReadByteReversed) {
+    uint8_t report[DS4_PAIRING_INFO_SIZE] = {DS4_PAIRING_INFO_ID, 0xE8, 0x47, 0x3A, 0xD6, 0xE7, 0x74};
+    EXPECT_EQ(ds4_pairing_info_mac(report, sizeof(report)), "74:e7:d6:3a:47:e8");
+}
+
+TEST(PairingInfo, MalformedOrEmptyMacYieldsNothing) {
+    uint8_t report[DS4_PAIRING_INFO_SIZE] = {DS4_PAIRING_INFO_ID};
+    EXPECT_EQ(ds4_pairing_info_mac(report, sizeof(report)), "");           // all-zero MAC
+    report[1] = 1;
+    EXPECT_EQ(ds4_pairing_info_mac(report, sizeof(report) - 1), "");        // short
+    report[0] = 0x81;
+    EXPECT_EQ(ds4_pairing_info_mac(report, sizeof(report)), "");           // wrong id
+}
 namespace {
 
 // 36 calibration bytes where every byte is its own index, so a moved byte is

@@ -105,6 +105,40 @@ TEST(Builders, RejectInvalidArgumentsWithMessage) {
     EXPECT_FALSE(err.empty());
 }
 
+TEST(Builders, CalibrateProducesTheDaemonsSteps) {
+    std::string err;
+    EXPECT_EQ(build_calibrate("stick-center", "start", 0, 0, false, &err), "calibrate stick-center start");
+    EXPECT_EQ(build_calibrate("stick-center", "sample", 0, 0, false, &err), "calibrate stick-center sample");
+    EXPECT_EQ(build_calibrate("stick-range", "store", 0, 0, false, &err), "calibrate stick-range store");
+    EXPECT_EQ(build_calibrate("triggers", "sample", 3, 2, false, &err), "calibrate triggers sample 3 2");
+    EXPECT_EQ(build_calibrate("triggers", "store", 0, 0, true, &err), "calibrate triggers store permanent");
+    EXPECT_EQ(std::string(kResetControllerCommand), "reset-controller");
+}
+
+TEST(Builders, CalibrateRejectsStepsTheTargetDoesNotHave) {
+    const struct {
+        const char *target, *step;
+        int position, side;
+        bool permanent;
+    } bad[] = {
+        {"sticks", "start", 0, 0, false},        // unknown target
+        {"stick-center", "begin", 0, 0, false},  // unknown step
+        {"stick-range", "sample", 0, 0, false},  // range has no samples
+        {"stick-center", "start", 0, 0, true},   // only store is permanent
+        {"stick-center", "sample", 1, 1, false}, // position/side are trigger-only
+        {"triggers", "sample", 0, 1, false},     // position out of range
+        {"triggers", "sample", 4, 1, false},
+        {"triggers", "sample", 1, 3, false},     // side out of range
+        {"triggers", "start", 1, 1, false},      // only a sample takes them
+    };
+    for (const auto &c : bad) {
+        std::string err;
+        EXPECT_EQ(build_calibrate(c.target, c.step, c.position, c.side, c.permanent, &err), "")
+            << c.target << " " << c.step;
+        EXPECT_FALSE(err.empty()) << c.target << " " << c.step;
+    }
+}
+
 TEST(Builders, NullErrorPointerIsTolerated) {
     EXPECT_EQ(build_set_type("nope", nullptr), "");
     EXPECT_EQ(build_set_name("ds4", "", nullptr), "");

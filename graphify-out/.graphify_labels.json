@@ -1,14 +1,12 @@
 {
   "1": "Qt UI model (DS4 settings)",
   "3": "Translation unit tests",
-  "4": "DS4 report decoding & mapping",
   "5": "Release workflow (CI)",
   "11": "Hardware verify.sh",
   "12": "DaemonController (UI)",
   "13": "ds4-ctl CLI",
   "15": "UI IPC client",
   "16": "libudev stub tests",
-  "18": "HID-BPF programs",
   "19": "USB HID transport (libusb)",
   "23": "Bluetooth output pacer",
   "24": "AppController (UI)"

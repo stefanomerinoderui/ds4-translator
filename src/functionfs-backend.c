@@ -29,6 +29,7 @@ extern int phy_fd;
 extern bool is_bluetooth;
 extern uint8_t cur_motor_left, cur_motor_right;
 extern uint8_t cur_r, cur_g, cur_b;
+extern uint8_t cur_flash_on, cur_flash_off;
 extern bool g_suppress_next_led_update; // see its doc comment in main.cpp
 
 #define GADGET_DIR "/sys/kernel/config/usb_gadget/ds4translatorffs"
@@ -62,6 +63,17 @@ void functionfs_set_mac(const uint8_t mac_le[6], const char *mac_str) {
     if (!mac_le || !mac_str) return;
     memcpy(virtual_mac_le, mac_le, sizeof(virtual_mac_le));
     (void)snprintf(virtual_mac_str, sizeof(virtual_mac_str), "%s", mac_str);
+}
+
+static pthread_mutex_t firmware_mutex /* guards the real firmware report */ = PTHREAD_MUTEX_INITIALIZER;
+static uint8_t real_firmware[49];
+static bool have_real_firmware = false;
+
+void functionfs_set_ds4_firmware(const uint8_t report[49]) {
+    pthread_mutex_lock(&firmware_mutex);
+    have_real_firmware = (report != NULL);
+    if (report) memcpy(real_firmware, report, sizeof(real_firmware));
+    pthread_mutex_unlock(&firmware_mutex);
 }
 
 static pthread_mutex_t calibration_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -111,6 +123,14 @@ static size_t build_feature_report(int target_type, uint8_t rnum, uint8_t *out) 
             memcpy(&out[1], mac_info, 15);
             return 16;
         } else if (rnum == 0x31 || rnum == 0xa3) {
+            pthread_mutex_lock(&firmware_mutex);
+            if (have_real_firmware) {
+                memcpy(out, real_firmware, sizeof(real_firmware));
+                out[0] = rnum;
+                pthread_mutex_unlock(&firmware_mutex);
+                return sizeof(real_firmware);
+            }
+            pthread_mutex_unlock(&firmware_mutex);
             out[0] = rnum;
             // See main.cpp's UHID_GET_REPORT 0xa3 case for the field layout
             // and why hw_version_major/fw_version_major need to be nonzero
@@ -503,6 +523,7 @@ static void* out_loop(void *arg) {
         uint8_t motor_left = cur_motor_left;
         uint8_t motor_right = cur_motor_right;
         uint8_t r = cur_r, g = cur_g, b = cur_b;
+        uint8_t flash_on = cur_flash_on, flash_off = cur_flash_off;
         bool update = false;
 
         if (dev->target_type == FFS_TARGET_XBOX360) {
@@ -541,6 +562,11 @@ static void* out_loop(void *arg) {
                         update = true;
                     }
                 }
+                if ((flags & 0x04) && rv >= 11) {
+                    flash_on = data[9];
+                    flash_off = data[10];
+                    update = true;
+                }
             }
         } else { // DualSense
             if (data[0] == 0x02 && rv >= 48) {
@@ -568,13 +594,17 @@ static void* out_loop(void *arg) {
         }
 
         if (update && phy_fd >= 0) {
-            if (motor_left != cur_motor_left || motor_right != cur_motor_right || r != cur_r || g != cur_g || b != cur_b) {
+            if (motor_left != cur_motor_left || motor_right != cur_motor_right || r != cur_r || g != cur_g || b != cur_b ||
+                flash_on != cur_flash_on || flash_off != cur_flash_off) {
+                cur_flash_on = flash_on;
+                cur_flash_off = flash_off;
                 cur_motor_left = motor_left;
                 cur_motor_right = motor_right;
                 cur_r = r;
                 cur_g = g;
                 cur_b = b;
-                send_physical_output_report(phy_fd, is_bluetooth, cur_motor_left, cur_motor_right, cur_r, cur_g, cur_b);
+                send_physical_output_report(phy_fd, is_bluetooth, cur_motor_left, cur_motor_right, cur_r, cur_g, cur_b,
+                                            cur_flash_on, cur_flash_off);
             }
         }
     }

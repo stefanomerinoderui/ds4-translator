@@ -127,6 +127,11 @@ void ds4t_build_ds4(const struct ds4t_input *in, bool real_battery,
 {
 	unsigned int i;
 	u8 num = in->num_touch > USB_MAX_TOUCH ? USB_MAX_TOUCH : in->num_touch;
+	/*
+	 * A Bluetooth report can carry one packet more than USB has room for:
+	 * keep the newest ones, as the daemon does.
+	 */
+	u8 first = in->num_touch - num;
 
 	memset(out, 0, DS4T_VIRT_REPORT_SIZE);
 	out[0] = DS4T_USB_INPUT_ID;
@@ -137,7 +142,7 @@ void ds4t_build_ds4(const struct ds4t_input *in, bool real_battery,
 	}
 	out[USB_NUM_TOUCH_OFF] = num;
 	for (i = 0; i < num; i++)
-		memcpy(out + USB_TOUCH_OFF + i * DS4T_TOUCH_SIZE, in->touch[i],
+		memcpy(out + USB_TOUCH_OFF + i * DS4T_TOUCH_SIZE, in->touch[first + i],
 		       DS4T_TOUCH_SIZE);
 	/* Unused slots read as "no finger", not as a touch at (0,0). */
 	for (; i < USB_MAX_TOUCH; i++) {

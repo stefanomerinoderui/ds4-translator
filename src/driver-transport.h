@@ -66,6 +66,13 @@ bool driver_transport_node_exists(const std::string& hid_id);
 // if the module has none or the fd is not a pad node.
 bool driver_transport_get_calibration(int pad_fd, std::vector<uint8_t>& report);
 
+// Feature reports on a pad node (DS4T_IOC_GET_FEATURE/SET_FEATURE), for the
+// vendor reports calibration, reset and pairing use. Same contract as a
+// hidraw node's: get puts the report ID in buf[0] and returns the bytes
+// received or -1; set sends buf[0..len) with the ID first.
+int driver_transport_get_feature(int pad_fd, uint8_t id, uint8_t* buf, size_t len);
+bool driver_transport_set_feature(int pad_fd, const uint8_t* buf, size_t len);
+
 // True while the kernel module is loaded. Callers use it to fall back to the
 // unbind method without paying driver_transport_open()'s wait for a node
 // that will never appear.

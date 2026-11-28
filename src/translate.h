@@ -115,6 +115,54 @@ static_assert(sizeof(dualshock4_input_report_usb) == 64, "DS4 USB report (0x01) 
 static_assert(sizeof(dualshock4_input_report_bt) == 78, "DS4 Bluetooth report (0x11) is 78 bytes");
 static_assert(sizeof(dualsense_input_report) == 63, "DualSense input report is 63 bytes");
 
+// The short Bluetooth input report (id 0x01, 10 bytes) a pad sends until it is
+// switched to extended mode. Its sticks, buttons and triggers sit in the same
+// bytes as the start of the common block; motion, touch and status stay zero.
+constexpr size_t BT_BASIC_REPORT_SIZE = 10;
+bool parse_bt_basic_input_report(const uint8_t* data, size_t len,
+                                 dualshock4_input_report_common& out);
+
+// The USB report holds three touchpad packets, a Bluetooth one up to four.
+// Copies the newest min(num_touch, 3) of the first min(num_touch, 4) packets
+// to `out` (oldest first) and returns how many were copied.
+size_t select_usb_touch_reports(uint8_t num_touch, const dualshock4_touch_report in[4],
+                                dualshock4_touch_report out[3]);
+
+// What the daemon asks the physical pad to do: rumble motors, light bar colour
+// and light bar flash (bright/dark durations, 0/0 = steady).
+struct Ds4Output {
+    uint8_t motor_left = 0;
+    uint8_t motor_right = 0;
+    uint8_t r = 0, g = 0, b = 0;
+    uint8_t flash_on = 0;
+    uint8_t flash_off = 0;
+};
+
+constexpr size_t DS4_USB_OUTPUT_SIZE = 32;
+constexpr size_t DS4_BT_OUTPUT_SIZE = 78;
+// Fills `out` (DS4_BT_OUTPUT_SIZE with CRC32 seed 0xA2 for Bluetooth,
+// DS4_USB_OUTPUT_SIZE otherwise) with the output report for `o` and returns
+// its size. The valid flags always claim motor, light bar and flash, so
+// every report is the full state.
+size_t build_ds4_output_report(bool bluetooth, const Ds4Output& o, uint8_t out[DS4_BT_OUTPUT_SIZE]);
+
+// Feature report 0xA3: build date/time, hardware and firmware versions. Same
+// 49-byte layout (report ID first) over USB and Bluetooth.
+constexpr uint8_t DS4_FIRMWARE_REPORT_ID = 0xA3;
+constexpr size_t DS4_FIRMWARE_REPORT_SIZE = 49;
+bool is_valid_ds4_firmware_report(const uint8_t* data, size_t len);
+
+// Prints the "<build date> <build time>, hw 0xHHHH.MMMM, fw 0xHHHHHHHH.MMMM"
+// summary of a valid firmware report; empty string for an invalid one.
+std::string describe_ds4_firmware(const uint8_t* data, size_t len);
+
+// Feature report 0x12 (pairing info, 16 bytes with the ID): the pad's own
+// Bluetooth MAC byte-reversed in bytes 1-6, then the host identity.
+constexpr uint8_t DS4_PAIRING_INFO_ID = 0x12;
+constexpr size_t DS4_PAIRING_INFO_SIZE = 16;
+// The MAC as "aa:bb:cc:dd:ee:ff" (lower case), or "" if the report is
+// malformed or carries an all-zero MAC.
+std::string ds4_pairing_info_mac(const uint8_t* data, size_t len);
 // The IMU calibration an emulated DS4 serves as feature report 0x02 (USB
 // layout, 36 bytes after the report ID), taken from a physical pad's own
 // calibration report: 0x02, 37 bytes, over USB (copied as is), or 0x05, 41
@@ -124,6 +172,10 @@ static_assert(sizeof(dualsense_input_report) == 63, "DualSense input report is 6
 // False (out untouched) for a wrong report ID or size, or a Bluetooth report
 // whose CRC does not match.
 constexpr size_t DS4_CALIBRATION_SIZE = 36;
+constexpr uint8_t DS4_IMU_CAL_USB_ID = 0x02;
+constexpr uint8_t DS4_IMU_CAL_BT_ID = 0x05;
+constexpr size_t DS4_IMU_CAL_USB_SIZE = 37;
+constexpr size_t DS4_IMU_CAL_BT_SIZE = 41;
 bool ds4_calibration_to_usb_layout(const uint8_t* report, size_t len,
                                    uint8_t out[DS4_CALIBRATION_SIZE]);
 
