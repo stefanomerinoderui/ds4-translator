@@ -156,9 +156,9 @@
     "semantic_hash": ""
   },
   "src/translate.cpp": {
-    "mtime": 1795790292.3231091,
-    "seen": 1795791686.1280296,
-    "ast_hash": "35ef5beb44cef8a9f8205bda9c8d666c",
+    "mtime": 1795838235.5975404,
+    "seen": 1795838819.9911923,
+    "ast_hash": "fc64471a268313b8e9b82970fd5ae0f9",
     "semantic_hash": ""
   },
   "src/translate.h": {
@@ -726,9 +726,9 @@
     "semantic_hash": ""
   },
   "kernel/ds4t-translate.c": {
-    "mtime": 1795790265.2273386,
-    "seen": 1795791686.1279016,
-    "ast_hash": "548f33a114a97a6642e552cacf902832",
+    "mtime": 1795838518.4865386,
+    "seen": 1795838819.9911385,
+    "ast_hash": "ae394d1b59bc3782062b62faffb48329",
     "semantic_hash": ""
   },
   "kernel/ds4t-translate.h": {

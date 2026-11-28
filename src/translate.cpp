@@ -239,14 +239,18 @@ size_t build_ds4_output_report(bool bluetooth, const Ds4Output& o, uint8_t out[D
 
 std::string ds4_pairing_info_mac(const uint8_t* data, size_t len) {
     if (len != DS4_PAIRING_INFO_SIZE || data[0] != DS4_PAIRING_INFO_ID) return "";
+    static const char kHex[] = "0123456789abcdef";
     bool any = false;
-    char out[18];
+    std::string out;
+    out.reserve(17);
     for (int i = 0; i < 6; ++i) {
         const uint8_t byte = data[6 - i]; // stored least significant byte first
         any = any || byte != 0;
-        snprintf(out + i * 3, 4, i < 5 ? "%02x:" : "%02x", byte);
+        if (i > 0) out += ':';
+        out += kHex[byte >> 4];
+        out += kHex[byte & 0x0F];
     }
-    return any ? std::string(out) : "";
+    return any ? out : "";
 }
 
 bool is_valid_ds4_firmware_report(const uint8_t* data, size_t len) {
@@ -272,8 +276,10 @@ std::string describe_ds4_firmware(const uint8_t* data, size_t len) {
     if (!is_valid_ds4_firmware_report(data, len)) return "";
     // Offsets are +1 from the documented payload layout: byte 0 is the report ID.
     char versions[96];
-    snprintf(versions, sizeof(versions), "hw 0x%04x.%04x, fw 0x%08x.%04x",
-             read_le(data + 33, 2), read_le(data + 35, 2), read_le(data + 37, 4), read_le(data + 41, 2));
+    const int written = snprintf(versions, sizeof(versions), "hw 0x%04x.%04x, fw 0x%08x.%04x",
+                                 read_le(data + 33, 2), read_le(data + 35, 2), read_le(data + 37, 4),
+                                 read_le(data + 41, 2));
+    if (written < 0) return "";
     return ascii_field(data + 1, 16) + " " + ascii_field(data + 17, 16) + ", " + versions;
 }
 
